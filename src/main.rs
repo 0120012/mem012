@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = config
         .database_url("riko")
         .ok_or("未找到 profile: riko")?;
-    let res = connect_psql::init_db(database_url).await;
+    connect_psql::init_db(database_url).await?;
 
     //3\ CLI: parse args json
     //4\ set init prompt memory
