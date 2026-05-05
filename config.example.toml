@@ -1,0 +1,20 @@
+[database]
+riko = "postgresql://riko:password@127.0.0.1:5532/mem_riko"
+herm = "postgresql://herm:password@127.0.0.1:5532/mem_herm"
+doge = "postgresql://doge:password@127.0.0.1:5532/mem_doge"
+
+[search]
+# 搜索运行参数：先保留开关用于早期调试；关键词和全文后续可能固定为后端基础能力。
+default_limit = 8 # 默认返回条数。
+graph_expand_depth = 1 # 图扩展深度；第一版只允许一跳，避免召回发散。
+# 临时调参区：先保留给早期搜索实验，召回策略稳定后可以收回到后端代码里固定。
+keyword = 40 # 关键词精确命中加分，负责专名、术语、别名。
+handle = 35 # 可读 handle 路径命中加分，负责人类/Agent 的稳定精准定位。
+fulltext = 25 # title/summary/content/keywords 的全文检索加分。
+semantic = 20 # 语义向量相似度加分，负责非字面但语义接近的召回。
+graph = 12 # 关系图一跳扩展加分，负责补充强关联记忆。
+stale_penalty = 10 # 过期或需要复审的记忆扣分。
+exclude_penalty = 100 # 命中 exclude_when 时的强扣分，避免误召回。
+
+[server]
+addr = "0.0.0.0:37777"
