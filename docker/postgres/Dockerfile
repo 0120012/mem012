@@ -38,8 +38,8 @@ FROM postgres:${PG_MAJOR}-bookworm
 
 ARG PG_MAJOR
 
-ENV POSTGRES_USER=mem012
-ENV POSTGRES_DB=mem_riko
+ENV POSTGRES_USER=utest
+ENV POSTGRES_DB=TESTD
 
 COPY --from=builder /usr/lib/postgresql/${PG_MAJOR}/lib/vector.so /usr/lib/postgresql/${PG_MAJOR}/lib/
 COPY --from=builder /usr/share/postgresql/${PG_MAJOR}/extension/vector* /usr/share/postgresql/${PG_MAJOR}/extension/
