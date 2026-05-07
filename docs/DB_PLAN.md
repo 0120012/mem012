@@ -476,7 +476,7 @@ created_at text
 结构索引：
 
 ```text
-memory_units(category, status)
+(category, status)
 memory_units(status, updated_at)
 memory_units(category, title_norm) unique where status = 'active'
 memory_embeddings(memory_uuid) primary key btree
