@@ -1,7 +1,7 @@
 mod api;
-mod server;
-mod connect_psql;
 mod config;
+mod connect_psql;
+mod server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,10 +15,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     //2\ if need init_db()
-    let database_url = config
-        .database_url("riko")
-        .ok_or("未找到 profile: riko")?;
-    connect_psql::init_db(database_url).await?;
+    let database_url = config.database_url("riko").ok_or("未找到 profile: riko")?;
+    let share_database_url = config
+        .database_url("share")
+        .ok_or("未找到 profile: share")?;
+    connect_psql::init_db(database_url, share_database_url).await?;
 
     //3\ CLI: parse args json
     //4\ set init prompt memory

@@ -4,7 +4,7 @@ use serde::Deserialize;
 pub struct Config {
     database: DatabaseConfig,
     search: SearchConfig,
-    server: ServerConfig
+    server: ServerConfig,
 }
 
 #[derive(Deserialize)]
@@ -12,6 +12,7 @@ struct DatabaseConfig {
     riko: String,
     herm: String,
     doge: String,
+    share: String,
 }
 
 #[derive(Deserialize)]
@@ -24,12 +25,12 @@ struct SearchConfig {
     semantic: i32,
     graph: i32,
     stale_penalty: i32,
-    exclude_penalty: i32
+    exclude_penalty: i32,
 }
 
 #[derive(Deserialize)]
 struct ServerConfig {
-    addr: String
+    addr: String,
 }
 
 impl Config {
@@ -38,6 +39,7 @@ impl Config {
             "riko" => Some(self.database.riko.as_str()),
             "herm" => Some(self.database.herm.as_str()),
             "doge" => Some(self.database.doge.as_str()),
+            "share" => Some(self.database.share.as_str()),
             _ => None,
         }
     }
