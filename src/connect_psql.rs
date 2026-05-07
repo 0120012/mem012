@@ -20,6 +20,7 @@ pub async fn init_db(database_url: &str, share_database_url: &str) -> Result<boo
         }
     };
 
+
     // DEBUG
     if true {
         reset_memory_tables(&pool, "profile").await?;
@@ -58,11 +59,13 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     // Why：profile 库和 share 库结构一致，复用同一套建表顺序可以避免 schema 漂移。
     if schema_ready(pool).await? {
         println!("{db_label}: 跳过初始化");
+        cr_memory_indexes(pool).await?;
         return Ok(());
     }
 
     println!("{db_label}: 开始初始化表");
-    cr_memory_units_table(pool).await?;
+    cr_normalize_title_function(pool).await?;
+    cr_memory_units_table(pool, db_label).await?;
     cr_memory_embeddings_table(pool).await?;
     cr_memory_keywords_table(pool).await?;
     cr_memory_handles_table(pool).await?;
@@ -70,6 +73,63 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     cr_memory_relations_table(pool).await?;
     cr_memory_changes_table(pool).await?;
     cr_memory_graph_meta_table(pool).await?;
+    cr_memory_indexes(pool).await?;
+    Ok(())
+}
+
+async fn cr_memory_indexes(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    // Why：查询路径依赖不同访问模式，索引集中创建可以避免表结构和召回策略混在一起。
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
+        .execute(pool)
+        .await?;
+
+    let indexes = [
+        "CREATE INDEX IF NOT EXISTS memory_units_category_status_idx ON memory_units (category, status)",
+        "CREATE INDEX IF NOT EXISTS memory_units_status_updated_at_idx ON memory_units (status, updated_at)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS memory_units_active_title_unique ON memory_units (category, title_norm) WHERE status = 'active'",
+        "CREATE INDEX IF NOT EXISTS memory_embeddings_embedding_hnsw_idx ON memory_embeddings USING hnsw (embedding vector_cosine_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_embeddings_embedded_at_idx ON memory_embeddings (embedded_at)",
+        "CREATE INDEX IF NOT EXISTS memory_usage_use_count_idx ON memory_usage (use_count)",
+        "CREATE INDEX IF NOT EXISTS memory_usage_last_used_at_idx ON memory_usage (last_used_at)",
+        "CREATE INDEX IF NOT EXISTS memory_relations_from_memory_uuid_idx ON memory_relations (from_memory_uuid)",
+        "CREATE INDEX IF NOT EXISTS memory_relations_to_memory_uuid_idx ON memory_relations (to_memory_uuid)",
+        "CREATE INDEX IF NOT EXISTS memory_relations_relation_type_idx ON memory_relations (relation_type)",
+        "CREATE INDEX IF NOT EXISTS memory_changes_updated_at_idx ON memory_changes (updated_at)",
+        "CREATE INDEX IF NOT EXISTS memory_keywords_keyword_norm_memory_uuid_idx ON memory_keywords (keyword_norm, memory_uuid)",
+        "CREATE INDEX IF NOT EXISTS memory_handles_handle_norm_trgm_idx ON memory_handles USING gin (handle_norm gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_keywords_keyword_norm_trgm_idx ON memory_keywords USING gin (keyword_norm gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_units_title_norm_trgm_idx ON memory_units USING gin (title_norm gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_units_summary_trgm_idx ON memory_units USING gin (summary gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_units_content_trgm_idx ON memory_units USING gin (content gin_trgm_ops)",
+    ];
+
+    for index_sql in indexes {
+        sqlx::query(index_sql).execute(pool).await?;
+    }
+
+    println!("memory 索引创建成功");
+    Ok(())
+}
+
+async fn cr_normalize_title_function(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    // Why：title_norm 的规范化必须由数据库兜底，否则不同写入入口会产生不同的同名判断。
+    sqlx::query(
+        r#"
+        CREATE OR REPLACE FUNCTION normalize_title(input text)
+        RETURNS text
+        LANGUAGE sql
+        IMMUTABLE
+        AS $$
+            SELECT regexp_replace(lower(trim(input)), '[[:space:]]+', ' ', 'g');
+        $$;
+    "#,
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -79,7 +139,8 @@ async fn cr_memory_graph_meta_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::
         CREATE TABLE memory_graph_meta (
             graph_name TEXT PRIMARY KEY,
             dirty BOOLEAN NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL
+            updated_at TIMESTAMPTZ NOT NULL,
+            CHECK (graph_name <> '')
         );
     "#,
     )
@@ -108,7 +169,9 @@ async fn cr_memory_changes_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::Err
         before_state JSONB,
         after_state JSONB,
         created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL
+        updated_at TIMESTAMPTZ NOT NULL,
+        CHECK (action IN ('create', 'update', 'delete', 'restore')),
+        UNIQUE(memory_uuid)
         );
     "#,
     )
@@ -140,7 +203,15 @@ async fn cr_memory_relations_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::E
             created_at TIMESTAMPTZ NOT NULL,
             CHECK (from_memory_uuid != to_memory_uuid),
             UNIQUE(from_memory_uuid, to_memory_uuid, relation_type),
-            CHECK (weight IS NULL OR weight BETWEEN 0 AND 100)
+            CHECK (weight IS NULL OR weight BETWEEN 0 AND 100),
+            CHECK (relation_type IN (
+                'related_to',
+                'supersedes',
+                'depends_on',
+                'conflicts_with',
+                'elaborates',
+                'applies_to'
+            ))
         );
     "#,
     )
@@ -165,7 +236,8 @@ async fn cr_memory_usage_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::Error
         CREATE TABLE memory_usage (
             memory_uuid UUID PRIMARY KEY REFERENCES memory_units(uuid) ON DELETE CASCADE,
             use_count INT NOT NULL DEFAULT 0,
-            last_used_at TIMESTAMPTZ
+            last_used_at TIMESTAMPTZ,
+            CHECK (use_count >= 0)
         );
     "#,
     )
@@ -192,6 +264,8 @@ async fn cr_memory_handles_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::Err
             memory_uuid UUID NOT NULL REFERENCES memory_units(uuid) ON DELETE CASCADE,
             handle_norm TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL,
+            CHECK (handle_norm <> ''),
+            CHECK (handle_norm !~ '(^/|/$|//)'),
             UNIQUE(handle_norm)
         );
     "#,
@@ -221,6 +295,7 @@ async fn cr_memory_keywords_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::Er
             weight INT,
             created_at TIMESTAMPTZ NOT NULL,
             UNIQUE(memory_uuid, keyword_norm),
+            CHECK (keyword_norm <> ''),
             CHECK (weight IS NULL OR weight BETWEEN 0 AND 100)
         );"#,
     )
@@ -239,19 +314,37 @@ async fn cr_memory_keywords_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::Er
     }
 }
 
-// Why：启动阶段只需要知道核心表是否存在，不应该把连通性探针误当成初始化判断。
-
 async fn schema_ready(_pool: &sqlx::Pool<sqlx::Postgres>) -> Result<bool, sqlx::Error> {
-    let exists: Option<String> =
-        sqlx::query_scalar("select to_regclass('public.memory_units')::text")
-            .fetch_one(_pool)
-            .await?;
+    // Why：只检查一张核心表会把半初始化状态误判为可用，启动阶段必须确认整套基础 schema 已存在。
+    let ready: bool = sqlx::query_scalar(
+        r#"
+        SELECT
+            to_regclass('public.memory_units') IS NOT NULL
+            AND to_regclass('public.memory_embeddings') IS NOT NULL
+            AND to_regclass('public.memory_keywords') IS NOT NULL
+            AND to_regclass('public.memory_handles') IS NOT NULL
+            AND to_regclass('public.memory_usage') IS NOT NULL
+            AND to_regclass('public.memory_relations') IS NOT NULL
+            AND to_regclass('public.memory_changes') IS NOT NULL
+            AND to_regclass('public.memory_graph_meta') IS NOT NULL
+            AND to_regprocedure('public.normalize_title(text)') IS NOT NULL
+        "#,
+    )
+    .fetch_one(_pool)
+    .await?;
 
-    Ok(exists.is_some())
+    Ok(ready)
 }
 
-async fn cr_memory_units_table(_pool: &sqlx::Pool<sqlx::Postgres>) -> Result<(), sqlx::Error> {
-    let cr_memory_units = sqlx::query(
+async fn cr_memory_units_table(
+    _pool: &sqlx::Pool<sqlx::Postgres>,
+    db_label: &str,
+) -> Result<(), sqlx::Error> {
+    let category_scope_check = match db_label {
+        "share" => "CHECK (category = 'share')",
+        _ => "CHECK (category <> 'share')",
+    };
+    let create_sql = format!(
         r#"
         CREATE TABLE memory_units (
             uuid UUID PRIMARY KEY,
@@ -266,12 +359,16 @@ async fn cr_memory_units_table(_pool: &sqlx::Pool<sqlx::Postgres>) -> Result<(),
             created_at TIMESTAMPTZ NOT NULL,
             updated_at TIMESTAMPTZ NOT NULL,
             CHECK (category <> ''),
-            CHECK (title_norm <> '')
+            CHECK (category ~ '^[a-z][a-z0-9_]*$'),
+            CHECK (title_norm <> ''),
+            CHECK (title_norm = normalize_title(title_norm)),
+            CHECK ((status = 'trashed') = (trashed_at IS NOT NULL)),
+            {category_scope_check}
         );
         "#,
-    )
-    .execute(_pool)
-    .await;
+    );
+
+    let cr_memory_units = sqlx::query(&create_sql).execute(_pool).await;
 
     match cr_memory_units {
         Ok(_) => {
@@ -298,7 +395,8 @@ async fn cr_memory_embeddings_table(pool: &sqlx::Pool<sqlx::Postgres>) -> Result
             embedding vector(1024) NOT NULL,
             embedding_model TEXT NOT NULL,
             embedding_dimension INT NOT NULL CHECK (embedding_dimension = 1024),
-            embedded_at TIMESTAMPTZ NOT NULL
+            embedded_at TIMESTAMPTZ NOT NULL,
+            CHECK (embedding_model <> '')
         );
         "#,
     )
