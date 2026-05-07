@@ -1,33 +1,18 @@
-use sqlx::postgres::PgPoolOptions;
 use sqlx::{Pool, Postgres};
 
 // Why：初始化入口必须独立于服务启动，避免运行态自动修改 profile 私库或共享库。
-pub async fn init_db(database_url: &str, share_database_url: &str) -> Result<bool, sqlx::Error> {
-    // 1\ connect_db
-    let pool = match PgPoolOptions::new().connect(database_url).await {
-        Ok(pool) => pool,
-        Err(error) => {
-            eprintln!("PostgreSQL 连接失败: {error}");
-            return Err(error);
-        }
-    };
-
-    let share_pool = match PgPoolOptions::new().connect(share_database_url).await {
-        Ok(pool) => pool,
-        Err(error) => {
-            eprintln!("PostgreSQL mem_share 连接失败: {error}");
-            return Err(error);
-        }
-    };
-
+pub async fn init_db(
+    pool: &Pool<Postgres>,
+    share_pool: &Pool<Postgres>,
+) -> Result<bool, sqlx::Error> {
     // DEBUG
     // if true {
-    //     reset_memory_tables(&pool, "profile").await?;
-    //     reset_memory_tables(&share_pool, "share").await?;
+    //     reset_memory_tables(pool, "profile").await?;
+    //     reset_memory_tables(share_pool, "share").await?;
     // }
 
-    migrate_memory_tables(&pool, "profile").await?;
-    migrate_memory_tables(&share_pool, "share").await?;
+    migrate_memory_tables(pool, "profile").await?;
+    migrate_memory_tables(share_pool, "share").await?;
 
     Ok(true)
 }

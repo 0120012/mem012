@@ -1,18 +1,21 @@
 mod api;
 mod config;
+mod parse;
 mod psql;
 mod server;
+mod tools;
 
 struct CliArgs {
     command: Option<String>,
     profile: Option<String>,
+    args_json: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli_args = parse_cli_args()?;
+    let cli_args = parse::parse_cli_args()?;
 
-    //load config
+    // ==== 1. load config
     let config = match config::load_config("config.toml") {
         Ok(config) => config,
         Err(error) => {
@@ -27,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    //2\ if need init_db()
+    // ==== 2. check for init_db()
     let profile = cli_args.profile.ok_or("缺少参数: --profile")?;
     let database_url = config
         .database_url(profile.as_str())
@@ -35,26 +38,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let share_database_url = config
         .database_url("share")
         .ok_or("未找到 profile: share")?;
-    psql::init_db(database_url, share_database_url).await?;
+    // Why：main 持有运行期连接池，init_db 和后续工具才能借用同一组数据库连接。
+    let profile_pool = sqlx::postgres::PgPoolOptions::new()
+        .connect(database_url)
+        .await?;
+    let share_pool = sqlx::postgres::PgPoolOptions::new()
+        .connect(share_database_url)
+        .await?;
+    psql::init_db(&profile_pool, &share_pool).await?;
 
-    //3\ CLI: parse args json
+    // ==== 3. CLI: parse args json
+    let args_json = cli_args.args_json.ok_or("缺少参数: --args")?;
+    let request_args = parse::parse_args_json(args_json.as_str())?;
+    let tool_context = tools::ToolContext {
+        profile: profile.as_str(),
+        profile_pool: &profile_pool,
+        share_pool: &share_pool,
+    };
+
+    // ==== 4. 选择工具, 开始
+    tools::dispatch_tool_request(&tool_context, request_args).await?;
 
     Ok(())
-}
-
-fn parse_cli_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
-    // Why：入口只支持 profile + 单个命令，先用最小解析避免把 CLI 合同扩成第二套配置系统。
-    let mut command = None;
-    let mut profile = None;
-    let mut args = std::env::args().skip(1);
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "server" => command = Some(arg),
-            "--profile" => profile = args.next(),
-            _ => return Err(format!("未知参数: {arg}").into()),
-        }
-    }
-
-    Ok(CliArgs { command, profile })
 }
