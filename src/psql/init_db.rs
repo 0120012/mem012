@@ -20,12 +20,11 @@ pub async fn init_db(database_url: &str, share_database_url: &str) -> Result<boo
         }
     };
 
-
     // DEBUG
-    if true {
-        reset_memory_tables(&pool, "profile").await?;
-        reset_memory_tables(&share_pool, "share").await?;
-    }
+    // if true {
+    //     reset_memory_tables(&pool, "profile").await?;
+    //     reset_memory_tables(&share_pool, "share").await?;
+    // }
 
     migrate_memory_tables(&pool, "profile").await?;
     migrate_memory_tables(&share_pool, "share").await?;
@@ -59,7 +58,7 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     // Why：profile 库和 share 库结构一致，复用同一套建表顺序可以避免 schema 漂移。
     if schema_ready(pool).await? {
         println!("{db_label}: 跳过初始化");
-        cr_memory_indexes(pool).await?;
+        cr_memory_indexes(pool, db_label).await?;
         return Ok(());
     }
 
@@ -73,12 +72,17 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     cr_memory_relations_table(pool).await?;
     cr_memory_changes_table(pool).await?;
     cr_memory_graph_meta_table(pool).await?;
-    cr_memory_indexes(pool).await?;
+    cr_memory_indexes(pool, db_label).await?;
     Ok(())
 }
 
-async fn cr_memory_indexes(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+async fn cr_memory_indexes(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
     // Why：查询路径依赖不同访问模式，索引集中创建可以避免表结构和召回策略混在一起。
+    if memory_indexes_ready(pool).await? {
+        println!("{db_label}: memory 索引已完整，跳过创建");
+        return Ok(());
+    }
+
     sqlx::query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
         .execute(pool)
         .await?;
@@ -110,8 +114,38 @@ async fn cr_memory_indexes(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
         sqlx::query(index_sql).execute(pool).await?;
     }
 
-    println!("memory 索引创建成功");
+    println!("{db_label}: memory 索引创建成功");
     Ok(())
+}
+
+async fn memory_indexes_ready(pool: &Pool<Postgres>) -> Result<bool, sqlx::Error> {
+    // Why：CREATE INDEX IF NOT EXISTS 仍会逐条访问数据库，先检测完整性可以让已初始化库直接跳过索引阶段。
+    let ready: bool = sqlx::query_scalar(
+        r#"
+        SELECT
+            to_regclass('public.memory_units_category_status_idx') IS NOT NULL
+            AND to_regclass('public.memory_units_status_updated_at_idx') IS NOT NULL
+            AND to_regclass('public.memory_units_active_title_unique') IS NOT NULL
+            AND to_regclass('public.memory_embeddings_embedding_hnsw_idx') IS NOT NULL
+            AND to_regclass('public.memory_embeddings_embedded_at_idx') IS NOT NULL
+            AND to_regclass('public.memory_usage_use_count_idx') IS NOT NULL
+            AND to_regclass('public.memory_usage_last_used_at_idx') IS NOT NULL
+            AND to_regclass('public.memory_relations_from_memory_uuid_idx') IS NOT NULL
+            AND to_regclass('public.memory_relations_to_memory_uuid_idx') IS NOT NULL
+            AND to_regclass('public.memory_relations_relation_type_idx') IS NOT NULL
+            AND to_regclass('public.memory_changes_updated_at_idx') IS NOT NULL
+            AND to_regclass('public.memory_keywords_keyword_norm_memory_uuid_idx') IS NOT NULL
+            AND to_regclass('public.memory_handles_handle_norm_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_keywords_keyword_norm_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_units_title_norm_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_units_summary_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_units_content_trgm_idx') IS NOT NULL
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(ready)
 }
 
 async fn cr_normalize_title_function(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
