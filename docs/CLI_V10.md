@@ -6,11 +6,11 @@
 
 ## 0. 设计原则（V10）
 
-- 只有一个可执行程序：`llm_memory`
-- CLI 与 MCP 共用同一组工具名、入参字段、返回结构
+- 只有一个可执行程序：`mem012`
+- 只支持 CLI 单次调用模式
 - shared core 只接收一种 canonical schema：`tool + args`
 - 一次工具调用只做一件事：请求里只允许 1 个 `tool`
-- `profile` 是数据库隔离边界，只能由启动参数或 TOML 配置选择，不允许进入工具 `args`
+- `profile` 是数据库隔离边界，只能由启动参数选择，不允许进入工具 `args`
 - 禁止 URI：不再接受 `domain://path`
 - `handle` 是人类和 Agent 的快速定位索引，不是数据库主键
 - 精确读取优先使用 `memory_uuid`
@@ -20,37 +20,27 @@
 
 ## 1. 运行模式
 
-CLI 模式：
+唯一运行模式：
 
 ```bash
-llm_memory --args '<json_object>'
-```
-
-可选参数：
-
-```bash
-llm_memory --config ./config.toml --profile DOGE --args '<json_object>'
+mem012 --profile riko --args '<json_object>'
 ```
 
 规则：
 
+- `--profile` 必填，且必须存在于配置里的数据库 profile
 - `--args` 必填，且必须是 JSON object
 - `--args.tool` 必填，且必须是已注册工具名
 - `--args.args` 必填，且必须是 JSON object
-- `--profile` 可选；传入时只覆盖本进程使用的数据库 profile，不进入工具语义
-- 未传 `--profile` 时使用 `config.toml` 的 `[profile].default`
-- profile 必须存在于 `database.profiles`
-
-MCP 模式：
-
-- 通过 stdio 暴露同一组工具
-- MCP 收到的 tool name 与 params，进入 shared core 前必须归一化为 `tool + args`
-- MCP 只是传输层，不得私自扩展第二套工具语义
+- `--profile` 只选择本次进程使用的数据库 profile，不进入工具语义
+- 不支持 `--config`
+- 不支持默认 profile
+- 不支持 MCP 模式
 
 CLI 示例：
 
 ```bash
-llm_memory --profile DOGE --args '{"tool":"lookup_memory_by_handle","args":{"handle":"core/backend/database/profile隔离"}}'
+mem012 --profile riko --args '{"tool":"lookup_memory_by_handle","args":{"handle":"core/backend/database/profile隔离"}}'
 ```
 
 ## 2. 请求合同
@@ -99,7 +89,7 @@ llm_memory --profile DOGE --args '{"tool":"lookup_memory_by_handle","args":{"han
   "error": null,
   "meta": {
     "spec_version": "v10",
-    "profile": "DOGE"
+    "profile": "riko"
   }
 }
 ```
@@ -117,7 +107,7 @@ llm_memory --profile DOGE --args '{"tool":"lookup_memory_by_handle","args":{"han
   },
   "meta": {
     "spec_version": "v10",
-    "profile": "DOGE"
+    "profile": "riko"
   }
 }
 ```
