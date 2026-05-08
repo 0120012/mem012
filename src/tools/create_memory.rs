@@ -10,7 +10,7 @@ struct CreateMemoryArgs {
     keywords: Vec<String>,
     recall_when: Option<String>,
     exclude_when: Option<String>,
-    handles: Option<Vec<String>>,
+    handle: Option<String>,
 }
 
 pub async fn run(
@@ -28,9 +28,12 @@ pub async fn run(
         .fetch_one(context.profile_pool)
         .await?;
 
+    // state
     let after_state = build_after_state(&create_args, &title_norm, &memory_uuid)?;
     reject_duplicate_memory(context.profile_pool, &after_state).await?;
-    insert_memory_change(context.profile_pool, &memory_uuid, &after_state).await?;
+
+    // database writes
+    create_memory_transaction(context.profile_pool, &memory_uuid, &after_state).await?;
     println!(
         "{}",
         serde_json::json!({
@@ -56,7 +59,7 @@ fn build_after_state(
     title_norm: &str,
     memory_uuid: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    // Why：after_state 是审查表和正式表之间的合同，先独立成函数避免写库逻辑混入状态组装。
+    // Why：after_state 是当前工作态快照，二次确认和回滚都必须基于同一份完整状态。
     let normalize_text = |value: &str| {
         value
             .split_whitespace()
@@ -75,10 +78,8 @@ fn build_after_state(
         .map(|keyword| serde_json::json!({ "keyword_norm": normalize_text(keyword), "weight": null }))
         .collect::<Vec<_>>();
     let handles = args
-        .handles
+        .handle
         .as_deref()
-        .unwrap_or(&[])
-        .iter()
         .map(|handle| {
             let handle_norm = handle
                 .split('/')
@@ -87,6 +88,7 @@ fn build_after_state(
                 .join("/");
             serde_json::json!({ "handle_norm": handle_norm })
         })
+        .into_iter()
         .collect::<Vec<_>>();
 
     Ok(serde_json::json!({
@@ -111,7 +113,7 @@ async fn reject_duplicate_memory(
     pool: &sqlx::Pool<sqlx::Postgres>,
     after_state: &serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Why：create 只写 pending 提案，重复检测必须同时覆盖正式表和待审查提案。
+    // Why：memory_units 已包含待确认工作态，重复检测只需要检查当前可用记忆。
     let get_text = |key: &str| {
         after_state["memory"][key]
             .as_str()
@@ -123,9 +125,9 @@ async fn reject_duplicate_memory(
     let duplicate_message: Option<String> = sqlx::query_scalar(
         r#"
         SELECT CASE
-            WHEN EXISTS (SELECT 1 FROM memory_units WHERE title_norm = $1) OR EXISTS (SELECT 1 FROM memory_changes WHERE after_state #>> '{memory,title_norm}' = $1) THEN 'DUPLICATE_TITLE: title_norm 已存在或已有待审查提案'
-            WHEN EXISTS (SELECT 1 FROM memory_units WHERE content = $2) OR EXISTS (SELECT 1 FROM memory_changes WHERE after_state #>> '{memory,content}' = $2) THEN 'DUPLICATE_CONTENT: content 已存在或已有待审查提案'
-            WHEN EXISTS (SELECT 1 FROM memory_units WHERE summary = $3) OR EXISTS (SELECT 1 FROM memory_changes WHERE after_state #>> '{memory,summary}' = $3) THEN 'DUPLICATE_SUMMARY: summary 已存在或已有待审查提案'
+            WHEN EXISTS (SELECT 1 FROM memory_units WHERE title_norm = $1) THEN 'DUPLICATE_TITLE: title_norm 已存在'
+            WHEN EXISTS (SELECT 1 FROM memory_units WHERE content = $2) THEN 'DUPLICATE_CONTENT: content 已存在'
+            WHEN EXISTS (SELECT 1 FROM memory_units WHERE summary = $3) THEN 'DUPLICATE_SUMMARY: summary 已存在'
         END
         "#,
     )
@@ -142,12 +144,16 @@ async fn reject_duplicate_memory(
     Ok(())
 }
 
-async fn insert_memory_change(
+async fn create_memory_transaction(
     pool: &sqlx::Pool<sqlx::Postgres>,
     memory_uuid: &str,
     after_state: &serde_json::Value,
 ) -> Result<(), sqlx::Error> {
-    // Why：create_memory 只创建待审查提案，正式表写入必须留给 review 确认阶段。
+    // Why：create 要同时写工作态和回滚记录，先建立事务边界避免后续出现半写入状态。
+    let mut tx = pool.begin().await?;
+    insert_memory_unit(&mut tx, memory_uuid, after_state).await?;
+    insert_memory_keywords(&mut tx, memory_uuid, after_state).await?;
+    insert_memory_handles(&mut tx, memory_uuid, after_state).await?;
     sqlx::query(
         r#"
         INSERT INTO memory_changes (
@@ -160,7 +166,94 @@ async fn insert_memory_change(
     )
     .bind(memory_uuid)
     .bind(after_state.to_string())
-    .execute(pool)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    Ok(())
+}
+
+async fn insert_memory_unit(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    after_state: &serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    // Why：memory_units 是 Agent 可回读的工作态，create 不能只留下待确认变更。
+    sqlx::query(
+        r#"
+        INSERT INTO memory_units (
+            uuid, category, title_norm, content, summary, status,
+            recall_when, exclude_when, trashed_at, created_at, updated_at
+        )
+        SELECT
+            $1::uuid,
+            state #>> '{memory,category}',
+            state #>> '{memory,title_norm}',
+            state #>> '{memory,content}',
+            state #>> '{memory,summary}',
+            state #>> '{memory,status}',
+            state #>> '{memory,recall_when}',
+            state #>> '{memory,exclude_when}',
+            (state #>> '{memory,trashed_at}')::timestamptz,
+            now(),
+            now()
+        FROM (SELECT $2::jsonb AS state) input
+        "#,
+    )
+    .bind(memory_uuid)
+    .bind(after_state.to_string())
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+async fn insert_memory_keywords(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    after_state: &serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    // Why：keywords 是检索入口的一部分，必须和 memory_units 在同一事务内保持一致。
+    sqlx::query(
+        r#"
+        INSERT INTO memory_keywords (uuid, memory_uuid, keyword_norm, weight, created_at)
+        SELECT
+            gen_random_uuid(),
+            $1::uuid,
+            keyword ->> 'keyword_norm',
+            (keyword ->> 'weight')::int,
+            now()
+        FROM jsonb_array_elements($2::jsonb -> 'keywords') AS keywords(keyword)
+        "#,
+    )
+    .bind(memory_uuid)
+    .bind(after_state.to_string())
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+async fn insert_memory_handles(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    after_state: &serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    // Why：handle 是人工定位入口，必须和 memory_units 同事务提交，避免出现悬空路径。
+    sqlx::query(
+        r#"
+        INSERT INTO memory_handles (uuid, memory_uuid, handle_norm, created_at)
+        SELECT
+            gen_random_uuid(),
+            $1::uuid,
+            handle ->> 'handle_norm',
+            now()
+        FROM jsonb_array_elements($2::jsonb -> 'handles') AS handles(handle)
+        "#,
+    )
+    .bind(memory_uuid)
+    .bind(after_state.to_string())
+    .execute(&mut **tx)
     .await?;
 
     Ok(())
@@ -203,20 +296,15 @@ fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn st
         }
     }
 
-    if let Some(handles) = &args.handles {
-        if handles.is_empty() {
-            return Err("handles 如果提供，不能为空数组".into());
-        }
-        for handle in handles {
-            let handle = handle.trim();
-            if handle.is_empty()
-                || handle.starts_with('/')
-                || handle.ends_with('/')
-                || handle.contains("//")
-                || handle.split('/').next() != Some(category)
-            {
-                return Err("handles 必须是非空路径，且第一段等于 category".into());
-            }
+    if let Some(handle) = &args.handle {
+        let handle = handle.trim();
+        if handle.is_empty()
+            || handle.starts_with('/')
+            || handle.ends_with('/')
+            || handle.contains("//")
+            || handle.split('/').next() != Some(category)
+        {
+            return Err("handle 必须是非空路径，且第一段等于 category".into());
         }
     }
 
