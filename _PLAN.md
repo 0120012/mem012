@@ -1,74 +1,89 @@
-# create_memory 最小实现计划
+# memory 工作态与二次确认计划
 
 ## Context
 
-- `docs/CLI_V10.md` 已定义入口：`mem012 --profile riko --args '<json_object>'`。
-- `create_memory` 的请求体是 `{"tool":"create_memory","args":{...}}`。
-- 当前数据库初始化已具备 `memory_changes`、`memory_units`、`memory_keywords`、`memory_handles`、`memory_graph_meta`。
-- 本阶段只实现 `create_memory`，不提前实现 lookup、search、patch、rollback。
-- `docs/DB_PLAN.md` 的数据库合同优先于 CLI 草案：Agent 写入先进入 `memory_changes`，不直接修改正式表。
-- 逻辑顺序固定为：`create_memory` 写 `memory_changes`；审查确认后才写 `memory_units`；确认事务内再标记 graph dirty。
-- graph 当前只通过 `memory_graph_meta.dirty = true` 表示需要重建，不直接写 AGE 图。
-- 工具执行需要两个长期连接池：当前 profile 私库 pool 和 `mem_share` pool。
-- `init_db` 不应该再自己创建临时 pool；它应接收 main 已创建好的 pool 引用，完成 schema 检查/迁移后把同一组 pool 留给 tools 使用。
+- “第一次确认”是 Agent 对自己输出的确认；“第二次确认”才是用户确认。
+- 用户确认前，Agent 仍然必须能回读、查询、继续使用这条记忆。
+- 现有表已经足够表达这个流程，不新增表字段。
+- `memory_units` 是当前工作态；Agent 和用户都读这里。
+- `memory_changes` 是否存在表示是否等待用户二次确认。
+- `memory_changes.before_state` 是回滚基线；create 时为 `null`。
+- `memory_changes.after_state` 是当前等待用户确认的最终态。
+- 用户未确认前直接更改记忆时，只更新同一条 `memory_changes.after_state`，不新建第二条 change。
 
 ## Runtime Flow
 
 ```text
-main.rs
--> load config
--> resolve profile database_url + share database_url
--> create profile_pool + share_pool
--> psql::init_db(&profile_pool, &share_pool)
--> parse --args JSON
--> build ToolContext { profile, profile_pool, share_pool }
--> tools::dispatch_tool_request(&context, request).await
--> match tool
--> create_memory::run(&context, args).await
+create_memory
+-> transaction
+-> insert memory_units
+-> insert keywords / handles / relations
+-> insert memory_changes(action = create, before_state = null, after_state = current_state)
+-> commit
+-> re-read memory_units
+-> return database state
 ```
 
-边界：
+```text
+edit memory with open change
+-> transaction
+-> lock memory_units + memory_changes
+-> update memory_units / derived rows
+-> rebuild current_state from database
+-> update same memory_changes.after_state
+-> commit
+-> re-read memory_units
+```
 
-- `main.rs` 负责配置、连接池生命周期、启动模式。
-- `psql::init_db` 只负责确认 schema 可用，不拥有运行态连接。
-- `tools/mod.rs` 负责 canonical request 校验和 `match tool` 分发。
-- `tools/create_memory.rs` 负责 create_memory 的字段校验和 `memory_changes` 写入。
+```text
+user approve
+-> delete memory_changes row
+```
+
+```text
+user reject create
+-> transaction
+-> delete memory_changes row
+-> delete memory_units row
+-> cascade deletes derived rows
+```
+
+```text
+user reject update/delete/restore
+-> transaction
+-> restore memory_units and derived rows from before_state
+-> delete memory_changes row
+```
 
 ## Constraints
 
-- 每次只改一个最小函数或一个最小模块边界。
-- `create_memory` 只产生提案，不写 `memory_units`、`memory_keywords`、`memory_handles`、`memory_relations`、`memory_graph_meta`。
-- 确认提案时才需要把正式表写入和 graph dirty 放进同一个数据库事务。
-- `profile` 只能来自 CLI 参数，不能进入工具 `args`。
-- `create_memory.args` 必须拒绝缺字段、空字符串、非数组 keywords、非字符串 handles。
-- `category` 若未提供，先使用 `core`；share 库写入另行处理，不混入本步骤。
-- `memory_uuid` 由后端生成，调用方不能传入。
-- `title_norm` 必须调用数据库 `normalize_title(text)` 生成，后端不复制 normalize 规则。
-- `after_state` 不保存 `title`，只保存 `title_norm`。
-- `main.rs` 负责创建并持有 profile/share 两个 pool，tools 层只接收上下文引用，不自己重新读取配置或重新连接数据库。
-- 默认写入当前 profile pool；只有明确 share 入口才使用 share pool。
-- `dispatch_tool_request` 和具体工具函数必须是 async，因为 match 分发后的工具会调用 SQL。
-- `ToolContext` 只保存引用：`profile`、`profile_pool`、`share_pool`；不要把 pool move 进单个工具。
+- 不新增 `review_state`；是否待确认由 `memory_changes` 是否存在派生。
+- 不新增 `revision`；第一版先依赖事务锁和回读，避免提前引入并发状态。
+- `status` 只表示生命周期：`active` / `trashed`。
+- `memory_units` 永远代表当前可读、可查、可继续修改的工作态。
+- `memory_changes` 不保存 approved/rejected 历史；确认或回滚后删除。
+- 同一个 `memory_uuid` 同时最多一条 open change，由现有 `UNIQUE(memory_uuid)` 保证。
+- 每次修改 `memory_units` 后，如果存在 open change，必须同步更新 `after_state`。
+- 普通 lookup/search 直接读 `memory_units`；响应里的 pending 状态由 left join `memory_changes` 派生。
+- 后续若真实出现多客户端覆盖问题，再单独引入版本字段；现在不提前加。
 
 ## Checklist
 
-- [x] 调整 `psql::init_db`：从接收 database_url 改为接收 profile/share 两个 pool 引用。
-- [x] 在 `main.rs` 创建 profile/share 两个长期 `PgPool`，并复用它们执行 `init_db`。
-- [x] 通过 `ToolContext` 把 profile/share 两个 pool 传入工具调用。
-- [x] 定义 `ToolContext`：包含 `profile`、profile pool、share pool。
-- [x] 把 `dispatch_tool_request` 改成 async，并接收 `&ToolContext` 和 canonical request。
-- [x] 解析并校验 canonical request：只允许顶层 `tool` 和 `args`，且 `tool == "create_memory"`。
-- [x] 定义 `create_memory` 的最小输入结构，并完成 serde 类型解析。
-- [x] 校验 `create_memory` 的必填字符串、keywords、handles、category、禁止字段。
-- [x] 使用 `context.profile_pool` 调用数据库 `normalize_title(text)` 得到 `title_norm`。
-- [x] 规范化并校验 `category`、`keywords`、`handles`，并拒绝 `profile`、URI、空字符串。
-- [x] 由 PostgreSQL 生成 `memory_uuid`，组装完整 `after_state`：`memory`、`keywords`、`handles`、`relations`。
-- [x] 写入前检查 `title_norm`、`content`、`summary` 是否已存在于 `memory_units` 或 `memory_changes`。
-- [x] 插入 `memory_changes`：`action='create'`、`before_state=NULL`、`after_state`、`memory_uuid`。
-- [x] 输出符合 CLI V10 的 JSON 响应外壳，返回 `memory_uuid` 和 `pending_review` 状态。
-- [ ] 用一次 `cargo check -q` 和一次本地 `cargo run -- ...create_memory...` 验证提案写入。
+- [x] 更新 `build_after_state` 语义：它表示当前完整工作态，不再表示“未生效提案”。
+- [x] 把 `create_memory` 改为事务写入 `memory_units` 和 `memory_changes`。
+- [x] 在 `create_memory` 事务里写入 `memory_keywords`。
+- [x] 在 `create_memory` 事务里写入 `memory_handles`。
+- [x] 更新重复检测：正式表存在即禁止重复，open change 只作为 pending 状态来源。
+- [ ] 实现 user approve：删除 open change。
+- [ ] 实现 user reject create：删除 open change 和对应 `memory_units`。
+- [ ] 实现 user reject update/delete/restore：用 `before_state` 恢复工作态并删除 open change。
+- [x] 更新 `docs/DB_PLAN.md`，使数据库合同与现有表工作态模型一致。
+- [x] 更新 `docs/CLI_V10.md`，使 create_memory 与现有表工作态模型一致。
+- [ ] 更新 `docs/CLI_V10.md`，补充 approve/reject 响应与现有表工作态模型。
+- [x] 用 `cargo check -q` 验证编译。
 
 ## Later
 
-- [ ] 实现确认提案：把 `after_state` 写入 `memory_units`、`memory_keywords`、`memory_handles`。
-- [ ] 确认事务内标记 `memory_graph_meta.dirty = true`，然后删除对应 `memory_changes`。
+- [ ] 需要完整审计时，再新增 `memory_events`，不要把历史塞回 `memory_changes`。
+- [ ] 真实并发覆盖成为问题时，再给 `memory_units` 增加版本字段。
+- [ ] `create_memory` 收尾后，再单独规划 `update_memory`。
