@@ -5,7 +5,7 @@
 重写目标不是复刻 mem_012 旧版 URI 图，而是做一套更适合长期 Agent 记忆的后端：
 
 ```text
-profile 私库 + mem_share 共享库 + category 分类 + Memory Unit + 关键词主导搜索 + 关系图 + 提案审查
+profile 私库 + mem_share 共享库 + category 分类 + Memory Unit + 关键词主导搜索 + 关系图 + 二次确认
 ```
 
 ## 已确定结论
@@ -40,7 +40,7 @@ shared -> mem_share
 - 私库 handle 按原样解析；共享库 handle 使用完整 `share/...`。
 - handle 第一段是 `share` 时，后端直接查询 `mem_share`，不再查当前 profile 私库。
 - create/update/delete 的目标 handle 第一段是 `share` 时，后端直接操作 `mem_share`。
-- 目标为 `mem_share` 时，待审查提案和确认后的正式写入都只作用于 `mem_share`。
+- 目标为 `mem_share` 时，工作态写入和二次确认记录都只作用于 `mem_share`。
 - `mem_share` 只允许 `category = share`；profile 私库禁止使用 `category = share`。
 - `share/Thinking_in_Systems/chapter_1_system_basics` 完整写入 `mem_share.memory_handles.handle_norm`。
 - 所有读接口返回 `db_scope = profile | share`；`db_scope = profile` 时同时返回当前 profile 名。
@@ -53,14 +53,14 @@ shared -> mem_share
 数据库分三层：
 
 ```text
-源数据表：已确认业务状态
-派生索引：只从已确认状态生成，可重建
-待审查变更表：只保存当前未确认提案
+源数据表：当前工作态，Agent 和用户都直接读取
+派生索引：只从当前工作态生成，可重建
+待确认变更表：只保存当前未二次确认的回滚凭证
 ```
 
 ### memory_units
 
-记忆本体。每一条都是已确认、可搜索、可召回的最小认知单元。
+记忆本体。每一条都是当前可搜索、可召回的最小认知单元；是否等待用户二次确认由 `memory_changes` 是否存在派生。
 
 ```text
 uuid uuid primary key
@@ -129,15 +129,15 @@ embedding_dimension = 1024
 
 - `embedding` 由 title_norm + summary + content + keywords 生成，只服务语义召回。
 - `embedding_model` 和 `embedded_at` 给人类和运维查看；Agent 搜索时无需关注。
-- 确认 create/update 提案前，后端必须先为 after_state 生成 embedding；生成失败则拒绝确认，不修改正式表。
-- 确认事务内写入 `memory_embeddings` 失败时，整次确认回滚，`memory_changes` 保留。
-- 正常写入成功后的 active memory 必须有 embedding；历史导入或升级异常导致缺失时，不参与语义召回。
+- create/update 写入工作态后，后端应生成或刷新 embedding；生成失败不回滚工作态，但该 memory 暂不参与语义召回。
+- 写入 `memory_embeddings` 失败时，保留 `memory_units` 和 `memory_changes`，由后续重建任务补齐派生索引。
+- active memory 有 embedding 时参与语义召回；历史导入、升级异常或生成失败导致缺失时，不参与语义召回。
 - 第一版固定 1024 维；远程 embedding 必须请求 1024 维。
 - 本地 fallback 必须选择 1024 维模型；如果本机资源不足，可以作为非常驻重建任务运行。
-- 只有 title_norm / summary / content / keywords 变化并被确认时才重算 embedding；usage、纯 handle 变更不重算。
-- 提案阶段如需关系候选，可以临时生成 embedding，但不得写入 `memory_embeddings`。
+- 只有 title_norm / summary / content / keywords 变化时才重算 embedding；usage、纯 handle 变更不重算。
+- 如需关系候选，可以临时生成 embedding，但不得把临时结果写入 `memory_embeddings`。
 - 未来更换维度时，新建下一代表，回填完成并建好 HNSW 后再切换查询。
-- `memory_changes` 不记录 `memory_embeddings`；embedding 是派生索引，由确认流程生成或重建。
+- `memory_changes` 不记录 `memory_embeddings`；embedding 是派生索引，由写入流程或重建任务生成。
 
 维度升级流程：
 
@@ -221,7 +221,7 @@ query: 后端 normalize_query 后分发到 handle / keyword / trigram / embeddin
 
 - `normalize_title(text)` 由 migration 创建，是 title_norm 规范化的唯一权威。
 - `normalize_title` 至少执行 trim、lower、连续空白折叠；结果不能为空，不得清空中文、数字或下划线。
-- 后端不得维护独立 title normalize 语义；提案创建、提案更新和冲突检查都必须调用数据库函数得到 `title_norm`。
+- 后端不得维护独立 title normalize 语义；create、update 和冲突检查都必须调用数据库函数得到 `title_norm`。
 - `normalize_keyword` 至少执行 trim、lower、连续空白折叠；空字符串非法。
 - `normalize_handle` 对每个 path segment 执行 trim、lower、连续空白折叠；空 segment 非法。
 - `normalize_handle` 必须保留 `/`，且第一段必须等于 `memory_units.category`。
@@ -244,7 +244,7 @@ last_used_at timestamptz
 
 ### memory_changes
 
-待审查提案表。Agent 写入只进入这里；正式表、embedding、relations、AGE 只在确认后更新。
+待确认变更表。Agent 写入会先落到当前工作态；本表只记录用户二次确认和撤销所需的回滚状态。
 
 ```text
 uuid uuid primary key
@@ -265,27 +265,24 @@ unique(memory_uuid)
 
 规则：
 
-- 使用 baseline 模型：审查的是“最后确认状态 -> 当前状态”。
-- 表中存在记录就表示该 memory 有待审查变更；不再保存 accepted / rolled_back 历史。
+- 使用 baseline 模型：二次确认的是“最后确认状态 -> 当前工作态”。
+- 表中存在记录就表示该 memory 等待用户二次确认；不再保存 accepted / rolled_back 历史。
 - 同一 memory 同时最多一条 change；不建 batch 表。
-- Agent 写入只 upsert change，不修改正式表和派生索引。
-- 第一次未确认写入创建 change：`before_state` 是最后确认状态，`after_state` 是提案状态。
-- create 提案的 `before_state` 为空，`after_state` 保存待创建的 memory、keywords、handles、relations。
-- 后续未确认写入不新建 change，只更新同一条 change 的 `after_state` 和 `updated_at`。
-- state 以 JSON 保存受影响数据，结构固定为 memory、keywords、handles、relations。
-- 创建或更新提案时，可以 best-effort 检查正式表和其他 `memory_changes.after_state`，用于提前提示 active category/title_norm 或 handle 冲突。
-- pending-pending 冲突不作为数据库一致性保证；`memory_changes.after_state` 不承担唯一约束。
-- 最终确认必须重新检查正式表 handle / active category + title_norm 冲突，并以正式表唯一约束为准。
-- update 提案不原地更新正式表；title_norm、content、summary、keywords、handles、relations 变化都记录在 state 里。
+- create 会同时写入 `memory_units`、派生索引和 `memory_changes`；`before_state` 为空，`after_state` 是已生效的当前工作态。
+- update / delete / restore 会先修改当前工作态；如果没有 open change，先保存 `before_state`；如果已有 open change，只覆盖 `after_state` 和 `updated_at`。
+- state 以 JSON 保存完整工作态快照，结构固定为 memory、keywords、handles、relations。
+- 创建或更新时，重复检测以 `memory_units`、`memory_handles` 等当前工作态表和正式唯一约束为准；`memory_changes.after_state` 不承担唯一约束。
+- 用户确认时只删除对应 `memory_changes`，不再把 `after_state` 二次写入工作态。
+- 用户拒绝 create 时，删除 `memory_changes`，再删除对应 `memory_units`，由外键级联清理派生表。
+- 用户拒绝 update / delete / restore 时，用 `before_state` 恢复当前工作态，再删除 `memory_changes`。
+- 第一版 `memory_changes.memory_uuid` 不建外键；后端事务保证 open change 指向当前工作态，拒绝 create 时也便于先删 change 再删 memory。
+- update 的 title_norm、content、summary、keywords、handles、relations 变化都会立即体现在当前工作态和 `after_state`。
 - 只修改 relation 也归入 `action = update`，不单独设置 link / unlink action。
-- `memory_uuid` 对 update/delete/restore 表示正式表里的目标 memory；对 create 表示预分配的新 memory uuid。
-- create 提案的 `memory_uuid` 还不存在于 `memory_units`，所以这里不建外键。
+- `memory_uuid` 对所有 action 都表示当前工作态里的目标 memory；create 在同一事务内先写入 `memory_units`。
 - 自动生成或修改的 relations 只进入当前目标 memory 的 change。
 - relation 指向的其他 memory 只是引用对象，不产生自己的 change。
-- delete 提案只在 `after_state` 里把 status 设为 `trashed` 并写入 `trashed_at`；确认后才写入正式表。
-- restore 提案只在 `after_state` 里把 status 设为 `active` 并清空 `trashed_at`；确认时必须校验 active 同名冲突。
-- 撤销提案只删除对应 change，不修改正式表，不同步 AGE。
-- 人类接受提案后把 `after_state` 写入正式表和派生索引，再删除对应 change。
+- delete 会立即把 status 设为 `trashed` 并写入 `trashed_at`，同时记录 change；拒绝时从 `before_state` 恢复。
+- restore 会立即把 status 设为 `active` 并清空 `trashed_at`，同时记录 change；拒绝时从 `before_state` 恢复。
 
 state JSON 结构：
 
@@ -298,13 +295,13 @@ relations: [{from_memory_uuid, to_memory_uuid, relation_type, weight, note}]
 
 规则：
 
-- `before_state` 是最后确认状态；create 提案时为 null。
-- `after_state` 是完整目标状态，不是 patch。
+- `before_state` 是最后确认状态；create 时为 null。
+- `after_state` 是当前完整工作态，不是 patch。
 - `after_state.memory.title_norm` 必须已经由数据库 `normalize_title` 计算完成。
 - `after_state` 不保存 `title`、`raw_title` 或 `display_title`。
-- `keywords`、`handles`、`relations` 都表示确认后的完整集合。
+- `keywords`、`handles`、`relations` 都表示当前工作态的完整集合。
 - `relations` 中至少一端必须等于 `memory_changes.memory_uuid`。
-- `relations` 的另一端必须是同一数据库内已确认的 active memory；第一版不允许 relation 指向未确认提案。
+- `relations` 的另一端必须是同一数据库内的 active memory；第一版 `create_memory` 不自动建立 relation。
 - `memory_changes` 不记录 usage、embedding、AGE 内部数据。
 
 ### memory_relations
@@ -365,15 +362,15 @@ applies_to
 
 ### RelationResolver
 
-后端默认关系提案生成器。Agent 不直接决定 relation；人类只做二次确认、撤销或修正。
+后端默认关系候选生成器。Agent 不直接决定 relation；人类只做二次确认、撤销或修正。
 
 触发时机：
 
 ```text
 create/update memory
 -> begin
--> 读取已确认 memory / keywords / handles / relations
--> RelationResolver 生成默认 relation 提案
+-> 读取当前工作态 memory / keywords / handles / relations
+-> RelationResolver 生成默认 relation 候选
 -> upsert memory_changes(after_state)
 -> commit
 ```
@@ -381,7 +378,7 @@ create/update memory
 输入：
 
 ```text
-提案状态的 title_norm / summary / content / keywords / handles，以及已确认 memory_embeddings 行
+当前工作态的 title_norm / summary / content / keywords / handles，以及已有 memory_embeddings 行
 ```
 
 候选来源：
@@ -401,11 +398,11 @@ embedding topK
 - `supersedes` 需要同主题，并且 title_norm / summary / content 出现明确替代、更新、废弃语义。
 - 不对 `trashed` memory 建 relation。
 - 不跨数据库建 relation。
-- 不对未确认 memory 建 relation；create 提案只能关联已确认 active memory。
+- relation 只能关联同一数据库内的 active memory；`trashed` memory 不参与。
 - 已存在相同 `from_memory_uuid / to_memory_uuid / relation_type` 时不重复写入。
 - `related_to / conflicts_with` 写入前必须先做 uuid 规范化，再检查重复。
 - 所有自动 relation 只进入当前目标 memory 的 `after_state.relations`。
-- 人类审查可以接受、撤销，或在确认前把 relation_type 修正为 `depends_on / conflicts_with / elaborates / applies_to`。
+- 人类二次确认前可以接受、撤销，或把 relation_type 修正为 `depends_on / conflicts_with / elaborates / applies_to`。
 
 ### memory_graph_meta
 
@@ -457,14 +454,14 @@ created_at text
 
 规则：
 
-- SQL 主数据仍是已确认的 `memory_units` 和 `memory_relations`。
+- SQL 主数据是当前工作态的 `memory_units` 和 `memory_relations`。
 - AGE 内部表由 `create_graph('memory_graph')` 和 label 创建，业务代码不直接写 AGE schema。
-- 确认提案时，同一事务内更新 SQL 主表、派生索引，删除 `memory_changes`，并把 `memory_graph_meta.dirty` 标记为 true。
+- create/update/delete/restore 写入工作态时应更新 SQL 主表和派生索引，并在关系或可见性变化时把 `memory_graph_meta.dirty` 标记为 true。
 - AGE 不进入确认事务；AGE 失败不阻塞 memory 确认。
 - AGE sync worker 只在 `dirty = true` 时从 SQL 主表整图重建。
 - 不建 AGE 同步队列表；需要修复时仍从 SQL 主表整图重建。
 - `trashed` memory 不进入 AGE。
-- relation 删除确认后只标记 `dirty`；撤销提案不触碰 AGE。
+- relation 删除写入工作态后标记 `dirty`；撤销时如恢复 relation，也需要重新标记 `dirty`。
 - 不把 AGE 内部 id 写回业务表；所有同步都靠 `uuid` 和 `relation_uuid`。
 - AGE 可以整图重建：清空图后从 `memory_units` / `memory_relations` 回放。
 - `dirty = true` 时复杂 AGE 查询必须拒绝或降级到 SQL 一跳关系查询。
@@ -625,12 +622,13 @@ usage
 
 ## 五、审查与撤销流程
 
-Agent 提案流程：
+Agent 写入流程：
 
 ```text
 begin
-读取已确认状态作为 before_state
-生成 after_state 提案
+读取当前工作态；如果没有 open change，保存 before_state
+生成 after_state 工作态
+写入 memory_units / keywords / handles / relations
 如果没有 change，写 memory_changes(before_state, after_state)
 如果已有 change，只更新 after_state 和 updated_at
 commit
@@ -639,8 +637,8 @@ commit
 回收站流程：
 
 ```text
-delete 确认：status = trashed，trashed_at = now()，标记 AGE dirty
-restore 确认：校验没有 active 同名冲突，status = active，trashed_at = null，标记 AGE dirty
+delete：status = trashed，trashed_at = now()，并写入或更新 memory_changes
+restore：校验没有 active 同名冲突，status = active，trashed_at = null，并写入或更新 memory_changes
 purge：trashed_at 超过 TOML 配置的 trash_retention_days 后硬删除 memory_units，级联删除派生数据
 ```
 
@@ -649,28 +647,26 @@ purge：trashed_at 超过 TOML 配置的 trash_retention_days 后硬删除 memor
 ```text
 begin
 锁定并读取 memory_changes
-校验 after_state，并重新检查 handle / active category + title_norm 冲突
-按 action 应用 after_state
-标记 memory_graph_meta.dirty = true
+确认当前工作态仍与 after_state 一致
 删除 memory_changes
 commit
 ```
 
-如果确认时发现正式表冲突：
+如果确认时发现当前工作态已和 after_state 不一致：
 
 ```text
 rollback
-正式表不变
 memory_changes 保留
-返回 conflict 错误
+返回 stale_change 错误
 ```
 
-action 应用规则：
+拒绝应用规则：
 
 ```text
-create/update：写 memory_units / keywords / handles / memory_relations，生成或更新 embedding，标记 AGE dirty
-delete：status = trashed，trashed_at = now()，标记 AGE dirty，保留 SQL 数据和 handle 占用直到 purge
-restore：校验 active 同名冲突，status = active，trashed_at = null，必要时重建 embedding，标记 AGE dirty
+create：删除 memory_changes，再删除 memory_units，级联清理派生数据
+update：用 before_state 恢复 memory_units / keywords / handles / memory_relations，再删除 memory_changes
+delete：用 before_state 恢复 active 状态和派生数据，再删除 memory_changes
+restore：用 before_state 恢复 trashed 状态，再删除 memory_changes
 ```
 
 自动清理规则：
@@ -687,7 +683,8 @@ restore：校验 active 同名冲突，status = active，trashed_at = null，必
 
 ```text
 begin
-读取并删除 memory_changes
+锁定并读取 memory_changes
+按 action 应用拒绝规则
 commit
 ```
 
