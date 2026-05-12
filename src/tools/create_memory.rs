@@ -169,6 +169,7 @@ async fn create_memory_transaction(
     .bind(after_state.to_string())
     .execute(&mut *tx)
     .await?;
+    crate::psql::mark_memory_graph_dirty(&mut tx).await?;
     tx.commit().await?;
 
     Ok(())
