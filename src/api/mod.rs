@@ -1,5 +1,7 @@
 mod auth;
+mod changes;
 mod health;
+mod memories;
 mod projects;
 mod utils;
 
@@ -15,6 +17,11 @@ pub fn router_list() -> Router {
         .route("/api/auth/verify", post(auth::verify))
         .route("/api/auth/session", get(auth::session))
         .route("/api/projects", get(projects::list))
+        .route("/api/memories", get(memories::list))
+        .route("/api/changes", get(changes::list))
+        .route("/api/changes/{change_uuid}", get(changes::detail))
+        .route("/api/changes/{change_uuid}/approve", post(changes::approve))
+        .route("/api/changes/{change_uuid}/reject", post(changes::reject))
 }
 
 #[cfg(test)]
