@@ -154,6 +154,7 @@ async fn create_memory_transaction(
     insert_memory_unit(&mut tx, memory_uuid, after_state).await?;
     insert_memory_keywords(&mut tx, memory_uuid, after_state).await?;
     insert_memory_handles(&mut tx, memory_uuid, after_state).await?;
+    insert_memory_relations(&mut tx, after_state).await?;
     sqlx::query(
         r#"
         INSERT INTO memory_changes (
@@ -252,6 +253,35 @@ async fn insert_memory_handles(
         "#,
     )
     .bind(memory_uuid)
+    .bind(after_state.to_string())
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+async fn insert_memory_relations(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    after_state: &serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    // Why：memory_relations 是 AGE 图的 SQL 源，必须和工作态记忆在同一事务内落库。
+    sqlx::query(
+        r#"
+        INSERT INTO memory_relations (
+            uuid, from_memory_uuid, to_memory_uuid, relation_type, weight, note, created_at
+        )
+        SELECT
+            gen_random_uuid(),
+            (relation ->> 'from_memory_uuid')::uuid,
+            (relation ->> 'to_memory_uuid')::uuid,
+            relation ->> 'relation_type',
+            (relation ->> 'weight')::int,
+            NULLIF(relation ->> 'note', ''),
+            now()
+        FROM jsonb_array_elements($1::jsonb -> 'relations') AS relations(relation)
+        ON CONFLICT (from_memory_uuid, to_memory_uuid, relation_type) DO NOTHING
+        "#,
+    )
     .bind(after_state.to_string())
     .execute(&mut **tx)
     .await?;
