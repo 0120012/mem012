@@ -16,6 +16,9 @@
 - [ ] 仅授予本库：`CONNECT` + schema `USAGE`
 - [ ] 仅授予本库 DML：`SELECT/INSERT/UPDATE/DELETE`
 - [ ] 仅授予本库目标 schema `CREATE`
+- [ ] 每库必须启用 `age` extension
+- [ ] 每库业务账号必须可使用 `ag_catalog`、执行 AGE 函数、使用 `agtype`
+- [ ] 每库新连接必须能加载 AGE，否则 `rebuild_graph` 不可用
 - [ ] `ALTER/DROP` 仅限对象所有者
 - [ ] 角色默认：`NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`
 - [ ] 审计 `pg_auth_members`，确认无高权限继承链
