@@ -31,6 +31,7 @@ struct SearchConfig {
 #[derive(Deserialize)]
 struct ServerConfig {
     addr: String,
+    api_token: Option<String>,
 }
 
 impl Config {
@@ -46,6 +47,12 @@ impl Config {
 
     pub fn server_addr(&self) -> &str {
         self.server.addr.as_str()
+    }
+
+    pub fn api_token(&self) -> Option<&str> {
+        // Why：认证密钥跟随 HTTP 服务配置，避免运行环境变量改变后端认证策略。
+        let token = self.server.api_token.as_deref()?.trim();
+        (!token.is_empty()).then_some(token)
     }
 }
 

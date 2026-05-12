@@ -759,10 +759,13 @@ name = "mem_012"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "dotenvy",
+ "hmac",
  "log",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tokio",
  "toml",

@@ -18,3 +18,4 @@ exclude_penalty = 100 # 命中 exclude_when 时的强扣分，避免误召回。
 
 [server]
 addr = "0.0.0.0:37777"
+api_token = "xxx"
