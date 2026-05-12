@@ -1,0 +1,99 @@
+// 后端 API 统一响应类型
+export interface ApiResponse<T> {
+  state: "success" | "failed"
+  data: T | null
+  error: { code: string; message: string } | null
+  meta: { project: string }
+}
+
+export interface ProjectInfo {
+  project_id: string
+  display_name: string
+  database_name: string
+  db_scope: string
+  is_share: boolean
+}
+
+export interface MemoryItem {
+  memory_uuid: string
+  category: string
+  title_norm: string
+  summary: string
+  status: string
+  has_open_change: boolean
+  change_action: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ChangeItem {
+  change_uuid: string
+  memory_uuid: string
+  action: string
+  title_norm: string
+  summary: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ChangeDetail {
+  change_uuid: string
+  memory_uuid: string
+  action: string
+  title_norm: string
+  summary: string
+  before_state: Record<string, unknown> | null
+  after_state: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
+export class ApiError extends Error {
+  code: string
+  constructor(code: string, message: string) {
+    super(message)
+    this.code = code
+    this.name = "ApiError"
+  }
+}
+
+let projectHeader = ""
+// Why：生产环境只配置一条 /api 反代，避免 API 路径和静态资源争抢根路径。
+const API_PREFIX = "/api"
+
+export function setProjectHeader(project: string) {
+  projectHeader = project
+}
+
+async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { ...((options?.headers as Record<string, string>) || {}) }
+  if (projectHeader) headers["X-Mem-Project"] = projectHeader
+  const res = await fetch(`${API_PREFIX}${url}`, { ...options, headers, credentials: "include" })
+  const body: ApiResponse<T> = await res.json()
+  if (body.state === "failed") throw new ApiError(body.error!.code, body.error!.message)
+  return body.data as T
+}
+
+export const api = {
+  auth: {
+    verify: (key: string) =>
+      request<void>("/auth/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+      }),
+    session: () => request<void>("/auth/session"),
+  },
+  projects: {
+    list: () => request<ProjectInfo[]>("/projects"),
+  },
+  memories: {
+    list: () => request<MemoryItem[]>("/memories"),
+  },
+  changes: {
+    list: () => request<ChangeItem[]>("/changes"),
+    detail: (uuid: string) => request<ChangeDetail>(`/changes/${uuid}`),
+    approve: (uuid: string) => request<void>(`/changes/${uuid}/approve`, { method: "POST" }),
+    reject: (uuid: string) => request<void>(`/changes/${uuid}/reject`, { method: "POST" }),
+  },
+}
