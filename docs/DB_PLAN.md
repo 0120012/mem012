@@ -418,7 +418,8 @@ updated_at timestamptz not null
 
 - 每个数据库一行，私库和 `mem_share` 各自维护自己的 dirty 状态。
 - `dirty = true` 表示 AGE 图可能落后于 `memory_units` / `memory_relations`。
-- 确认 create/update/delete/restore 后，只在 SQL 事务内把 `dirty` 标记为 true。
+- 写入工作态或拒绝回滚导致 `memory_units` / `memory_relations` 可见性变化时，在同一 SQL 事务内把 `dirty` 标记为 true。
+- approve 只删除 `memory_changes`，不改工作态，不标记 `dirty`。
 - AGE rebuild 成功后再把 `dirty` 标记为 false。
 - AGE rebuild 失败不影响 SQL 主数据，也不恢复 `memory_changes`。
 - 不保存变更事件，不记录历史，不做 per-memory 同步队列。
@@ -457,6 +458,7 @@ created_at text
 - SQL 主数据是当前工作态的 `memory_units` 和 `memory_relations`。
 - AGE 内部表由 `create_graph('memory_graph')` 和 label 创建，业务代码不直接写 AGE schema。
 - create/update/delete/restore 写入工作态时应更新 SQL 主表和派生索引，并在关系或可见性变化时把 `memory_graph_meta.dirty` 标记为 true。
+- reject 回滚导致 memory 或 relation 变化时也必须标记 `dirty = true`。
 - AGE 不进入确认事务；AGE 失败不阻塞 memory 确认。
 - AGE sync worker 只在 `dirty = true` 时从 SQL 主表整图重建。
 - 不建 AGE 同步队列表；需要修复时仍从 SQL 主表整图重建。
