@@ -147,6 +147,7 @@ updated_at
 
 - 删除对应 `memory_changes`。
 - 不重复写入 `memory_units`，因为当前工作态已经生效。
+- `action = create` 时自动生成默认 `related_to` relations，并标记 graph dirty。
 
 ### POST /changes/{change_uuid}/reject
 
@@ -157,11 +158,17 @@ updated_at
 
 - `memory_relations` 是关系主数据，AGE 只做派生图查询。
 - create/update/delete/restore 改变工作态或关系时，必须在同一事务内标记 `memory_graph_meta.dirty = true`。
-- approve 只删除 `memory_changes`，不改工作态，不标记 `dirty`。
+- approve create 会删除 `memory_changes` 并自动写默认 relations；如果写入 relation，则标记 `dirty`。
+- approve update/relation 只删除 `memory_changes`，不改工作态。
 - reject 如果删除或恢复了 memory / relation，必须标记 `dirty = true`。
 - AGE rebuild 只读取 SQL 当前工作态，不读取 `memory_changes`。
 - 当前状态检查入口是 CLI tool：`graph_status`。
 - 当前 rebuild 入口是 CLI tool：`rebuild_graph`。
+- 当前默认图谱入口是 HTTP `GET /api/graph/overview`，返回 `nodes` 和 `relations`。
+- 当前一跳查询入口是 CLI tool：`graph_neighbors` 和 HTTP `GET /api/graph/neighbors/{memory_uuid}`。
+- relation 增删改入口是 CLI tool：`add_memory_relation` / `update_memory_relation` / `delete_memory_relation`。
+- relation HTTP 入口：`POST /api/graph/relations`、`PATCH /api/graph/relations/{relation_uuid}`、`DELETE /api/graph/relations/{relation_uuid}`。
+- relation 候选 HTTP 入口：`GET /api/graph/relations/suggest/{memory_uuid}`。
 
 ## Backend Rules
 
@@ -196,6 +203,13 @@ updated_at
 - [x] 实现 relation 写入入口。
 - [x] 实现 graph status 只读入口。
 - [x] 实现 AGE graph rebuild 入口。
+- [x] 实现 relation 增删改工具。
+- [x] 实现 relation 候选生成工具。
+- [x] 实现 SQL 一跳 graph 查询工具。
+- [x] 接入 graph status / rebuild / neighbors HTTP API。
+- [x] 接入 relation 增删改 HTTP API。
+- [x] 接入 relation 候选 HTTP API。
+- [x] 补充 relation 入参本地测试。
 - [x] 用 `cargo check -q` 验证后端。
 
 ## Later

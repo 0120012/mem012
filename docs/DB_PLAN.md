@@ -272,14 +272,16 @@ unique(memory_uuid)
 - update / delete / restore 会先修改当前工作态；如果没有 open change，先保存 `before_state`；如果已有 open change，只覆盖 `after_state` 和 `updated_at`。
 - state 以 JSON 保存完整工作态快照，结构固定为 memory、keywords、handles、relations。
 - 创建或更新时，重复检测以 `memory_units`、`memory_handles` 等当前工作态表和正式唯一约束为准；`memory_changes.after_state` 不承担唯一约束。
-- 用户确认时只删除对应 `memory_changes`，不再把 `after_state` 二次写入工作态。
+- 用户确认 create 时删除对应 `memory_changes`，并自动写入默认 `related_to` relations。
+- 用户确认 update / delete / restore 时只删除对应 `memory_changes`，不再把 `after_state` 二次写入工作态。
 - 用户拒绝 create 时，删除 `memory_changes`，再删除对应 `memory_units`，由外键级联清理派生表。
 - 用户拒绝 update / delete / restore 时，用 `before_state` 恢复当前工作态，再删除 `memory_changes`。
 - 第一版 `memory_changes.memory_uuid` 不建外键；后端事务保证 open change 指向当前工作态，拒绝 create 时也便于先删 change 再删 memory。
 - update 的 title_norm、content、summary、keywords、handles、relations 变化都会立即体现在当前工作态和 `after_state`。
 - 只修改 relation 也归入 `action = update`，不单独设置 link / unlink action。
 - `memory_uuid` 对所有 action 都表示当前工作态里的目标 memory；create 在同一事务内先写入 `memory_units`。
-- 自动生成或修改的 relations 只进入当前目标 memory 的 change。
+- create approve 后自动生成的默认 relations 直接进入 `memory_relations`，不再生成第二条待确认 change。
+- 手动生成或修改的 relations 进入当前目标 memory 的 change。
 - relation 指向的其他 memory 只是引用对象，不产生自己的 change。
 - delete 会立即把 status 设为 `trashed` 并写入 `trashed_at`，同时记录 change；拒绝时从 `before_state` 恢复。
 - restore 会立即把 status 设为 `active` 并清空 `trashed_at`，同时记录 change；拒绝时从 `before_state` 恢复。
@@ -301,7 +303,7 @@ relations: [{from_memory_uuid, to_memory_uuid, relation_type, weight, note}]
 - `after_state` 不保存 `title`、`raw_title` 或 `display_title`。
 - `keywords`、`handles`、`relations` 都表示当前工作态的完整集合。
 - `relations` 中至少一端必须等于 `memory_changes.memory_uuid`。
-- `relations` 的另一端必须是同一数据库内的 active memory；第一版 `create_memory` 不自动建立 relation。
+- `relations` 的另一端必须是同一数据库内的 active memory；`create_memory` 不建 relation，approve create 后才自动建立默认 relation。
 - `memory_changes` 不记录 usage、embedding、AGE 内部数据。
 
 ### memory_relations
@@ -419,7 +421,8 @@ updated_at timestamptz not null
 - 每个数据库一行，私库和 `mem_share` 各自维护自己的 dirty 状态。
 - `dirty = true` 表示 AGE 图可能落后于 `memory_units` / `memory_relations`。
 - 写入工作态或拒绝回滚导致 `memory_units` / `memory_relations` 可见性变化时，在同一 SQL 事务内把 `dirty` 标记为 true。
-- approve 只删除 `memory_changes`，不改工作态，不标记 `dirty`。
+- approve create 自动写入默认 relations 时必须标记 `dirty`。
+- approve update/relation 只删除 `memory_changes`，不改工作态，不标记 `dirty`。
 - AGE rebuild 成功后再把 `dirty` 标记为 false。
 - AGE rebuild 失败不影响 SQL 主数据，也不恢复 `memory_changes`。
 - 不保存变更事件，不记录历史，不做 per-memory 同步队列。

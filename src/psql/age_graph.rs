@@ -1,3 +1,5 @@
+use sqlx::Acquire;
+
 const REBUILD_MEMORY_GRAPH_SQL: &str = r#"
 DO $$
 DECLARE
@@ -37,17 +39,38 @@ END $$;
 
 // Why：AGE 是派生层，重建必须只从 SQL 当前工作态生成，避免 pending change 影响图结构。
 pub async fn rebuild_memory_graph(pool: &sqlx::Pool<sqlx::Postgres>) -> Result<(), sqlx::Error> {
-    let mut tx = pool.begin().await?;
-    for sql in [
-        "CREATE EXTENSION IF NOT EXISTS age",
-        "LOAD 'age'",
-        r#"SET LOCAL search_path = ag_catalog, "$user", public"#,
-    ] {
-        sqlx::query(sql).execute(&mut *tx).await?;
-    }
+    let mut conn = pool.acquire().await?;
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS age")
+        .execute(&mut *conn)
+        .await?;
+    load_age_if_allowed(&mut conn).await?;
+
+    let mut tx = conn.begin().await?;
+    sqlx::query(r#"SET LOCAL search_path = ag_catalog, "$user", public"#)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(REBUILD_MEMORY_GRAPH_SQL)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
     Ok(())
+}
+
+async fn load_age_if_allowed(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+) -> Result<(), sqlx::Error> {
+    // Why：部分部署会通过预加载 AGE 禁止普通角色执行 LOAD，不能让这个权限差异直接中断 rebuild。
+    match sqlx::query("LOAD 'age'").execute(&mut **conn).await {
+        Ok(_) => Ok(()),
+        Err(error) if is_age_load_permission_error(&error) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn is_age_load_permission_error(error: &sqlx::Error) -> bool {
+    error.as_database_error().is_some_and(|db_error| {
+        db_error
+            .message()
+            .contains("access to library \"age\" is not allowed")
+    })
 }

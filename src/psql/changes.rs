@@ -66,7 +66,7 @@ pub async fn get_change(
         .transpose()
 }
 
-// Why：确认只移除待确认记录，工作态已经在写入阶段生效，不能二次写 memory_units。
+// Why：批准 create 后记忆已成为正式工作态，可以在同一事务内生成默认图关系。
 pub async fn approve_change(
     database_url: &str,
     change_uuid: &str,
@@ -76,12 +76,13 @@ pub async fn approve_change(
         .connect(database_url)
         .await?;
     let mut tx = pool.begin().await?;
-    let result = sqlx::query("DELETE FROM memory_changes WHERE uuid = $1::uuid")
-        .bind(change_uuid)
-        .execute(&mut *tx)
-        .await?;
+    let Some(change) = lock_change(&mut tx, change_uuid).await? else {
+        tx.rollback().await?;
+        return Ok(false);
+    };
+    approve_locked_change(&mut tx, change_uuid, &change.0, &change.1).await?;
     tx.commit().await?;
-    Ok(result.rows_affected() == 1)
+    Ok(true)
 }
 
 // Why：拒绝必须在事务里恢复工作态和删除 change，避免出现半回滚状态。
@@ -123,6 +124,27 @@ async fn lock_change(
     .bind(change_uuid)
     .fetch_optional(&mut **tx)
     .await
+}
+
+// Why：approve update/relation 只确认已生效工作态；approve create 还要补默认图关系。
+async fn approve_locked_change(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    change_uuid: &str,
+    action: &str,
+    memory_uuid: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM memory_changes WHERE uuid = $1::uuid")
+        .bind(change_uuid)
+        .execute(&mut **tx)
+        .await?;
+    if action == "create" {
+        let inserted =
+            super::relations::insert_auto_relations_for_approved_memory(tx, memory_uuid).await?;
+        if inserted > 0 {
+            super::mark_memory_graph_dirty(tx).await?;
+        }
+    }
+    Ok(())
 }
 
 // Why：create 的拒绝语义是移除新工作态，派生表交给外键级联清理。
