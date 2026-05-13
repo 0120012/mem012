@@ -9,7 +9,6 @@ export interface ApiResponse<T> {
 export interface ProjectInfo {
   project_id: string
   display_name: string
-  database_name: string
   db_scope: string
   is_share: boolean
 }
@@ -47,6 +46,78 @@ export interface ChangeDetail {
   created_at: string
   updated_at: string
 }
+
+// Graph API 类型
+export interface GraphStatus {
+  graph_name: string
+  dirty: boolean
+  updated_at: string
+  memory_count: number
+  relation_count: number
+}
+
+export interface NeighborMemory {
+  memory_uuid: string
+  category: string
+  title_norm: string
+  summary: string
+  status: string
+}
+
+export interface NeighborRelation {
+  relation_uuid: string
+  direction: "incoming" | "outgoing"
+  relation_type: string
+  weight: number | null
+  note: string | null
+  memory: NeighborMemory
+}
+
+export interface NeighborsResponse {
+  memory_uuid: string
+  memory: NeighborMemory
+  neighbors: NeighborRelation[]
+}
+
+export interface GraphOverviewRelation {
+  relation_uuid: string
+  from_memory_uuid: string
+  to_memory_uuid: string
+  relation_type: string
+  weight: number | null
+  note: string | null
+}
+
+export interface GraphOverview {
+  nodes: NeighborMemory[]
+  relations: GraphOverviewRelation[]
+}
+
+export interface SuggestedRelation {
+  from_memory_uuid: string
+  to_memory_uuid: string
+  relation_type: string
+  weight: number | null
+  note: string | null
+  candidate: {
+    memory_uuid: string
+    category: string
+    title_norm: string
+    summary: string
+    shared_keywords: number
+  }
+}
+
+export const RELATION_TYPES = [
+  "related_to",
+  "supersedes",
+  "depends_on",
+  "conflicts_with",
+  "elaborates",
+  "applies_to",
+] as const
+
+export type RelationType = (typeof RELATION_TYPES)[number]
 
 export class ApiError extends Error {
   code: string
@@ -95,5 +166,26 @@ export const api = {
     detail: (uuid: string) => request<ChangeDetail>(`/changes/${uuid}`),
     approve: (uuid: string) => request<void>(`/changes/${uuid}/approve`, { method: "POST" }),
     reject: (uuid: string) => request<void>(`/changes/${uuid}/reject`, { method: "POST" }),
+  },
+  graph: {
+    status: () => request<GraphStatus>("/graph/status"),
+    overview: () => request<GraphOverview>("/graph/overview"),
+    rebuild: () => request<{ graph: string }>("/graph/rebuild", { method: "POST" }),
+    neighbors: (uuid: string) => request<NeighborsResponse>(`/graph/neighbors/${uuid}`),
+    suggest: (uuid: string) => request<SuggestedRelation[]>(`/graph/relations/suggest/${uuid}`),
+    addRelation: (body: { from_memory_uuid: string; to_memory_uuid: string; relation_type: string; weight?: number; note?: string }) =>
+      request<Record<string, unknown>>("/graph/relations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    updateRelation: (uuid: string, body: { relation_type?: string; weight?: number; note?: string }) =>
+      request<Record<string, unknown>>(`/graph/relations/${uuid}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    deleteRelation: (uuid: string) =>
+      request<{ deleted: boolean }>(`/graph/relations/${uuid}`, { method: "DELETE" }),
   },
 }

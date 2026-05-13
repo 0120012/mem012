@@ -27,8 +27,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const projectsRes = await api.projects.list()
     const projects = projectsRes || []
     const savedProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY)
-    const activeProject = savedProjectId ? projects.find(p => p.project_id === savedProjectId) || null : null
-    if (activeProject) setProjectHeader(activeProject.project_id)
+    // 有保存的项目或自动选第一个
+    const activeProject = savedProjectId
+      ? projects.find(p => p.project_id === savedProjectId) || projects[0] || null
+      : projects[0] || null
+    if (activeProject) {
+      setProjectHeader(activeProject.project_id)
+      if (!savedProjectId) localStorage.setItem(ACTIVE_PROJECT_KEY, activeProject.project_id)
+    }
     setState({ isLoggedIn: true, isLoading: false, projects, activeProject })
   }, [])
 

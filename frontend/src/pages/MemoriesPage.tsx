@@ -41,7 +41,7 @@ export function MemoriesPage() {
   }
 
   return (
-    <div>
+    <div className="max-w-4xl mx-auto p-4 sm:p-6">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-lg font-semibold text-foreground">记忆</h1>
         <Button variant="outline" size="sm" onClick={fetchMemories} disabled={loading}>刷新</Button>

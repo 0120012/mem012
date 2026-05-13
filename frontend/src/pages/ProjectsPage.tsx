@@ -31,7 +31,7 @@ export function ProjectsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium text-foreground">{p.display_name}</p>
-                    <p className="text-sm text-muted-foreground">{p.database_name}</p>
+                    <p className="text-sm text-muted-foreground">{p.db_scope}</p>
                   </div>
                   <Button variant="outline" size="sm">进入</Button>
                 </div>

@@ -4,9 +4,9 @@ import { ProtectedRoute } from "@/auth/ProtectedRoute"
 import { ProjectGuard } from "@/auth/ProjectGuard"
 import { Layout } from "@/components/Layout"
 import { LoginPage } from "@/pages/LoginPage"
-import { ProjectsPage } from "@/pages/ProjectsPage"
 import { MemoriesPage } from "@/pages/MemoriesPage"
 import { ChangesPage } from "@/pages/ChangesPage"
+import { GraphPage } from "@/pages/GraphPage"
 
 export default function App() {
   return (
@@ -14,11 +14,11 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route element={<ProtectedRoute />}>
-          <Route path="/projects" element={<ProjectsPage />} />
           <Route element={<ProjectGuard />}>
             <Route element={<Layout />}>
               <Route path="/memories" element={<MemoriesPage />} />
               <Route path="/changes" element={<ChangesPage />} />
+              <Route path="/graph" element={<GraphPage />} />
             </Route>
           </Route>
           <Route path="/" element={<Navigate to="/memories" replace />} />

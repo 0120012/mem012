@@ -14,7 +14,7 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false)
 
   if (!isLoading && isLoggedIn) {
-    return <Navigate to="/projects" replace />;
+    return <Navigate to="/memories" replace />;
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -24,7 +24,7 @@ export function LoginPage() {
     const result = await login(key)
     setLoading(false)
     if (result.success) {
-      navigate("/projects")
+      navigate("/memories")
     } else {
       setError(result.error || "认证失败")
     }
