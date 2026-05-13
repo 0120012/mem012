@@ -329,13 +329,15 @@ fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn st
 
     if let Some(handle) = &args.handle {
         let handle = handle.trim();
+        let segment_count = handle.split('/').count();
         if handle.is_empty()
             || handle.starts_with('/')
             || handle.ends_with('/')
             || handle.contains("//")
+            || !(2..=4).contains(&segment_count)
             || handle.split('/').next() != Some(category)
         {
-            return Err("handle 必须是非空路径，且第一段等于 category".into());
+            return Err("handle 必须是 2 到 4 段路径，且第一段等于 category".into());
         }
     }
 
