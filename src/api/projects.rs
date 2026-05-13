@@ -19,18 +19,15 @@ pub async fn list() -> (StatusCode, Json<Value>) {
             return (StatusCode::INTERNAL_SERVER_ERROR, response);
         }
     };
-    let projects = ["riko", "herm", "doge", "share"]
-        .into_iter()
-        .filter_map(|project_id| {
-            let database_url = config.database_url(project_id)?;
-            let database_name = database_url.split('?').next()?.rsplit('/').next()?;
-            Some(json!({
+    let projects = config
+        .database_entries()
+        .map(|(project_id, _database_url)| {
+            json!({
                 "project_id": project_id,
                 "display_name": project_id,
-                "database_name": database_name,
                 "db_scope": if project_id == "share" { "share" } else { "profile" },
                 "is_share": project_id == "share"
-            }))
+            })
         })
         .collect::<Vec<_>>();
 

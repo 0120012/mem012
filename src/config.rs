@@ -1,18 +1,12 @@
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct Config {
-    database: DatabaseConfig,
+    database: BTreeMap<String, String>,
     search: SearchConfig,
     server: ServerConfig,
-}
-
-#[derive(Deserialize)]
-struct DatabaseConfig {
-    riko: String,
-    herm: String,
-    doge: String,
-    share: String,
 }
 
 #[derive(Deserialize)]
@@ -36,13 +30,14 @@ struct ServerConfig {
 
 impl Config {
     pub fn database_url(&self, profile: &str) -> Option<&str> {
-        match profile {
-            "riko" => Some(self.database.riko.as_str()),
-            "herm" => Some(self.database.herm.as_str()),
-            "doge" => Some(self.database.doge.as_str()),
-            "share" => Some(self.database.share.as_str()),
-            _ => None,
-        }
+        self.database.get(profile).map(String::as_str)
+    }
+
+    pub fn database_entries(&self) -> impl Iterator<Item = (&str, &str)> {
+        // Why：项目白名单就是 [database] 配置本身，避免新增库时还要改 Rust 枚举。
+        self.database
+            .iter()
+            .map(|(name, url)| (name.as_str(), url.as_str()))
     }
 
     pub fn server_addr(&self) -> &str {
