@@ -1,6 +1,4 @@
 mod create_memory;
-mod graph_status;
-mod rebuild_graph;
 
 pub struct ToolContext<'a> {
     // Why：工具执行需要同时看到当前私库和共享库，但连接池生命周期应由 main 持有。
@@ -35,8 +33,6 @@ pub async fn dispatch_tool_request(
 
     match tool {
         "create_memory" => create_memory::run(context, args).await,
-        "graph_status" => graph_status::run(context, args).await,
-        "rebuild_graph" => rebuild_graph::run(context, args).await,
         _ => Err(format!("未知工具: {tool}").into()),
     }
 }
