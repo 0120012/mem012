@@ -126,23 +126,43 @@ async fn lock_change(
     .await
 }
 
-// Why：approve update/relation 只确认已生效工作态；approve create 还要补默认图关系。
+// Why：approve 是用户最终确认入口，create 要激活，delete 要硬删，不能只删除 change。
 async fn approve_locked_change(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     change_uuid: &str,
     action: &str,
     memory_uuid: &str,
 ) -> Result<(), sqlx::Error> {
+    if action == "create" {
+        let activated = sqlx::query(
+            "UPDATE memory_units SET status = 'active', updated_at = now() WHERE uuid = $1::uuid AND status = 'pending'",
+        )
+        .bind(memory_uuid)
+        .execute(&mut **tx)
+        .await?;
+        if activated.rows_affected() != 1 {
+            return Err(sqlx::Error::RowNotFound);
+        }
+    }
+    if action == "delete" {
+        sqlx::query("DELETE FROM memory_changes WHERE uuid = $1::uuid")
+            .bind(change_uuid)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM memory_units WHERE uuid = $1::uuid")
+            .bind(memory_uuid)
+            .execute(&mut **tx)
+            .await?;
+        super::mark_memory_graph_dirty(tx).await?;
+        return Ok(());
+    }
     sqlx::query("DELETE FROM memory_changes WHERE uuid = $1::uuid")
         .bind(change_uuid)
         .execute(&mut **tx)
         .await?;
     if action == "create" {
-        let inserted =
-            super::relations::insert_auto_relations_for_approved_memory(tx, memory_uuid).await?;
-        if inserted > 0 {
-            super::mark_memory_graph_dirty(tx).await?;
-        }
+        super::relations::insert_auto_relations_for_approved_memory(tx, memory_uuid).await?;
+        super::mark_memory_graph_dirty(tx).await?;
     }
     Ok(())
 }

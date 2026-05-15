@@ -43,6 +43,7 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     // Why：profile 库和 share 库结构一致，复用同一套建表顺序可以避免 schema 漂移。
     if schema_ready(pool).await? {
         println!("{db_label}: 跳过初始化");
+        ensure_memory_status_constraint(pool).await?;
         cr_memory_indexes(pool, db_label).await?;
         return Ok(());
     }
@@ -50,6 +51,7 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     println!("{db_label}: 开始初始化表");
     cr_normalize_title_function(pool).await?;
     cr_memory_units_table(pool, db_label).await?;
+    ensure_memory_status_constraint(pool).await?;
     cr_memory_embeddings_table(pool).await?;
     cr_memory_keywords_table(pool).await?;
     cr_memory_handles_table(pool).await?;
@@ -78,7 +80,7 @@ async fn cr_memory_indexes(pool: &Pool<Postgres>, db_label: &str) -> Result<(), 
     let indexes = [
         "CREATE INDEX IF NOT EXISTS memory_units_category_status_idx ON memory_units (category, status)",
         "CREATE INDEX IF NOT EXISTS memory_units_status_updated_at_idx ON memory_units (status, updated_at)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS memory_units_active_title_unique ON memory_units (category, title_norm) WHERE status = 'active'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS memory_units_pending_active_title_unique ON memory_units (category, title_norm) WHERE status IN ('pending', 'active')",
         "CREATE INDEX IF NOT EXISTS memory_embeddings_embedding_hnsw_idx ON memory_embeddings USING hnsw (embedding vector_cosine_ops)",
         "CREATE INDEX IF NOT EXISTS memory_embeddings_embedded_at_idx ON memory_embeddings (embedded_at)",
         "CREATE INDEX IF NOT EXISTS memory_usage_use_count_idx ON memory_usage (use_count)",
@@ -103,6 +105,19 @@ async fn cr_memory_indexes(pool: &Pool<Postgres>, db_label: &str) -> Result<(), 
     Ok(())
 }
 
+async fn ensure_memory_status_constraint(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    // Why：pending 是新的写入态，旧库不迁移约束会在 create_memory 时被数据库拒绝。
+    sqlx::query("ALTER TABLE memory_units DROP CONSTRAINT IF EXISTS memory_units_status_check")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE memory_units ADD CONSTRAINT memory_units_status_check CHECK (status IN ('pending', 'active', 'trashed'))",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 async fn memory_indexes_ready(pool: &Pool<Postgres>) -> Result<bool, sqlx::Error> {
     // Why：CREATE INDEX IF NOT EXISTS 仍会逐条访问数据库，先检测完整性可以让已初始化库直接跳过索引阶段。
     let ready: bool = sqlx::query_scalar(
@@ -110,7 +125,7 @@ async fn memory_indexes_ready(pool: &Pool<Postgres>) -> Result<bool, sqlx::Error
         SELECT
             to_regclass('public.memory_units_category_status_idx') IS NOT NULL
             AND to_regclass('public.memory_units_status_updated_at_idx') IS NOT NULL
-            AND to_regclass('public.memory_units_active_title_unique') IS NOT NULL
+            AND to_regclass('public.memory_units_pending_active_title_unique') IS NOT NULL
             AND to_regclass('public.memory_embeddings_embedding_hnsw_idx') IS NOT NULL
             AND to_regclass('public.memory_embeddings_embedded_at_idx') IS NOT NULL
             AND to_regclass('public.memory_usage_use_count_idx') IS NOT NULL
@@ -371,7 +386,7 @@ async fn cr_memory_units_table(
             title_norm TEXT NOT NULL,
             content TEXT NOT NULL,
             summary TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (status IN ('active', 'trashed')),
+            status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'trashed')),
             recall_when TEXT,
             exclude_when TEXT,
             trashed_at TIMESTAMPTZ,

@@ -6,6 +6,7 @@ use serde::Deserialize;
 pub struct Config {
     database: BTreeMap<String, String>,
     search: SearchConfig,
+    embeddings: EmbeddingsConfig,
     server: ServerConfig,
 }
 
@@ -20,6 +21,19 @@ struct SearchConfig {
     graph: i32,
     stale_penalty: i32,
     exclude_penalty: i32,
+}
+
+pub struct EmbeddingSettings {
+    pub api: String,
+    pub key: String,
+    pub model: String,
+}
+
+#[derive(Deserialize)]
+struct EmbeddingsConfig {
+    embeddings_api: String,
+    embeddings_key: String,
+    embeddings_model: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -48,6 +62,25 @@ impl Config {
         // Why：认证密钥跟随 HTTP 服务配置，避免运行环境变量改变后端认证策略。
         let token = self.server.api_token.as_deref()?.trim();
         (!token.is_empty()).then_some(token)
+    }
+
+    pub fn embedding_settings(&self) -> Option<EmbeddingSettings> {
+        // Why：embedding 是派生索引能力，配置为空时应跳过生成而不是阻塞主流程。
+        let api = self.embeddings.embeddings_api.trim();
+        let key = self.embeddings.embeddings_key.trim();
+        if api.is_empty() || key.is_empty() {
+            return None;
+        }
+        Some(EmbeddingSettings {
+            api: api.to_string(),
+            key: key.to_string(),
+            model: self
+                .embeddings
+                .embeddings_model
+                .as_deref()
+                .unwrap_or("BAAI/bge-m3")
+                .to_string(),
+        })
     }
 }
 

@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod embeddings;
 mod parse;
 mod psql;
 mod server;
@@ -24,6 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Why：server 是常驻 HTTP 模式，不应继续要求 profile 和 --args 这些单次 CLI 参数。
     if cli_args.command.as_deref() == Some("server") {
         let address = config.server_addr();
         server::app_run(address).await;

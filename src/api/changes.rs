@@ -44,7 +44,7 @@ pub async fn detail(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCode
     )
 }
 
-// Why：approve 只确认当前工作态，不能让前端传任何 after_state。
+// Why：approve 的状态机在 psql 层统一执行，HTTP 层只负责鉴权和定位 change。
 pub async fn approve(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
         Ok(project) => project,
@@ -54,11 +54,21 @@ pub async fn approve(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCod
         Ok(url) => url,
         Err(error) => return error_response(error, Some(&project)),
     };
+    let change = match crate::psql::get_change(&url, &uuid).await {
+        Ok(Some(change)) => change,
+        Ok(None) => return missing_change(&project),
+        Err(error) => {
+            return error_response(db_error("CHANGE_DETAIL_FAILED", error), Some(&project));
+        }
+    };
     match crate::psql::approve_change(&url, &uuid).await {
-        Ok(true) => (
-            StatusCode::OK,
-            api_response(Some(Value::Null), None, Some(&project)),
-        ),
+        Ok(true) => {
+            refresh_embedding_after_approve(&project, &url, &change).await;
+            (
+                StatusCode::OK,
+                api_response(Some(Value::Null), None, Some(&project)),
+            )
+        }
         Ok(false) => missing_change(&project),
         Err(error) => error_response(db_error("CHANGE_APPROVE_FAILED", error), Some(&project)),
     }
@@ -97,6 +107,32 @@ fn database_url(project: &str) -> Result<String, ApiError> {
             code: "PROJECT_NOT_FOUND",
             message: "project is not configured".to_string(),
         })
+}
+
+async fn refresh_embedding_after_approve(project: &str, database_url: &str, change: &Value) {
+    // Why：embedding 是 approve create 的派生索引，失败只降级语义召回，不撤销批准。
+    let Some(memory_uuid) = approved_create_memory_uuid(change) else {
+        return;
+    };
+    let Ok(config) = crate::config::load_config("config.toml") else {
+        return;
+    };
+    let Some(settings) = config.embedding_settings() else {
+        return;
+    };
+    if let Err(error) =
+        crate::embeddings::refresh_memory_embedding(database_url, settings, memory_uuid).await
+    {
+        eprintln!("{project}: embedding 生成失败: {error}");
+    }
+}
+
+fn approved_create_memory_uuid(change: &Value) -> Option<&str> {
+    // Why：只有 create 批准会让 pending 变 active，update/delete 不应在这里重算 embedding。
+    if change.get("action")?.as_str()? != "create" {
+        return None;
+    }
+    change.get("memory_uuid")?.as_str()
 }
 
 // Why：详情读取需要区分不存在和数据库失败，前端才能展示正确状态。

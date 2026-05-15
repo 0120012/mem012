@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashSet;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,13 +42,10 @@ pub async fn run(
             "tool": "create_memory",
             "data": {
                 "memory_uuid": memory_uuid,
-                "result": "pending_review"
+                "result": "pending"
             },
             "error": null,
-            "meta": {
-                "spec_version": "v10",
-                "profile": context.profile
-            }
+            "profile": context.profile
         })
     );
 
@@ -98,7 +96,7 @@ fn build_after_state(
             "title_norm": title_norm,
             "content": args.content.trim(),
             "summary": args.summary.trim(),
-            "status": "active",
+            "status": "pending",
             "recall_when": args.recall_when.as_deref().map(str::trim),
             "exclude_when": args.exclude_when.as_deref().map(str::trim),
             "trashed_at": null
@@ -169,7 +167,6 @@ async fn create_memory_transaction(
     .bind(after_state.to_string())
     .execute(&mut *tx)
     .await?;
-    crate::psql::mark_memory_graph_dirty(&mut tx).await?;
     tx.commit().await?;
 
     Ok(())
@@ -317,6 +314,17 @@ fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn st
     if args.keywords.is_empty() || args.keywords.iter().any(|item| item.trim().is_empty()) {
         return Err("keywords 必须是非空字符串数组".into());
     }
+    let mut keyword_set = HashSet::new();
+    for keyword in &args.keywords {
+        let keyword_norm = keyword
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        if !keyword_set.insert(keyword_norm) {
+            return Err("keywords 规范化后不能重复".into());
+        }
+    }
 
     for (name, value) in [
         ("recall_when", &args.recall_when),
@@ -329,13 +337,14 @@ fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn st
 
     if let Some(handle) = &args.handle {
         let handle = handle.trim();
-        let segment_count = handle.split('/').count();
+        let segments = handle.split('/').collect::<Vec<_>>();
         if handle.is_empty()
             || handle.starts_with('/')
             || handle.ends_with('/')
             || handle.contains("//")
-            || !(2..=4).contains(&segment_count)
-            || handle.split('/').next() != Some(category)
+            || !(2..=4).contains(&segments.len())
+            || segments.iter().any(|segment| segment.trim().is_empty())
+            || segments.first().copied() != Some(category)
         {
             return Err("handle 必须是 2 到 4 段路径，且第一段等于 category".into());
         }
