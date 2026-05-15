@@ -11,7 +11,7 @@ profile 私库 + mem_share 共享库 + category 分类 + Memory Unit + 关键词
 ## 已确定结论
 
 - `profile` 只做私有数据库隔离；启动时从 TOML 选定，不进入搜索参数。
-- `trash_retention_days` 从 TOML 读取，用于 `trashed` memory 自动清理；默认 7 天。
+- `delete_memory` 先软删除；用户确认 delete 后立即硬删除。
 - 运行时同时允许访问当前 profile 私库和 `mem_share` 共享库。
 - `category` 是记忆的大类，例如 `core / meta / trace / project / book`；`share` 是共享库专属 category；不需要提前写入 TOML 白名单。
 - URI 不再作为核心寻址方式，也不再有 `domain://path`。
@@ -60,7 +60,7 @@ shared -> mem_share
 
 ### memory_units
 
-记忆本体。每一条都是当前可搜索、可召回的最小认知单元；是否等待用户二次确认由 `memory_changes` 是否存在派生。
+记忆本体。每一条都是当前工作态；是否能进入正式召回和图谱由 `status` 决定。
 
 ```text
 uuid uuid primary key
@@ -84,12 +84,13 @@ title_norm 非空，不能为空字符串，并且等于 normalize_title(title_n
 profile 私库禁止 category = share
 mem_share 只允许 category = share
 status 由后端状态机控制
-active memory 在同一数据库内不允许 category + title_norm 重复
+pending / active memory 在同一数据库内不允许 category + title_norm 重复
 ```
 
 固定 status：
 
 ```text
+pending
 active
 trashed
 ```
@@ -102,10 +103,11 @@ trashed
 - `summary`：给 Agent 搜索用的语义压缩文本，不以人类展示为主要目标。
 - `recall_when`：什么时候应该召回。
 - `exclude_when`：什么时候明确不要召回。
-- `status`：后端内部状态，不放 TOML。
+- `status`：后端内部状态，不放 TOML；固定为 `pending`、`active`、`trashed`。
 - `trashed_at`：进入回收站的时间；只有 `status = trashed` 时有值。
 - 同名判断以 `title_norm` 为准；后端可调用数据库函数提前校验，但数据库唯一约束兜底。
-- `trashed` 不参与同名唯一性判断，超过 `trash_retention_days` 后由后台任务硬删除。
+- `pending` 不进入正式召回和 AGE 图谱，只能通过待确认列表或 uuid 精确读取。
+- `trashed` 不参与同名唯一性判断；用户确认 delete 后硬删除并释放相关派生数据。
 
 ### memory_embeddings
 
@@ -198,7 +200,7 @@ unique(handle_norm)
 - 一个 memory 可以有多个 handle。
 - `handle_norm` 是规范化后的完整可读定位路径，例如 `core/backend/profile隔离`、`core/instance/thinking_in_systems/reflections/chapter_1_system_basics` 或 `share/thinking_in_systems/chapter_1_system_basics`。
 - 同一个 handle 只能指向一条 memory。
-- `trashed` memory 的 handle 仍然保留并占用唯一约束；purge 后才释放。
+- `trashed` memory 的 handle 仍然保留并占用唯一约束；用户确认 delete 后随 memory 硬删除释放。
 - 第一段必须等于 memory 的 category；`share/...` 第一段就是共享库专属 category。
 - 中间段不拆表、不建树。
 - 空段非法
@@ -268,12 +270,13 @@ unique(memory_uuid)
 - 使用 baseline 模型：二次确认的是“最后确认状态 -> 当前工作态”。
 - 表中存在记录就表示该 memory 等待用户二次确认；不再保存 accepted / rolled_back 历史。
 - 同一 memory 同时最多一条 change；不建 batch 表。
-- create 会同时写入 `memory_units`、派生索引和 `memory_changes`；`before_state` 为空，`after_state` 是已生效的当前工作态。
+- create 会同时写入 `memory_units(status = pending)`、派生索引和 `memory_changes`；`before_state` 为空，`after_state` 是待批准工作态。
 - update / delete / restore 会先修改当前工作态；如果没有 open change，先保存 `before_state`；如果已有 open change，只覆盖 `after_state` 和 `updated_at`。
 - state 以 JSON 保存完整工作态快照，结构固定为 memory、keywords、handles、relations。
 - 创建或更新时，重复检测以 `memory_units`、`memory_handles` 等当前工作态表和正式唯一约束为准；`memory_changes.after_state` 不承担唯一约束。
-- 用户确认 create 时删除对应 `memory_changes`，并自动写入默认 `related_to` relations。
-- 用户确认 update / delete / restore 时只删除对应 `memory_changes`，不再把 `after_state` 二次写入工作态。
+- 用户确认 create 时把 `memory_units.status` 改为 `active`，删除对应 `memory_changes`，并自动写入默认 `related_to` relations。
+- 用户确认 update / restore 时只删除对应 `memory_changes`，不再把 `after_state` 二次写入工作态。
+- 用户确认 delete 时删除对应 `memory_changes`，再硬删除 `memory_units`，由外键级联清理派生表。
 - 用户拒绝 create 时，删除 `memory_changes`，再删除对应 `memory_units`，由外键级联清理派生表。
 - 用户拒绝 update / delete / restore 时，用 `before_state` 恢复当前工作态，再删除 `memory_changes`。
 - 第一版 `memory_changes.memory_uuid` 不建外键；后端事务保证 open change 指向当前工作态，拒绝 create 时也便于先删 change 再删 memory。
@@ -335,7 +338,7 @@ weight is null or weight between 0 and 100
 - `supersedes / depends_on / elaborates / applies_to` 保留语义方向。
 - 第一版图扩展只做一跳；复杂多跳查询走 Apache AGE。
 - `memory_relations` 是关系主数据；AGE 图数据由它同步生成，不直接作为正式数据源。
-- `trashed` memory 的 SQL relations 保留到 purge；查询和 AGE 同步必须过滤 trashed endpoint。
+- `trashed` memory 的 SQL relations 保留到用户确认 delete；查询和 AGE 同步必须过滤 trashed endpoint。
 - `relation_type` 由后端固定校验，不允许任意字符串写入。
 - `weight` 可空；为空表示后端使用默认关系权重。
 - `related_to` 是弱相关；`depends_on / supersedes / conflicts_with` 是强语义关系。
@@ -480,7 +483,7 @@ created_at text
 ```text
 (category, status)
 memory_units(status, updated_at)
-memory_units(category, title_norm) unique where status = 'active'
+memory_units(category, title_norm) unique where status in ('pending', 'active')
 memory_embeddings(memory_uuid) primary key btree
 memory_embeddings(embedding) HNSW cosine
 memory_embeddings(embedded_at)
@@ -585,7 +588,8 @@ recall_memory(query)
 
 - `recall_memory` 默认只返回 `active`。
 - `trashed` 永远不返回。
-- 所有召回分路和关系扩展都必须 join `memory_units` 并过滤 `status = active`。
+- `pending` 只能在待确认流程或 uuid 精确读取中出现。
+- 所有正式召回分路和关系扩展都必须 join `memory_units` 并过滤 `status = active`。
 
 排序优先级：
 
@@ -644,7 +648,7 @@ commit
 ```text
 delete：status = trashed，trashed_at = now()，并写入或更新 memory_changes
 restore：校验没有 active 同名冲突，status = active，trashed_at = null，并写入或更新 memory_changes
-purge：trashed_at 超过 TOML 配置的 trash_retention_days 后硬删除 memory_units，级联删除派生数据
+approve delete：删除 memory_changes，再硬删除 memory_units，级联删除派生数据
 ```
 
 确认流程：
@@ -653,7 +657,8 @@ purge：trashed_at 超过 TOML 配置的 trash_retention_days 后硬删除 memor
 begin
 锁定并读取 memory_changes
 确认当前工作态仍与 after_state 一致
-删除 memory_changes
+如果 action = delete：删除 memory_changes，再删除 memory_units
+如果 action != delete：删除 memory_changes
 commit
 ```
 
@@ -676,13 +681,8 @@ restore：用 before_state 恢复 trashed 状态，再删除 memory_changes
 
 自动清理规则：
 
-- `trash_retention_days` 是 TOML 配置项，作用于当前 profile 私库和 `mem_share`。
-- 默认值是 7 天。
-- 允许范围是 1 到 3650 天。
-- 未配置时使用默认值；配置非法时启动失败，不静默回退。
-- purge 使用数据库时间按 `now() - trashed_at >= trash_retention_days days` 判断。
-- purge 不进入审查，不写 `memory_changes`。
-- purge 只删除超过保留天数的 `trashed` memory；`active` memory 永不参与。
+- 第一版不做自动 purge。
+- 硬删除只能由用户确认 delete 触发。
 
 撤销流程：
 

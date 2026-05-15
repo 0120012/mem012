@@ -104,7 +104,7 @@ is_share
 ### GET /memories
 
 - 返回当前 project 的记忆列表。
-- 通过 left join `memory_changes` 派生 pending 状态。
+- 直接读取 `memory_units.status`；`pending` 表示已写入但未批准。
 
 最小字段：
 
@@ -146,8 +146,9 @@ updated_at
 ### POST /changes/{change_uuid}/approve
 
 - 删除对应 `memory_changes`。
-- 不重复写入 `memory_units`，因为当前工作态已经生效。
-- `action = create` 时自动生成默认 `related_to` relations，并标记 graph dirty。
+- `action = update/restore` 时不重复写入 `memory_units`，因为当前工作态已经生效。
+- `action = create` 时把 `memory_units.status` 改为 `active`，自动生成默认 `related_to` relations，并标记 graph dirty。
+- `action = delete` 时硬删除对应 `memory_units`，依靠 cascade 清理派生表，并标记 graph dirty。
 
 ### POST /changes/{change_uuid}/reject
 
@@ -158,7 +159,8 @@ updated_at
 
 - `memory_relations` 是关系主数据，AGE 只做派生图查询。
 - create/update/delete/restore 改变工作态或关系时，必须在同一事务内标记 `memory_graph_meta.dirty = true`。
-- approve create 会删除 `memory_changes` 并自动写默认 relations；如果写入 relation，则标记 `dirty`。
+- approve create 会把 `pending` 改为 `active`，删除 `memory_changes` 并自动写默认 relations；如果写入 relation，则标记 `dirty`。
+- approve delete 会删除 `memory_changes` 并硬删除 `memory_units`；必须标记 `dirty`。
 - approve update/relation 只删除 `memory_changes`，不改工作态。
 - reject 如果删除或恢复了 memory / relation，必须标记 `dirty = true`。
 - AGE rebuild 只读取 SQL 当前工作态，不读取 `memory_changes`。

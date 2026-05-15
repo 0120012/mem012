@@ -17,7 +17,7 @@
 
 - 直接调用 CLI 工具
 - 直接构造 `tool=create_memory` 这类 payload
-- 直接参与 `CLI V10` 工具分发
+- 直接参与 CLI 工具分发
 
 一句话：
 
@@ -260,8 +260,8 @@ frontend -> backend/api -> shared core -> storage
 
 - 让前端理解 CLI 工具名
 - 让前端改成 tool executor
-- 让前端先接 `/api/cli/v10/exec`
-- 为了 CLI V10 先改前端页面结构
+- 让前端先接 CLI exec 类接口
+- 为了 CLI 工具协议先改前端页面结构
 
 因为这会把“人类界面”和“工具协议”混在一起。
 
