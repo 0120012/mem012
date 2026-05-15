@@ -316,7 +316,7 @@ FROM candidates
 ON CONFLICT (from_memory_uuid, to_memory_uuid, relation_type) DO NOTHING
 "#;
 
-async fn memory_state(
+pub(crate) async fn memory_state(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {

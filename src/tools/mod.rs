@@ -1,4 +1,5 @@
 mod create_memory;
+mod delete_memory;
 
 pub struct ToolContext<'a> {
     // Why：工具执行需要同时看到当前私库和共享库，但连接池生命周期应由 main 持有。
@@ -33,6 +34,7 @@ pub async fn dispatch_tool_request(
 
     match tool {
         "create_memory" => create_memory::run(context, args).await,
+        "delete_memory" => delete_memory::run(context, args).await,
         _ => Err(format!("未知工具: {tool}").into()),
     }
 }
