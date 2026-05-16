@@ -6,10 +6,10 @@ pub async fn init_db(
     share_pool: &Pool<Postgres>,
 ) -> Result<bool, sqlx::Error> {
     // DEBUG
-    // if true {
-    //     reset_memory_tables(pool, "profile").await?;
-    //     reset_memory_tables(share_pool, "share").await?;
-    // }
+    if true {
+        reset_memory_tables(pool, "profile").await?;
+        reset_memory_tables(share_pool, "share").await?;
+    }
 
     migrate_memory_tables(pool, "profile").await?;
     migrate_memory_tables(share_pool, "share").await?;
@@ -43,6 +43,7 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     // Why：profile 库和 share 库结构一致，复用同一套建表顺序可以避免 schema 漂移。
     if schema_ready(pool).await? {
         println!("{db_label}: 跳过初始化");
+        drop_memory_exclude_when(pool).await?;
         ensure_memory_status_constraint(pool).await?;
         cr_memory_indexes(pool, db_label).await?;
         return Ok(());
@@ -102,6 +103,14 @@ async fn cr_memory_indexes(pool: &Pool<Postgres>, db_label: &str) -> Result<(), 
     }
 
     println!("{db_label}: memory 索引创建成功");
+    Ok(())
+}
+
+async fn drop_memory_exclude_when(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    // Why：exclude_when 已退出 schema，旧库启动时必须收敛表结构，避免代码和数据库长期漂移。
+    sqlx::query("ALTER TABLE memory_units DROP COLUMN IF EXISTS exclude_when")
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -388,7 +397,6 @@ async fn cr_memory_units_table(
             summary TEXT NOT NULL,
             status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'trashed')),
             recall_when TEXT,
-            exclude_when TEXT,
             trashed_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL,
             updated_at TIMESTAMPTZ NOT NULL,

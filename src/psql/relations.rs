@@ -139,7 +139,6 @@ SELECT jsonb_build_object(
         'summary', u.summary,
         'status', u.status,
         'recall_when', u.recall_when,
-        'exclude_when', u.exclude_when,
         'trashed_at', u.trashed_at
     ),
     'keywords', COALESCE((

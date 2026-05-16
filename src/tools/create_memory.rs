@@ -10,7 +10,6 @@ struct CreateMemoryArgs {
     summary: String,
     keywords: Vec<String>,
     recall_when: Option<String>,
-    exclude_when: Option<String>,
     handle: Option<String>,
 }
 
@@ -98,7 +97,6 @@ fn build_after_state(
             "summary": args.summary.trim(),
             "status": "pending",
             "recall_when": args.recall_when.as_deref().map(str::trim),
-            "exclude_when": args.exclude_when.as_deref().map(str::trim),
             "trashed_at": null
         },
         "keywords": keywords,
@@ -182,7 +180,7 @@ async fn insert_memory_unit(
         r#"
         INSERT INTO memory_units (
             uuid, category, title_norm, content, summary, status,
-            recall_when, exclude_when, trashed_at, created_at, updated_at
+            recall_when, trashed_at, created_at, updated_at
         )
         SELECT
             $1::uuid,
@@ -192,7 +190,6 @@ async fn insert_memory_unit(
             state #>> '{memory,summary}',
             state #>> '{memory,status}',
             state #>> '{memory,recall_when}',
-            state #>> '{memory,exclude_when}',
             (state #>> '{memory,trashed_at}')::timestamptz,
             now(),
             now()
@@ -326,13 +323,12 @@ fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn st
         }
     }
 
-    for (name, value) in [
-        ("recall_when", &args.recall_when),
-        ("exclude_when", &args.exclude_when),
-    ] {
-        if value.as_deref().is_some_and(|text| text.trim().is_empty()) {
-            return Err(format!("{name} 不能是空字符串").into());
-        }
+    if args
+        .recall_when
+        .as_deref()
+        .is_some_and(|text| text.trim().is_empty())
+    {
+        return Err("recall_when 不能是空字符串".into());
     }
 
     if let Some(handle) = &args.handle {

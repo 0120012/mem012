@@ -14,7 +14,12 @@ fulltext = 25 # title/summary/content/keywords 的全文检索加分。
 semantic = 20 # 语义向量相似度加分，负责非字面但语义接近的召回。
 graph = 12 # 关系图一跳扩展加分，负责补充强关联记忆。
 stale_penalty = 10 # 过期或需要复审的记忆扣分。
-exclude_penalty = 100 # 命中 exclude_when 时的强扣分，避免误召回。
+
+[embeddings]
+# 默认留空，避免没有 embedding 服务的新环境启动失败。
+embeddings_api = ""
+embeddings_key = ""
+embeddings_model = "BAAI/bge-m3"
 
 [server]
 addr = "0.0.0.0:37777"

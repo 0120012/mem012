@@ -20,7 +20,6 @@ struct SearchConfig {
     semantic: i32,
     graph: i32,
     stale_penalty: i32,
-    exclude_penalty: i32,
 }
 
 pub struct EmbeddingSettings {

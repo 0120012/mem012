@@ -220,7 +220,6 @@ async fn restore_memory_unit(
             summary = input.state #>> '{memory,summary}',
             status = input.state #>> '{memory,status}',
             recall_when = input.state #>> '{memory,recall_when}',
-            exclude_when = input.state #>> '{memory,exclude_when}',
             trashed_at = (input.state #>> '{memory,trashed_at}')::timestamptz,
             updated_at = now()
         FROM (SELECT $2::jsonb AS state) input

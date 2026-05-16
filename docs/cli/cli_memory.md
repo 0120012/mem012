@@ -93,7 +93,6 @@ mem012 --profile riko --args {"tool":"create_memory","args":{}}
     "summary": "profile 用于隔离数据库连接，Agent 搜索时不传 profile。",
     "keywords": ["profile", "数据库隔离", "搜索参数"],
     "recall_when": "当讨论多库隔离、profile、数据库连接选择时召回",
-    "exclude_when": "当讨论普通 category 分类时不要召回",
     "handle": "core/backend/database/profile隔离"
   }
 }
@@ -110,7 +109,6 @@ mem012 --profile riko --args {"tool":"create_memory","args":{}}
 
 - `category`
 - `recall_when`
-- `exclude_when`
 - `handle`
 
 校验规则：
@@ -122,7 +120,6 @@ mem012 --profile riko --args {"tool":"create_memory","args":{}}
 - `keywords` 必须是非空字符串数组。
 - `keywords` 规范化后不能重复。
 - `recall_when` 如果提供，不能是空字符串。
-- `exclude_when` 如果提供，不能是空字符串。
 - `handle` 如果提供，必须是 2 到 4 段路径。
 - `handle` 第一段必须等于 `category`。
 - `handle` 每一段 trim 后都不能为空。

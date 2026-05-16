@@ -17,7 +17,7 @@ profile 私库 + mem_share 共享库 + category 分类 + Memory Unit + 关键词
 - URI 不再作为核心寻址方式，也不再有 `domain://path`。
 - `core/instance/Thinking_in_Systems/reflections/chapter_1_system_basics` 这类写法可作为 Agent 快速定位 handle；它不进入 TOML 配置，也不是数据库主键。
 - `kind` 不做配置白名单，不做核心寻址维度；如果需要分类，交给关键词或 handle 处理。
-- `disclosure` 的思想保留，字段改成 `recall_when`，并增加 `exclude_when`。
+- `disclosure` 的思想保留，字段改成 `recall_when`。
 - 图继续存在，但图表达记忆之间的关系，不表达路径树。
 - PostgreSQL-only；不再保留 SQLite 分支。
 - MCP、HTTP、CLI 共享同一套核心服务。
@@ -70,7 +70,6 @@ content text not null
 summary text not null
 status text not null
 recall_when text
-exclude_when text
 trashed_at timestamptz
 created_at timestamptz not null
 updated_at timestamptz not null
@@ -102,7 +101,6 @@ trashed
 - `content`：完整正文。
 - `summary`：给 Agent 搜索用的语义压缩文本，不以人类展示为主要目标。
 - `recall_when`：什么时候应该召回。
-- `exclude_when`：什么时候明确不要召回。
 - `status`：后端内部状态，不放 TOML；固定为 `pending`、`active`、`trashed`。
 - `trashed_at`：进入回收站的时间；只有 `status = trashed` 时有值。
 - 同名判断以 `title_norm` 为准；后端可调用数据库函数提前校验，但数据库唯一约束兜底。
@@ -292,7 +290,7 @@ unique(memory_uuid)
 state JSON 结构：
 
 ```text
-memory: {uuid, category, title_norm, content, summary, status, recall_when, exclude_when, trashed_at}
+memory: {uuid, category, title_norm, content, summary, status, recall_when, trashed_at}
 keywords: [{keyword_norm, weight}]
 handles: [{handle_norm}]
 relations: [{from_memory_uuid, to_memory_uuid, relation_type, weight, note}]
