@@ -18,7 +18,6 @@ mem012 --profile riko --args '{"tool":"create_memory","args":{"category":"core",
 ```
 
 6. 成功后记录返回的 `memory_uuid`。
-7. 等待用户在前端批准。
 
 ## delete_memory
 
@@ -31,4 +30,3 @@ mem012 --profile riko --args '{"tool":"delete_memory","args":{"memory_uuid":"8b3
 ```
 
 4. 成功后记录返回的 `change_uuid`。
-5. 等待用户在前端批准或撤销。
