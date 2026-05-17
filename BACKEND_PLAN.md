@@ -70,9 +70,9 @@ GET /memories
 
 ```text
 GET  /changes
-GET  /changes/{change_uuid}
-POST /changes/{change_uuid}/approve
-POST /changes/{change_uuid}/reject
+GET  /changes/{memory_uuid}
+POST /changes/{memory_uuid}/approve
+POST /changes/{memory_uuid}/reject
 ```
 
 ## API Semantics
@@ -128,7 +128,6 @@ updated_at
 最小字段：
 
 ```text
-change_uuid
 memory_uuid
 action
 title_norm
@@ -137,20 +136,20 @@ created_at
 updated_at
 ```
 
-### GET /changes/{change_uuid}
+### GET /changes/{memory_uuid}
 
 - 返回待确认详情。
 - create 时 `before_state = null`。
 - update/delete/restore 时返回 before / after。
 
-### POST /changes/{change_uuid}/approve
+### POST /changes/{memory_uuid}/approve
 
 - 删除对应 `memory_changes`。
 - `action = update/restore` 时不重复写入 `memory_units`，因为当前工作态已经生效。
 - `action = create` 时把 `memory_units.status` 改为 `active`，自动生成默认 `related_to` relations，并标记 graph dirty。
 - `action = delete` 时硬删除对应 `memory_units`，依靠 cascade 清理派生表，并标记 graph dirty。
 
-### POST /changes/{change_uuid}/reject
+### POST /changes/{memory_uuid}/reject
 
 - `action = create`：删除 change 后删除 memory，依靠 cascade 清理派生表。
 - `action = update/delete/restore`：用 `before_state` 恢复工作态，再删除 change。
@@ -179,7 +178,7 @@ updated_at
 - 所有非 auth API 都必须要求 session 有效。
 - handler 不直接拼复杂 SQL 业务逻辑；复杂查询放到 psql/service 函数。
 - approve / reject 必须在事务内完成。
-- 前端 approve / reject 只传 `change_uuid`，不传 before_state 或 after_state。
+- 前端 approve / reject 只传 `memory_uuid`，不传 before_state 或 after_state。
 
 ## Checklist
 
@@ -192,11 +191,11 @@ updated_at
 - [ ] 实现 `GET /memories` 查询。
 - [ ] 接入 `GET /changes`。
 - [ ] 实现 `GET /changes` 查询。
-- [ ] 接入 `GET /changes/{change_uuid}`。
+- [ ] 接入 `GET /changes/{memory_uuid}`。
 - [ ] 实现 change detail 查询。
-- [ ] 接入 `POST /changes/{change_uuid}/approve`。
+- [ ] 接入 `POST /changes/{memory_uuid}/approve`。
 - [ ] 实现 approve 事务。
-- [ ] 接入 `POST /changes/{change_uuid}/reject`。
+- [ ] 接入 `POST /changes/{memory_uuid}/reject`。
 - [ ] 实现 reject create 事务。
 - [ ] 实现 reject update/delete/restore 事务。
 - [x] 实现 graph dirty 标记函数。

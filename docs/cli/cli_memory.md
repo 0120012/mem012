@@ -30,13 +30,13 @@ mem012 --profile riko --args '<json_object>'
 正确示例：
 
 ```bash
-mem012 --profile riko --args '{"tool":"create_memory","args":{"title":"Profile 隔离规则","content":"profile 是数据库隔离边界。","summary":"profile 用于隔离数据库连接。","keywords":["profile"],"handle":"core/backend/database/profile隔离"}}'
+mem012 --profile riko --args '{"tool":"create_memory","params":{"title":"Profile 隔离规则","content":"profile 是数据库隔离边界。","summary":"profile 用于隔离数据库连接。","keywords":["profile"],"handle":"core/backend/database/profile隔离"}}'
 ```
 
 错误示例：
 
 ```bash
-mem012 --profile riko --args {"tool":"create_memory","args":{}}
+mem012 --profile riko --args {"tool":"create_memory","params":{}}
 ```
 
 ## 3. 请求外壳
@@ -44,7 +44,7 @@ mem012 --profile riko --args {"tool":"create_memory","args":{}}
 ```json
 {
   "tool": "create_memory",
-  "args": {}
+  "params": {}
 }
 ```
 
@@ -86,7 +86,7 @@ mem012 --profile riko --args {"tool":"create_memory","args":{}}
 ```json
 {
   "tool": "create_memory",
-  "args": {
+  "params": {
     "category": "core",
     "title": "Profile 隔离规则",
     "content": "profile 是数据库隔离边界，不进入搜索参数。",
@@ -198,14 +198,14 @@ memory_handles.handle_norm
 
 ## 8. delete_memory
 
-删除一条记忆。调用成功后，记忆进入 `trashed`，并返回后续网页/API 批准删除所需的 `change_uuid`。
+删除一条记忆。调用成功后，记忆进入 `trashed`，后续网页/API 继续使用同一个 `memory_uuid` 批准删除。
 
 请求：
 
 ```json
 {
   "tool": "delete_memory",
-  "args": {
+  "params": {
     "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00"
   }
 }
@@ -219,7 +219,6 @@ memory_handles.handle_norm
   "tool": "delete_memory",
   "data": {
     "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
-    "change_uuid": "6a0b1b34-ac8b-4b78-9896-6779c94e7b33",
     "action": "delete",
     "result": "trashed"
   },

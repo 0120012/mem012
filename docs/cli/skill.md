@@ -14,7 +14,7 @@ description: Use when creating or deleting mem012 memories through the CLI with 
 5. 执行：
 
 ```bash
-mem012 --profile riko --args '{"tool":"create_memory","args":{"category":"core","title":"标题","content":"正文","summary":"摘要","keywords":["关键词"],"handle":"core/group/item"}}'
+mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"core","title":"标题","content":"正文","summary":"摘要","keywords":["关键词"],"handle":"core/group/item"}}'
 ```
 
 6. 成功后记录返回的 `memory_uuid`。
@@ -26,7 +26,7 @@ mem012 --profile riko --args '{"tool":"create_memory","args":{"category":"core",
 3. 执行：
 
 ```bash
-mem012 --profile riko --args '{"tool":"delete_memory","args":{"memory_uuid":"8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00"}}'
+mem012 --profile riko --args '{"tool":"delete_memory","params":{"memory_uuid":"8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00"}}'
 ```
 
-4. 成功后记录返回的 `change_uuid`。
+4. 成功后继续使用同一个 `memory_uuid` 执行批准或撤销。

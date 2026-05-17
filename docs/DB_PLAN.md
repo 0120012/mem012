@@ -260,6 +260,7 @@ updated_at timestamptz not null
 
 ```text
 action in ('create', 'update', 'delete', 'restore')
+uuid = memory_uuid
 unique(memory_uuid)
 ```
 

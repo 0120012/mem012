@@ -54,7 +54,7 @@ apply_memory_update
 ```json
 {
   "tool": "read_memory_hash",
-  "args": {
+  "params": {
     "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00"
   }
 }
@@ -72,14 +72,14 @@ apply_memory_update
     "handle": "core/backend/database/profile隔离",
     "status": "active",
     "hash": {
-      "state_hash": "sha256:...",
-      "title_hash": "sha256:...",
-      "content_hash": "sha256:...",
-      "summary_hash": "sha256:...",
-      "recall_when_hash": "sha256:...",
-      "category_hash": "sha256:...",
-      "handle_hash": "sha256:...",
-      "keywords_hash": "sha256:..."
+      "state_hash": "0x...",
+      "title_hash": "0x...",
+      "content_hash": "0x...",
+      "summary_hash": "0x...",
+      "recall_when_hash": "0x...",
+      "category_hash": "0x...",
+      "handle_hash": "0x...",
+      "keywords_hash": "0x..."
     }
   },
   "error": null,
@@ -126,9 +126,9 @@ apply_memory_update
 ```json
 {
   "tool": "update_memory_replace",
-  "args": {
+  "params": {
     "memory_uuid": "xxx",
-    "expected_title_hash": "sha256:...",
+    "expected_title_hash": "0x...",
     "new_title": "新标题"
   }
 }
@@ -159,9 +159,9 @@ new_content
 ```json
 {
   "tool": "update_memory_replace",
-  "args": {
+  "params": {
     "memory_uuid": "xxx",
-    "expected_content_hash": "sha256:...",
+    "expected_content_hash": "0x...",
     "new_content": "新的完整正文"
   }
 }
@@ -174,9 +174,9 @@ new_content
 ```json
 {
   "tool": "update_memory_patch_content",
-  "args": {
+  "params": {
     "memory_uuid": "xxx",
-    "expected_content_hash": "sha256:...",
+    "expected_content_hash": "0x...",
     "match_content": "旧文本",
     "replace_content": "新文本"
   }
@@ -201,9 +201,9 @@ new_content
 ```json
 {
   "tool": "update_memory_append",
-  "args": {
+  "params": {
     "memory_uuid": "xxx",
-    "expected_content_hash": "sha256:...",
+    "expected_content_hash": "0x...",
     "append_content": "\n\n补充内容"
   }
 }
@@ -214,9 +214,9 @@ new_content
 ```json
 {
   "tool": "update_memory_append",
-  "args": {
+  "params": {
     "memory_uuid": "xxx",
-    "expected_recall_when_hash": "sha256:...",
+    "expected_recall_when_hash": "0x...",
     "append_recall_when": "；当讨论更新记忆时召回"
   }
 }
@@ -236,9 +236,9 @@ new_content
 ```json
 {
   "tool": "update_memory_add_keywords",
-  "args": {
+  "params": {
     "memory_uuid": "xxx",
-    "expected_keywords_hash": "sha256:...",
+    "expected_keywords_hash": "0x...",
     "keywords": ["新关键词"]
   }
 }
@@ -256,9 +256,9 @@ new_content
 ```json
 {
   "tool": "update_memory_remove_keywords",
-  "args": {
+  "params": {
     "memory_uuid": "xxx",
-    "expected_keywords_hash": "sha256:...",
+    "expected_keywords_hash": "0x...",
     "keywords": ["旧关键词"]
   }
 }
@@ -332,7 +332,6 @@ active 且已有 update / restore：
   "tool": "update_memory_append",
   "data": {
     "memory_uuid": "xxx",
-    "change_uuid": "xxx",
     "action": "update",
     "result": "pending_review",
     "updated_fields": ["content"]

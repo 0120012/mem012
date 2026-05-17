@@ -25,7 +25,7 @@ trashed = 已软删除，等待用户批准 delete 或撤销
 ```json
 {
   "tool": "delete_memory",
-  "args": {
+  "params": {
     "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00"
   }
 }
@@ -93,7 +93,7 @@ UPDATE memory_changes SET action = delete, after_state, updated_at
 如果当前已经是 `trashed + delete`：
 
 ```text
-直接返回当前 change_uuid
+直接返回当前 memory_uuid
 不修改 before_state / after_state / trashed_at
 不标记 graph dirty
 ```
@@ -106,7 +106,6 @@ UPDATE memory_changes SET action = delete, after_state, updated_at
   "tool": "delete_memory",
   "data": {
     "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
-    "change_uuid": "6a0b1b34-ac8b-4b78-9896-6779c94e7b33",
     "action": "delete",
     "result": "trashed"
   },
@@ -115,22 +114,22 @@ UPDATE memory_changes SET action = delete, after_state, updated_at
 }
 ```
 
-`change_uuid` 是后续网页/API 批准 delete 的审核任务 ID。
+`memory_uuid` 同时也是后续网页/API 批准 delete 的审核任务 ID。
 
 ## 7. approve delete
 
 判断条件：
 
 ```text
-memory_changes.uuid = change_uuid
+memory_changes.memory_uuid = memory_uuid
 memory_changes.action = delete
 ```
 
 动作：
 
 ```text
-DELETE FROM memory_changes WHERE uuid = change_uuid
-DELETE FROM memory_units WHERE uuid = memory_changes.memory_uuid
+DELETE FROM memory_changes WHERE memory_uuid = memory_uuid
+DELETE FROM memory_units WHERE uuid = memory_uuid
 ```
 
 `memory_keywords`、`memory_handles`、`memory_relations`、`memory_usage`、`memory_embeddings` 依赖外键级联清理。

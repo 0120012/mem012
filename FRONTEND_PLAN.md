@@ -60,9 +60,9 @@ GET  /auth/session
 GET  /projects
 GET  /memories
 GET  /changes
-GET  /changes/{change_uuid}
-POST /changes/{change_uuid}/approve
-POST /changes/{change_uuid}/reject
+GET  /changes/{memory_uuid}
+POST /changes/{memory_uuid}/approve
+POST /changes/{memory_uuid}/reject
 ```
 
 当前 project 通过请求头传递：
@@ -85,7 +85,7 @@ X-Mem-Project: riko
 - [ ] 后端接口完成后，联调 `GET /projects`。
 - [ ] 后端接口完成后，联调 `GET /memories`。
 - [ ] 后端接口完成后，联调 `GET /changes`。
-- [ ] 后端接口完成后，联调 `GET /changes/{change_uuid}`。
+- [ ] 后端接口完成后，联调 `GET /changes/{memory_uuid}`。
 - [ ] 后端接口完成后，联调 approve / reject 操作。
 - [ ] 补齐 API loading / empty / error 状态展示。
 - [ ] 用真实后端数据检查移动端可用性。
