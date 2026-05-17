@@ -26,7 +26,6 @@ export interface MemoryItem {
 }
 
 export interface ChangeItem {
-  change_uuid: string
   memory_uuid: string
   action: string
   title_norm: string
@@ -36,7 +35,6 @@ export interface ChangeItem {
 }
 
 export interface ChangeDetail {
-  change_uuid: string
   memory_uuid: string
   action: string
   title_norm: string

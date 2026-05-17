@@ -119,13 +119,13 @@ export function ChangesPage() {
       ) : (
         <div className="rounded-lg border">
           {changes.map((c, idx) => {
-            const isExpanded = expandedUuid === c.change_uuid
-            const isThisDetail = isExpanded && detail?.change_uuid === c.change_uuid
+            const isExpanded = expandedUuid === c.memory_uuid
+            const isThisDetail = isExpanded && detail?.memory_uuid === c.memory_uuid
             return (
-              <div key={c.change_uuid} className={cn("transition-colors", idx > 0 && "border-t")}>
+              <div key={c.memory_uuid} className={cn("transition-colors", idx > 0 && "border-t")}>
                 <div
                   className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-accent/30 transition-colors min-h-[44px]"
-                  onClick={() => !isExpanded && toggleCard(c.change_uuid)}
+                  onClick={() => !isExpanded && toggleCard(c.memory_uuid)}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -158,10 +158,10 @@ export function ChangesPage() {
                         <StateBlock state={detail.after_state} label="修改后" />
                         <div className="flex gap-2 pt-2">
                           <Button variant="outline" size="sm" className="flex-1"
-                            onClick={(e) => { e.stopPropagation(); handleAction(detail.change_uuid, "reject") }}
+                            onClick={(e) => { e.stopPropagation(); handleAction(detail.memory_uuid, "reject") }}
                             disabled={actionLoading}>拒绝</Button>
                           <Button size="sm" className="flex-1"
-                            onClick={(e) => { e.stopPropagation(); handleAction(detail.change_uuid, "approve") }}
+                            onClick={(e) => { e.stopPropagation(); handleAction(detail.memory_uuid, "approve") }}
                             disabled={actionLoading}>批准</Button>
                         </div>
                       </div>
