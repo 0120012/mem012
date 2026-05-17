@@ -2,172 +2,365 @@
 
 ## 1. 目标
 
-`update_memory` 用于修改一条已经存在的记忆。
+更新记忆对 Agent 暴露 1 个读取工具和 5 个更新工具；后端内部必须走同一个更新事务。
 
 当前状态：设计文档，Rust CLI 尚未接入。
 
-核心原则：
-
 ```text
-update_memory = 先更新当前工作态，再写入或覆盖 memory_changes
-approve update = 删除 memory_changes，保留当前工作态
-reject update = 用 before_state 恢复旧工作态，再删除 memory_changes
+read_memory_hash        = 更新前读取目标身份和字段 hash
+update_memory_replace   = 替换整个字段
+update_memory_patch_content = 替换 content 中唯一匹配片段
+update_memory_append    = 追加 content / recall_when
+update_memory_add_keywords = 增加 keywords
+update_memory_remove_keywords = 删除 keywords
 ```
 
-固定状态：
+后端统一入口：
 
 ```text
-pending = 已写入，等待用户批准 create
-active = 已批准，进入正式召回和图谱
-trashed = 已软删除，等待用户批准 delete 或撤销
+apply_memory_update
 ```
 
-## 2. 请求
+结果规则：
+
+```text
+一次用户意图只生成一条 memory_changes
+```
+
+## 2. 目标确认
+
+`handle` / `title` 只能用于搜索候选，不能直接执行更新。
+
+执行任意更新工具前必须完成：
+
+```text
+1. 用 handle 或 title 搜索候选
+2. 展示 memory_uuid、title_norm、handle
+3. 用户确认具体目标
+4. 调用 read_memory_hash
+5. 展示返回的 title_norm、handle、status 做最后确认
+6. 拿到字段 hash
+7. 调用更新工具
+```
+
+如果用户直接提供 `memory_uuid`，仍然要先调用 `read_memory_hash` 并拿到字段 hash。
+
+## 3. read_memory_hash
+
+用途：读取目标记忆的轻量身份摘要和当前版本指纹。
+
+请求：
 
 ```json
 {
-  "tool": "update_memory",
+  "tool": "read_memory_hash",
   "args": {
-    "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
-    "title": "新的标题",
-    "summary": "新的摘要",
-    "keywords": ["profile", "database"],
-    "handle": "core/backend/database/profile"
+    "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00"
   }
 }
 ```
 
-规则：
-
-- 只允许通过 `memory_uuid` 定位。
-- `memory_uuid` 必填且不能为空。
-- 至少提供一个修改字段。
-- 未提供的字段保持不变。
-- `recall_when`、`handle` 传 `null` 表示清空。
-- 禁止传 `profile`、`title_norm`、`status`、`trashed_at`、`created_at`、`updated_at`。
-
-允许修改字段：
-
-- `category`
-- `title`
-- `content`
-- `summary`
-- `keywords`
-- `recall_when`
-- `handle`
-
-## 3. 校验
-
-- `category` 必须是非 `share` 的 slug。
-- `title`、`content`、`summary` 如果提供，不能是空字符串。
-- `keywords` 如果提供，必须是非空字符串数组。
-- `keywords` 规范化后不能重复。
-- `recall_when` 如果提供字符串，不能是空字符串。
-- `handle` 如果提供字符串，必须是 2 到 4 段路径。
-- `handle` 第一段必须等于最终 `category`。
-- `memory_units.status = trashed` 时禁止 update，必须先走 restore。
-
-## 4. case 1: pending create
-
-判断条件：
-
-```text
-memory_units.status = pending
-memory_changes.action = create
-```
-
-动作：
-
-```text
-更新 memory_units / memory_keywords / memory_handles
-after_state = 更新后的 pending 工作态
-UPDATE memory_changes SET after_state, updated_at
-```
-
-不修改 `memory_changes.action`，仍然保持 `create`。
-
-不标记 graph dirty，因为 pending memory 不进入正式图谱。
-
-## 5. case 2: active 且没有 open change
-
-判断条件：
-
-```text
-memory_units.status = active
-不存在 memory_changes.memory_uuid = memory_uuid
-```
-
-动作：
-
-```text
-before_state = 更新前 active 工作态
-更新 memory_units / memory_keywords / memory_handles
-after_state = 更新后 active 工作态
-INSERT memory_changes(action = update, before_state, after_state)
-标记 graph dirty
-```
-
-## 6. case 3: active 且已有 open change
-
-如果当前 open change 是 `update` 或 `restore`：
-
-```text
-保留已有 before_state
-更新 memory_units / memory_keywords / memory_handles
-after_state = 更新后工作态
-UPDATE memory_changes SET after_state, updated_at
-```
-
-不覆盖原 action。`restore` 后继续 update，仍然保留 `restore` action，因为拒绝时要回到 restore 前的基线。
-
-如果当前 open change 是 `delete`：
-
-```text
-拒绝 update
-```
-
-## 7. 写入范围
-
-`update_memory` 可以写：
-
-- `memory_units`
-- `memory_keywords`
-- `memory_handles`
-- `memory_changes`
-- `memory_graph_meta`
-
-`update_memory` 不直接写：
-
-- `memory_embeddings`
-- `memory_usage`
-- AGE 内部图数据
-
-如果修改了 `title`、`content`、`summary`、`keywords`，embedding 属于派生索引，由 approve update 或后续重建任务刷新。
-
-## 8. 成功响应
+成功响应：
 
 ```json
 {
   "state": "success",
-  "tool": "update_memory",
+  "tool": "read_memory_hash",
   "data": {
     "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
-    "change_uuid": "6a0b1b34-ac8b-4b78-9896-6779c94e7b33",
-    "action": "update",
-    "result": "pending_review"
+    "title_norm": "profile 隔离规则",
+    "handle": "core/backend/database/profile隔离",
+    "status": "active",
+    "hash": {
+      "state_hash": "sha256:...",
+      "title_hash": "sha256:...",
+      "content_hash": "sha256:...",
+      "summary_hash": "sha256:...",
+      "recall_when_hash": "sha256:...",
+      "category_hash": "sha256:...",
+      "handle_hash": "sha256:...",
+      "keywords_hash": "sha256:..."
+    }
   },
   "error": null,
   "profile": "riko"
 }
 ```
 
-`action` 返回当前 `memory_changes.action`，所以 pending create 场景可能返回 `create`，restore 场景可能返回 `restore`。
+规则：
 
-## 9. 非目标
+- 所有 hash 都由后端计算。
+- `hash.state_hash` 基于完整 state。
+- 字段 hash 只用于对应字段更新前校验。
+- `read_memory_hash` 不返回完整 `content`。
+- `read_memory_hash` 不返回 `summary` 正文，只返回 `hash.summary_hash`。
+- Agent 只能原样转交 hash，不能自己生成。
 
-- 通过 title / handle 更新
+## 4. 通用参数
+
+每个更新工具都必须带 `memory_uuid` 和本次修改字段对应的 `expected_*_hash`：
+
+```json
+{
+  "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
+  "expected_title_hash": "read_memory_hash 返回的 hash.title_hash"
+}
+```
+
+规则：
+
+- `memory_uuid` 必须来自用户确认后的精确读取结果。
+- `expected_*_hash` 必须来自同一次 `read_memory_hash`。
+- 更新哪个字段，就必须带哪个字段的 `expected_*_hash`。
+- 后端重新计算当前字段 hash，不一致时拒绝更新。
+- `memory_units.status = trashed` 时拒绝更新。
+- 不能从 search/list 结果里直接拿 uuid 更新。
+- 候选超过一条时必须让用户选择。
+
+## 5. update_memory_replace
+
+用途：替换整个字段。
+
+后端通过传入的参数判断替换类型，Agent 不需要传 `mode` / `field`。
+
+```json
+{
+  "tool": "update_memory_replace",
+  "args": {
+    "memory_uuid": "xxx",
+    "expected_title_hash": "sha256:...",
+    "new_title": "新标题"
+  }
+}
+```
+
+可用参数：
+
+```text
+new_title
+new_summary
+new_recall_when
+new_handle
+new_category + new_handle
+new_content
+```
+
+规则：
+
+- 每次只能执行一种替换意图。
+- `new_title`、`new_content`、`new_summary` 不能是空字符串。
+- `new_recall_when` 可以是 `null`，表示清空。
+- `new_category` 必须和 `new_handle` 同时提供，并带 `category` 与 `handle` hash。
+- `new_handle` 第一段必须等于最终 `category`。
+- 每个 `new_*` 字段都必须有对应的 `expected_*_hash`。
+
+替换整个 content：
+
+```json
+{
+  "tool": "update_memory_replace",
+  "args": {
+    "memory_uuid": "xxx",
+    "expected_content_hash": "sha256:...",
+    "new_content": "新的完整正文"
+  }
+}
+```
+
+## 6. update_memory_patch_content
+
+替换 `content` 中唯一匹配的文本片段。
+
+```json
+{
+  "tool": "update_memory_patch_content",
+  "args": {
+    "memory_uuid": "xxx",
+    "expected_content_hash": "sha256:...",
+    "match_content": "旧文本",
+    "replace_content": "新文本"
+  }
+}
+```
+
+规则：
+
+- `match_content` 必须在当前 `content` 中出现一次。
+- `match_content` 找不到时拒绝。
+- `match_content` 出现多次时拒绝。
+- `replace_content` 不能为空。
+- 如果需要同时修改摘要，另行调用 `update_memory_replace`。
+- 不支持模糊匹配。
+
+## 7. update_memory_append
+
+用途：对允许追加的文本字段追加内容。
+
+追加 content：
+
+```json
+{
+  "tool": "update_memory_append",
+  "args": {
+    "memory_uuid": "xxx",
+    "expected_content_hash": "sha256:...",
+    "append_content": "\n\n补充内容"
+  }
+}
+```
+
+追加 recall_when：
+
+```json
+{
+  "tool": "update_memory_append",
+  "args": {
+    "memory_uuid": "xxx",
+    "expected_recall_when_hash": "sha256:...",
+    "append_recall_when": "；当讨论更新记忆时召回"
+  }
+}
+```
+
+规则：
+
+- 只允许 `append_content` 或 `append_recall_when`。
+- 每次只能执行一种追加意图。
+- 追加内容不能为空。
+- 如果需要同步修改摘要，另行调用 `update_memory_replace`。
+
+## 8. update_memory_add_keywords
+
+用途：增加关键词。
+
+```json
+{
+  "tool": "update_memory_add_keywords",
+  "args": {
+    "memory_uuid": "xxx",
+    "expected_keywords_hash": "sha256:...",
+    "keywords": ["新关键词"]
+  }
+}
+```
+
+规则：
+
+- `keywords` 必须是非空字符串数组。
+- 规范化后不能和已有关键词重复。
+
+## 9. update_memory_remove_keywords
+
+用途：删除关键词。
+
+```json
+{
+  "tool": "update_memory_remove_keywords",
+  "args": {
+    "memory_uuid": "xxx",
+    "expected_keywords_hash": "sha256:...",
+    "keywords": ["旧关键词"]
+  }
+}
+```
+
+规则：
+
+- `keywords` 必须是非空字符串数组。
+- 要删除的关键词必须存在。
+- 最终 `keywords` 必须非空。
+- 不提供整组替换工具；需要改名时先删除旧关键词，再增加新关键词。
+
+## 10. 统一后端事务
+
+所有更新工具内部都进入同一个流程：
+
+```text
+1. 开启事务
+2. 锁定 memory_units
+3. 读取当前完整 state
+4. 校验 expected_*_hash
+5. 分类 pending / active / existing change
+6. 应用工具动作，生成 next_state
+7. 校验 next_state
+8. 写回 memory_units / memory_keywords / memory_handles
+9. 回读 after_state
+10. 写入或覆盖 memory_changes
+11. active 记忆标记 graph dirty
+12. 提交事务
+```
+
+如果最终 state 没有变化，返回 `NO_CHANGE`，不写 `memory_changes`。
+
+## 11. change 规则
+
+pending create：
+
+```text
+保持 memory_changes.action = create
+只覆盖 after_state
+不标记 graph dirty
+```
+
+active 且没有 open change：
+
+```text
+保存 before_state
+写入 memory_changes.action = update
+标记 graph dirty
+```
+
+active 且已有 update / restore：
+
+```text
+保留已有 before_state
+只覆盖 after_state
+标记 graph dirty
+```
+
+已有 delete：
+
+```text
+拒绝更新
+```
+
+## 12. 成功响应
+
+```json
+{
+  "state": "success",
+  "tool": "update_memory_append",
+  "data": {
+    "memory_uuid": "xxx",
+    "change_uuid": "xxx",
+    "action": "update",
+    "result": "pending_review",
+    "updated_fields": ["content"]
+  },
+  "error": null,
+  "profile": "riko"
+}
+```
+
+`action` 返回当前 `memory_changes.action`，所以 pending create 场景可能返回 `create`。
+
+## 13. Agent 规则
+
+```text
+不能直接用 search/list 返回的 uuid 更新
+不能按搜索排序自动选择第一条
+不能通过 title 或 handle 直接执行更新
+必须先确认目标 memory_uuid
+必须带 expected_*_hash
+需要改摘要时使用 update_memory_replace
+```
+
+## 14. 非目标
+
 - 批量更新
 - 修改 relation
 - 修改 usage
 - 直接刷新 embedding
 - 直接 approve / reject
+- 按字符下标插入
+- 模糊替换

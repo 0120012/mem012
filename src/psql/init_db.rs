@@ -6,10 +6,9 @@ pub async fn init_db(
     share_pool: &Pool<Postgres>,
 ) -> Result<bool, sqlx::Error> {
     // DEBUG
-    if true {
-        reset_memory_tables(pool, "profile").await?;
-        reset_memory_tables(share_pool, "share").await?;
-    }
+    // Why：当前需要保留已有数据，重建表改为手动执行清库命令，避免启动时误删。
+    // reset_memory_tables(pool, "profile").await?;
+    // reset_memory_tables(share_pool, "share").await?;
 
     migrate_memory_tables(pool, "profile").await?;
     migrate_memory_tables(share_pool, "share").await?;
