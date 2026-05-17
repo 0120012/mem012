@@ -1,5 +1,6 @@
 mod create_memory;
 mod delete_memory;
+mod update_memory;
 
 pub struct ToolContext<'a> {
     // Why：工具执行需要同时看到当前私库和共享库，但连接池生命周期应由 main 持有。
@@ -18,7 +19,7 @@ pub async fn dispatch_tool_request(
         .ok_or("工具请求必须是 JSON object")?;
 
     for key in request.keys() {
-        if key != "tool" && key != "args" {
+        if key != "tool" && key != "params" {
             return Err(format!("未知字段: {key}").into());
         }
     }
@@ -28,13 +29,19 @@ pub async fn dispatch_tool_request(
         .and_then(serde_json::Value::as_str)
         .ok_or("字段 tool 缺失或不是字符串")?;
     let args = request
-        .get("args")
+        .get("params")
         .filter(|value| value.is_object())
-        .ok_or("字段 args 缺失或不是 object")?;
+        .ok_or("字段 params 缺失或不是 object")?;
 
     match tool {
         "create_memory" => create_memory::run(context, args).await,
         "delete_memory" => delete_memory::run(context, args).await,
+        "read_memory_hash"
+        | "update_memory_replace"
+        | "update_memory_patch_content"
+        | "update_memory_append"
+        | "update_memory_add_keywords"
+        | "update_memory_remove_keywords" => update_memory::run(context, tool, args).await,
         _ => Err(format!("未知工具: {tool}").into()),
     }
 }
