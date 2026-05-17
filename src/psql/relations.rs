@@ -438,7 +438,7 @@ async fn upsert_relation_change(
         INSERT INTO memory_changes (
             uuid, memory_uuid, action, before_state, after_state, created_at, updated_at
         )
-        VALUES (gen_random_uuid(), $1::uuid, 'update', $2::jsonb, $3::jsonb, now(), now())
+        VALUES ($1::uuid, $1::uuid, 'update', $2::jsonb, $3::jsonb, now(), now())
         ON CONFLICT (memory_uuid)
         DO UPDATE SET after_state = EXCLUDED.after_state, updated_at = EXCLUDED.updated_at
         "#,

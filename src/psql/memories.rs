@@ -7,7 +7,7 @@ SELECT COALESCE(
             'title_norm', u.title_norm,
             'summary', u.summary,
             'status', u.status,
-            'has_open_change', c.uuid IS NOT NULL,
+            'has_open_change', c.memory_uuid IS NOT NULL,
             'change_action', c.action,
             'created_at', u.created_at::text,
             'updated_at', u.updated_at::text
@@ -18,7 +18,7 @@ SELECT COALESCE(
 )::text
 FROM memory_units u
 LEFT JOIN memory_changes c ON c.memory_uuid = u.uuid
-WHERE c.uuid IS NULL
+WHERE c.memory_uuid IS NULL
 "#;
 
 // Why：列表展示查询放在 psql 层，避免 HTTP handler 持有 memory_changes 派生规则。

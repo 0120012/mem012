@@ -71,9 +71,9 @@ async fn mark_pending_create_delete(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：pending create 删除也必须二次确认，不能绕过用户批准直接硬删。
     let mut tx = context.profile_pool.begin().await?;
-    let change_uuid: Option<String> = sqlx::query_scalar(
+    let change_exists: Option<String> = sqlx::query_scalar(
         r#"
-        SELECT c.uuid::text
+        SELECT c.memory_uuid::text
         FROM memory_units u
         JOIN memory_changes c ON c.memory_uuid = u.uuid
         WHERE u.uuid = $1::uuid AND u.status = 'pending' AND c.action = 'create'
@@ -83,10 +83,10 @@ async fn mark_pending_create_delete(
     .bind(memory_uuid)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some(change_uuid) = change_uuid else {
+    if change_exists.is_none() {
         tx.rollback().await?;
         return Err("delete_memory 只能软删除 pending create".into());
-    };
+    }
     let before_state = crate::psql::memory_state(&mut tx, memory_uuid)
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -111,7 +111,6 @@ async fn mark_pending_create_delete(
             "tool": "delete_memory",
             "data": {
                 "memory_uuid": memory_uuid,
-                "change_uuid": change_uuid,
                 "action": "delete",
                 "result": "trashed"
             },
@@ -169,13 +168,13 @@ async fn mark_pending_delete(
     let after_state = crate::psql::memory_state(&mut tx, memory_uuid)
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-    let change_uuid: String = sqlx::query_scalar(
-        "INSERT INTO memory_changes (uuid, memory_uuid, action, before_state, after_state, created_at, updated_at) VALUES (gen_random_uuid(), $1::uuid, 'delete', $2::jsonb, $3::jsonb, now(), now()) RETURNING uuid::text",
+    sqlx::query(
+        "INSERT INTO memory_changes (uuid, memory_uuid, action, before_state, after_state, created_at, updated_at) VALUES ($1::uuid, $1::uuid, 'delete', $2::jsonb, $3::jsonb, now(), now())",
     )
     .bind(memory_uuid)
     .bind(before_state)
     .bind(after_state)
-    .fetch_one(&mut *tx)
+    .execute(&mut *tx)
     .await?;
     crate::psql::mark_memory_graph_dirty(&mut tx).await?;
     tx.commit().await?;
@@ -186,7 +185,6 @@ async fn mark_pending_delete(
             "tool": "delete_memory",
             "data": {
                 "memory_uuid": memory_uuid,
-                "change_uuid": change_uuid,
                 "action": "delete",
                 "result": "trashed"
             },
@@ -211,9 +209,9 @@ async fn mark_open_change_delete(
     // 7. 如果删除前是 active，标记 memory_graph_meta.dirty。
     // 8. 提交事务并返回 trashed。
     let mut tx = context.profile_pool.begin().await?;
-    let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+    let row: Option<(String, String, Option<String>)> = sqlx::query_as(
         r#"
-        SELECT u.status, c.uuid::text, c.action, c.before_state::text
+        SELECT u.status, c.action, c.before_state::text
         FROM memory_units u
         JOIN memory_changes c ON c.memory_uuid = u.uuid
         WHERE u.uuid = $1::uuid
@@ -223,7 +221,7 @@ async fn mark_open_change_delete(
     .bind(memory_uuid)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((status, change_uuid, action, before_state)) = row else {
+    let Some((status, action, before_state)) = row else {
         tx.rollback().await?;
         return Err("memory has no pending change".into());
     };
@@ -255,7 +253,6 @@ async fn mark_open_change_delete(
             "tool": "delete_memory",
             "data": {
                 "memory_uuid": memory_uuid,
-                "change_uuid": change_uuid,
                 "action": "delete",
                 "result": "trashed"
             },

@@ -41,9 +41,9 @@ async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<()
 async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
     // Why：profile 库和 share 库结构一致，复用同一套建表顺序可以避免 schema 漂移。
     if schema_ready(pool).await? {
-        println!("{db_label}: 跳过初始化");
         drop_memory_exclude_when(pool).await?;
         ensure_memory_status_constraint(pool).await?;
+        ensure_memory_change_identity(pool).await?;
         cr_memory_indexes(pool, db_label).await?;
         return Ok(());
     }
@@ -58,6 +58,7 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     cr_memory_usage_table(pool).await?;
     cr_memory_relations_table(pool).await?;
     cr_memory_changes_table(pool).await?;
+    ensure_memory_change_identity(pool).await?;
     cr_memory_graph_meta_table(pool).await?;
     cr_memory_indexes(pool, db_label).await?;
     Ok(())
@@ -66,7 +67,6 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
 async fn cr_memory_indexes(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
     // Why：查询路径依赖不同访问模式，索引集中创建可以避免表结构和召回策略混在一起。
     if memory_indexes_ready(pool).await? {
-        println!("{db_label}: memory 索引已完整，跳过创建");
         return Ok(());
     }
 
@@ -120,6 +120,24 @@ async fn ensure_memory_status_constraint(pool: &Pool<Postgres>) -> Result<(), sq
         .await?;
     sqlx::query(
         "ALTER TABLE memory_units ADD CONSTRAINT memory_units_status_check CHECK (status IN ('pending', 'active', 'trashed'))",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn ensure_memory_change_identity(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    // Why：审核入口已经统一使用 memory_uuid，旧库里的审核 ID 必须收敛到同一个值。
+    sqlx::query("UPDATE memory_changes SET uuid = memory_uuid WHERE uuid <> memory_uuid")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE memory_changes DROP CONSTRAINT IF EXISTS memory_changes_uuid_matches_memory_uuid",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE memory_changes ADD CONSTRAINT memory_changes_uuid_matches_memory_uuid CHECK (uuid = memory_uuid)",
     )
     .execute(pool)
     .await?;
@@ -213,6 +231,7 @@ async fn cr_memory_changes_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::Err
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
         CHECK (action IN ('create', 'update', 'delete', 'restore')),
+        CONSTRAINT memory_changes_uuid_matches_memory_uuid CHECK (uuid = memory_uuid),
         UNIQUE(memory_uuid)
         );
     "#,

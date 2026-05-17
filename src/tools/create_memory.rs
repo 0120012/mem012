@@ -157,7 +157,7 @@ async fn create_memory_transaction(
             uuid, memory_uuid, action, before_state, after_state, created_at, updated_at
         )
         VALUES (
-            gen_random_uuid(), $1::uuid, 'create', NULL, $2::jsonb, now(), now()
+            $1::uuid, $1::uuid, 'create', NULL, $2::jsonb, now(), now()
         )
         "#,
     )

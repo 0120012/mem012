@@ -27,13 +27,16 @@ pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
     )
 }
 
-// Why：详情接口只根据 change_uuid 读取 before/after，不让前端提交回滚状态。
-pub async fn detail(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+// Why：详情接口只根据 memory_uuid 读取 before/after，不让前端提交回滚状态。
+pub async fn detail(
+    Path(memory_uuid): Path<String>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
         Ok(project) => project,
         Err(error) => return error_response(error, None),
     };
-    let data = match load_change_detail(&project, &uuid).await {
+    let data = match load_change_detail(&project, &memory_uuid).await {
         Ok(Some(data)) => data,
         Ok(None) => return missing_change(&project),
         Err(error) => return error_response(error, Some(&project)),
@@ -45,7 +48,10 @@ pub async fn detail(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCode
 }
 
 // Why：approve 的状态机在 psql 层统一执行，HTTP 层只负责鉴权和定位 change。
-pub async fn approve(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+pub async fn approve(
+    Path(memory_uuid): Path<String>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
         Ok(project) => project,
         Err(error) => return error_response(error, None),
@@ -54,14 +60,14 @@ pub async fn approve(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCod
         Ok(url) => url,
         Err(error) => return error_response(error, Some(&project)),
     };
-    let change = match crate::psql::get_change(&url, &uuid).await {
+    let change = match crate::psql::get_change(&url, &memory_uuid).await {
         Ok(Some(change)) => change,
         Ok(None) => return missing_change(&project),
         Err(error) => {
             return error_response(db_error("CHANGE_DETAIL_FAILED", error), Some(&project));
         }
     };
-    match crate::psql::approve_change(&url, &uuid).await {
+    match crate::psql::approve_change(&url, &memory_uuid).await {
         Ok(true) => {
             refresh_embedding_after_approve(&project, &url, &change).await;
             (
@@ -74,8 +80,11 @@ pub async fn approve(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCod
     }
 }
 
-// Why：reject 只接受 change_uuid，回滚依据必须来自后端锁定的 before_state。
-pub async fn reject(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+// Why：reject 只接受 memory_uuid，回滚依据必须来自后端锁定的 before_state。
+pub async fn reject(
+    Path(memory_uuid): Path<String>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
         Ok(project) => project,
         Err(error) => return error_response(error, None),
@@ -84,7 +93,7 @@ pub async fn reject(Path(uuid): Path<String>, headers: HeaderMap) -> (StatusCode
         Ok(url) => url,
         Err(error) => return error_response(error, Some(&project)),
     };
-    match crate::psql::reject_change(&url, &uuid).await {
+    match crate::psql::reject_change(&url, &memory_uuid).await {
         Ok(true) => (
             StatusCode::OK,
             api_response(Some(Value::Null), None, Some(&project)),

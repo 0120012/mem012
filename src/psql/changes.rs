@@ -2,7 +2,6 @@ const LIST_CHANGES_SQL: &str = r#"
 SELECT COALESCE(
     jsonb_agg(
         jsonb_build_object(
-            'change_uuid', c.uuid::text,
             'memory_uuid', c.memory_uuid::text,
             'action', c.action,
             'title_norm', COALESCE(u.title_norm, c.after_state #>> '{memory,title_norm}'),
@@ -20,7 +19,6 @@ LEFT JOIN memory_units u ON u.uuid = c.memory_uuid
 
 const CHANGE_DETAIL_SQL: &str = r#"
 SELECT jsonb_build_object(
-    'change_uuid', c.uuid::text,
     'memory_uuid', c.memory_uuid::text,
     'action', c.action,
     'title_norm', COALESCE(u.title_norm, c.after_state #>> '{memory,title_norm}'),
@@ -32,7 +30,7 @@ SELECT jsonb_build_object(
 )::text
 FROM memory_changes c
 LEFT JOIN memory_units u ON u.uuid = c.memory_uuid
-WHERE c.uuid = $1::uuid
+WHERE c.memory_uuid = $1::uuid
 "#;
 
 // Why：changes 列表只暴露审查摘要，详情里的 before/after 由 detail 接口单独返回。
@@ -52,14 +50,14 @@ pub async fn list_changes(
 // Why：详情接口必须返回完整状态快照，前端才能展示 create/update/delete 的差异。
 pub async fn get_change(
     database_url: &str,
-    change_uuid: &str,
+    memory_uuid: &str,
 ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(database_url)
         .await?;
     let row = sqlx::query_scalar::<_, String>(CHANGE_DETAIL_SQL)
-        .bind(change_uuid)
+        .bind(memory_uuid)
         .fetch_optional(&pool)
         .await?;
     row.map(|value| Ok(serde_json::from_str(&value)?))
@@ -69,18 +67,18 @@ pub async fn get_change(
 // Why：批准 create 后记忆已成为正式工作态，可以在同一事务内生成默认图关系。
 pub async fn approve_change(
     database_url: &str,
-    change_uuid: &str,
+    memory_uuid: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(database_url)
         .await?;
     let mut tx = pool.begin().await?;
-    let Some(change) = lock_change(&mut tx, change_uuid).await? else {
+    let Some(change) = lock_change(&mut tx, memory_uuid).await? else {
         tx.rollback().await?;
         return Ok(false);
     };
-    approve_locked_change(&mut tx, change_uuid, &change.0, &change.1).await?;
+    approve_locked_change(&mut tx, &change.0, &change.1).await?;
     tx.commit().await?;
     Ok(true)
 }
@@ -88,21 +86,21 @@ pub async fn approve_change(
 // Why：拒绝必须在事务里恢复工作态和删除 change，避免出现半回滚状态。
 pub async fn reject_change(
     database_url: &str,
-    change_uuid: &str,
+    memory_uuid: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(database_url)
         .await?;
     let mut tx = pool.begin().await?;
-    let Some(change) = lock_change(&mut tx, change_uuid).await? else {
+    let Some(change) = lock_change(&mut tx, memory_uuid).await? else {
         tx.rollback().await?;
         return Ok(false);
     };
     if change.0 == "create" {
-        reject_create(&mut tx, change_uuid, &change.1).await?;
+        reject_create(&mut tx, &change.1).await?;
     } else {
-        restore_before_state(&mut tx, change_uuid, &change.1, change.2.as_deref()).await?;
+        restore_before_state(&mut tx, &change.1, change.2.as_deref()).await?;
     }
     tx.commit().await?;
     Ok(true)
@@ -111,17 +109,17 @@ pub async fn reject_change(
 // Why：FOR UPDATE 锁定 change，避免 approve/reject 并发时同一变更被处理两次。
 async fn lock_change(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    change_uuid: &str,
+    memory_uuid: &str,
 ) -> Result<Option<(String, String, Option<String>)>, sqlx::Error> {
     sqlx::query_as(
         r#"
         SELECT action, memory_uuid::text, before_state::text
         FROM memory_changes
-        WHERE uuid = $1::uuid
+        WHERE memory_uuid = $1::uuid
         FOR UPDATE
         "#,
     )
-    .bind(change_uuid)
+    .bind(memory_uuid)
     .fetch_optional(&mut **tx)
     .await
 }
@@ -129,7 +127,6 @@ async fn lock_change(
 // Why：approve 是用户最终确认入口，create 要激活，delete 要硬删，不能只删除 change。
 async fn approve_locked_change(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    change_uuid: &str,
     action: &str,
     memory_uuid: &str,
 ) -> Result<(), sqlx::Error> {
@@ -145,8 +142,8 @@ async fn approve_locked_change(
         }
     }
     if action == "delete" {
-        sqlx::query("DELETE FROM memory_changes WHERE uuid = $1::uuid")
-            .bind(change_uuid)
+        sqlx::query("DELETE FROM memory_changes WHERE memory_uuid = $1::uuid")
+            .bind(memory_uuid)
             .execute(&mut **tx)
             .await?;
         sqlx::query("DELETE FROM memory_units WHERE uuid = $1::uuid")
@@ -156,8 +153,8 @@ async fn approve_locked_change(
         super::mark_memory_graph_dirty(tx).await?;
         return Ok(());
     }
-    sqlx::query("DELETE FROM memory_changes WHERE uuid = $1::uuid")
-        .bind(change_uuid)
+    sqlx::query("DELETE FROM memory_changes WHERE memory_uuid = $1::uuid")
+        .bind(memory_uuid)
         .execute(&mut **tx)
         .await?;
     if action == "create" {
@@ -170,11 +167,10 @@ async fn approve_locked_change(
 // Why：create 的拒绝语义是移除新工作态，派生表交给外键级联清理。
 async fn reject_create(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    change_uuid: &str,
     memory_uuid: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM memory_changes WHERE uuid = $1::uuid")
-        .bind(change_uuid)
+    sqlx::query("DELETE FROM memory_changes WHERE memory_uuid = $1::uuid")
+        .bind(memory_uuid)
         .execute(&mut **tx)
         .await?;
     sqlx::query("DELETE FROM memory_units WHERE uuid = $1::uuid")
@@ -188,7 +184,6 @@ async fn reject_create(
 // Why：非 create 拒绝要恢复完整工作态快照，不能只改 memory_units 主表。
 async fn restore_before_state(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    change_uuid: &str,
     memory_uuid: &str,
     before_state: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -198,8 +193,8 @@ async fn restore_before_state(
     replace_handles(tx, memory_uuid, state).await?;
     replace_relations(tx, memory_uuid, state).await?;
     super::mark_memory_graph_dirty(tx).await?;
-    sqlx::query("DELETE FROM memory_changes WHERE uuid = $1::uuid")
-        .bind(change_uuid)
+    sqlx::query("DELETE FROM memory_changes WHERE memory_uuid = $1::uuid")
+        .bind(memory_uuid)
         .execute(&mut **tx)
         .await?;
     Ok(())
