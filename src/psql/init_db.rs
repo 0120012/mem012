@@ -21,7 +21,6 @@ async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<()
     let tables = [
         "memory_embeddings",
         "memory_keywords",
-        "memory_handles",
         "memory_relations",
         "memory_usage",
         "memory_changes",
@@ -40,8 +39,10 @@ async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<()
 
 async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
     // Why：profile 库和 share 库结构一致，复用同一套建表顺序可以避免 schema 漂移。
+    drop_memory_handles(pool).await?;
     if schema_ready(pool).await? {
         drop_memory_exclude_when(pool).await?;
+        ensure_memory_summary_optional(pool).await?;
         ensure_memory_status_constraint(pool).await?;
         ensure_memory_change_identity(pool).await?;
         cr_memory_indexes(pool, db_label).await?;
@@ -54,7 +55,6 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     ensure_memory_status_constraint(pool).await?;
     cr_memory_embeddings_table(pool).await?;
     cr_memory_keywords_table(pool).await?;
-    cr_memory_handles_table(pool).await?;
     cr_memory_usage_table(pool).await?;
     cr_memory_relations_table(pool).await?;
     cr_memory_changes_table(pool).await?;
@@ -90,7 +90,6 @@ async fn cr_memory_indexes(pool: &Pool<Postgres>, db_label: &str) -> Result<(), 
         "CREATE INDEX IF NOT EXISTS memory_relations_relation_type_idx ON memory_relations (relation_type)",
         "CREATE INDEX IF NOT EXISTS memory_changes_updated_at_idx ON memory_changes (updated_at)",
         "CREATE INDEX IF NOT EXISTS memory_keywords_keyword_norm_memory_uuid_idx ON memory_keywords (keyword_norm, memory_uuid)",
-        "CREATE INDEX IF NOT EXISTS memory_handles_handle_norm_trgm_idx ON memory_handles USING gin (handle_norm gin_trgm_ops)",
         "CREATE INDEX IF NOT EXISTS memory_keywords_keyword_norm_trgm_idx ON memory_keywords USING gin (keyword_norm gin_trgm_ops)",
         "CREATE INDEX IF NOT EXISTS memory_units_title_norm_trgm_idx ON memory_units USING gin (title_norm gin_trgm_ops)",
         "CREATE INDEX IF NOT EXISTS memory_units_summary_trgm_idx ON memory_units USING gin (summary gin_trgm_ops)",
@@ -108,6 +107,22 @@ async fn cr_memory_indexes(pool: &Pool<Postgres>, db_label: &str) -> Result<(), 
 async fn drop_memory_exclude_when(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
     // Why：exclude_when 已退出 schema，旧库启动时必须收敛表结构，避免代码和数据库长期漂移。
     sqlx::query("ALTER TABLE memory_units DROP COLUMN IF EXISTS exclude_when")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn drop_memory_handles(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    // Why：handle 已退出核心模型，旧表必须在启动迁移时清掉，避免状态快照继续依赖它。
+    sqlx::query("DROP TABLE IF EXISTS memory_handles")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn ensure_memory_summary_optional(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    // Why：summary 只是辅助摘要，缺失时不能阻塞记忆本体写入。
+    sqlx::query("ALTER TABLE memory_units ALTER COLUMN summary DROP NOT NULL")
         .execute(pool)
         .await?;
     Ok(())
@@ -161,7 +176,6 @@ async fn memory_indexes_ready(pool: &Pool<Postgres>) -> Result<bool, sqlx::Error
             AND to_regclass('public.memory_relations_relation_type_idx') IS NOT NULL
             AND to_regclass('public.memory_changes_updated_at_idx') IS NOT NULL
             AND to_regclass('public.memory_keywords_keyword_norm_memory_uuid_idx') IS NOT NULL
-            AND to_regclass('public.memory_handles_handle_norm_trgm_idx') IS NOT NULL
             AND to_regclass('public.memory_keywords_keyword_norm_trgm_idx') IS NOT NULL
             AND to_regclass('public.memory_units_title_norm_trgm_idx') IS NOT NULL
             AND to_regclass('public.memory_units_summary_trgm_idx') IS NOT NULL
@@ -317,35 +331,6 @@ async fn cr_memory_usage_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::Error
     }
 }
 
-async fn cr_memory_handles_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
-    let cr_handles = sqlx::query(
-        r#"
-        CREATE TABLE memory_handles(
-            uuid UUID PRIMARY KEY,
-            memory_uuid UUID NOT NULL REFERENCES memory_units(uuid) ON DELETE CASCADE,
-            handle_norm TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            CHECK (handle_norm <> ''),
-            CHECK (handle_norm !~ '(^/|/$|//)'),
-            UNIQUE(handle_norm)
-        );
-    "#,
-    )
-    .execute(_pool)
-    .await;
-
-    match cr_handles {
-        Ok(_) => {
-            println!("memory_handles 表创建成功");
-            Ok(())
-        }
-        Err(error) => {
-            eprintln!("memory_handles 表创建失败: {error}");
-            Err(error)
-        }
-    }
-}
-
 async fn cr_memory_keywords_table(_pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
     let cr_keywords = sqlx::query(
         r#"
@@ -383,7 +368,6 @@ async fn schema_ready(_pool: &sqlx::Pool<sqlx::Postgres>) -> Result<bool, sqlx::
             to_regclass('public.memory_units') IS NOT NULL
             AND to_regclass('public.memory_embeddings') IS NOT NULL
             AND to_regclass('public.memory_keywords') IS NOT NULL
-            AND to_regclass('public.memory_handles') IS NOT NULL
             AND to_regclass('public.memory_usage') IS NOT NULL
             AND to_regclass('public.memory_relations') IS NOT NULL
             AND to_regclass('public.memory_changes') IS NOT NULL
@@ -412,7 +396,7 @@ async fn cr_memory_units_table(
             category TEXT NOT NULL,
             title_norm TEXT NOT NULL,
             content TEXT NOT NULL,
-            summary TEXT NOT NULL,
+            summary TEXT,
             status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'trashed')),
             recall_when TEXT,
             trashed_at TIMESTAMPTZ,

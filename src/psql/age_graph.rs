@@ -15,7 +15,7 @@ BEGIN
     LOOP
         EXECUTE format($sql$SELECT * FROM ag_catalog.cypher('memory_graph', $cypher$
             CREATE (:Memory {uuid: %L, category: %L, title_norm: %L, status: %L, summary: %L})
-        $cypher$) AS (v agtype)$sql$, memory_row.uuid, memory_row.category, memory_row.title_norm, memory_row.status, memory_row.summary);
+        $cypher$) AS (v agtype)$sql$, memory_row.uuid, memory_row.category, memory_row.title_norm, memory_row.status, COALESCE(memory_row.summary, ''));
     END LOOP;
 
     FOR relation_row IN

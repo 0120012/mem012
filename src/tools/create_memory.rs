@@ -7,10 +7,9 @@ struct CreateMemoryArgs {
     category: Option<String>,
     title: String,
     content: String,
-    summary: String,
+    summary: Option<String>,
     keywords: Vec<String>,
     recall_when: Option<String>,
-    handle: Option<String>,
 }
 
 pub async fn run(
@@ -74,33 +73,18 @@ fn build_after_state(
         .iter()
         .map(|keyword| serde_json::json!({ "keyword_norm": normalize_text(keyword), "weight": null }))
         .collect::<Vec<_>>();
-    let handles = args
-        .handle
-        .as_deref()
-        .map(|handle| {
-            let handle_norm = handle
-                .split('/')
-                .map(normalize_text)
-                .collect::<Vec<_>>()
-                .join("/");
-            serde_json::json!({ "handle_norm": handle_norm })
-        })
-        .into_iter()
-        .collect::<Vec<_>>();
-
     Ok(serde_json::json!({
         "memory": {
             "uuid": memory_uuid,
             "category": category,
             "title_norm": title_norm,
             "content": args.content.trim(),
-            "summary": args.summary.trim(),
+            "summary": args.summary.as_deref().map(str::trim).filter(|text| !text.is_empty()),
             "status": "pending",
             "recall_when": args.recall_when.as_deref().map(str::trim),
             "trashed_at": null
         },
         "keywords": keywords,
-        "handles": handles,
         "relations": []
     }))
 }
@@ -117,13 +101,13 @@ async fn reject_duplicate_memory(
     };
     let title_norm = get_text("title_norm")?;
     let content = get_text("content")?;
-    let summary = get_text("summary")?;
+    let summary = after_state["memory"]["summary"].as_str();
     let duplicate_message: Option<String> = sqlx::query_scalar(
         r#"
         SELECT CASE
             WHEN EXISTS (SELECT 1 FROM memory_units WHERE title_norm = $1) THEN 'DUPLICATE_TITLE: title_norm 已存在'
             WHEN EXISTS (SELECT 1 FROM memory_units WHERE content = $2) THEN 'DUPLICATE_CONTENT: content 已存在'
-            WHEN EXISTS (SELECT 1 FROM memory_units WHERE summary = $3) THEN 'DUPLICATE_SUMMARY: summary 已存在'
+            WHEN $3::text IS NOT NULL AND EXISTS (SELECT 1 FROM memory_units WHERE summary = $3) THEN 'DUPLICATE_SUMMARY: summary 已存在'
         END
         "#,
     )
@@ -149,7 +133,6 @@ async fn create_memory_transaction(
     let mut tx = pool.begin().await?;
     insert_memory_unit(&mut tx, memory_uuid, after_state).await?;
     insert_memory_keywords(&mut tx, memory_uuid, after_state).await?;
-    insert_memory_handles(&mut tx, memory_uuid, after_state).await?;
     insert_memory_relations(&mut tx, after_state).await?;
     sqlx::query(
         r#"
@@ -230,31 +213,6 @@ async fn insert_memory_keywords(
     Ok(())
 }
 
-async fn insert_memory_handles(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    memory_uuid: &str,
-    after_state: &serde_json::Value,
-) -> Result<(), sqlx::Error> {
-    // Why：handle 是人工定位入口，必须和 memory_units 同事务提交，避免出现悬空路径。
-    sqlx::query(
-        r#"
-        INSERT INTO memory_handles (uuid, memory_uuid, handle_norm, created_at)
-        SELECT
-            gen_random_uuid(),
-            $1::uuid,
-            handle ->> 'handle_norm',
-            now()
-        FROM jsonb_array_elements($2::jsonb -> 'handles') AS handles(handle)
-        "#,
-    )
-    .bind(memory_uuid)
-    .bind(after_state.to_string())
-    .execute(&mut **tx)
-    .await?;
-
-    Ok(())
-}
-
 async fn insert_memory_relations(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     after_state: &serde_json::Value,
@@ -285,12 +243,8 @@ async fn insert_memory_relations(
 }
 
 fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn std::error::Error>> {
-    // Why：serde 只保证类型正确，业务入口还必须拒绝空值和会破坏定位规则的参数。
-    for (name, value) in [
-        ("title", &args.title),
-        ("content", &args.content),
-        ("summary", &args.summary),
-    ] {
+    // Why：serde 只保证类型正确，业务入口还必须拒绝空值和会破坏分类边界的参数。
+    for (name, value) in [("title", &args.title), ("content", &args.content)] {
         if value.trim().is_empty() {
             return Err(format!("{name} 不能为空").into());
         }
@@ -329,21 +283,6 @@ fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn st
         .is_some_and(|text| text.trim().is_empty())
     {
         return Err("recall_when 不能是空字符串".into());
-    }
-
-    if let Some(handle) = &args.handle {
-        let handle = handle.trim();
-        let segments = handle.split('/').collect::<Vec<_>>();
-        if handle.is_empty()
-            || handle.starts_with('/')
-            || handle.ends_with('/')
-            || handle.contains("//")
-            || !(2..=4).contains(&segments.len())
-            || segments.iter().any(|segment| segment.trim().is_empty())
-            || segments.first().copied() != Some(category)
-        {
-            return Err("handle 必须是 2 到 4 段路径，且第一段等于 category".into());
-        }
     }
 
     Ok(())
