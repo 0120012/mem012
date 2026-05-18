@@ -17,7 +17,7 @@ export interface MemoryItem {
   memory_uuid: string
   category: string
   title_norm: string
-  summary: string
+  summary: string | null
   status: string
   has_open_change: boolean
   change_action: string | null
@@ -29,7 +29,7 @@ export interface ChangeItem {
   memory_uuid: string
   action: string
   title_norm: string
-  summary: string
+  summary: string | null
   created_at: string
   updated_at: string
 }
@@ -38,7 +38,7 @@ export interface ChangeDetail {
   memory_uuid: string
   action: string
   title_norm: string
-  summary: string
+  summary: string | null
   before_state: Record<string, unknown> | null
   after_state: Record<string, unknown> | null
   created_at: string
@@ -58,7 +58,7 @@ export interface NeighborMemory {
   memory_uuid: string
   category: string
   title_norm: string
-  summary: string
+  summary: string | null
   status: string
 }
 
@@ -101,7 +101,7 @@ export interface SuggestedRelation {
     memory_uuid: string
     category: string
     title_norm: string
-    summary: string
+    summary: string | null
     shared_keywords: number
   }
 }

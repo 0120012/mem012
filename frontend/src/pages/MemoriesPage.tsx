@@ -110,7 +110,7 @@ export function MemoriesPage() {
                     <div className="bg-muted/30 rounded-md p-3 space-y-3 text-xs">
                       <div>
                         <p className="text-muted-foreground mb-1">摘要</p>
-                        <p className="text-foreground/80 leading-relaxed">{m.summary}</p>
+                        <p className="text-foreground/80 leading-relaxed">{m.summary || "未填写"}</p>
                       </div>
                       <div className="flex flex-wrap gap-x-6 gap-y-1">
                         <div><span className="text-muted-foreground">分类 </span><span>{m.category}</span></div>

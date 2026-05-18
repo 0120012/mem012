@@ -15,12 +15,11 @@ const actionLabel: Record<string, string> = {
   restore: "恢复",
 }
 
-// Why：/changes 返回的 before_state / after_state 是结构化 JSON（memory + handles + keywords），
+// Why：/changes 返回的 before_state / after_state 是结构化 JSON（memory + keywords），
 // 不能直接 dump 为文本。拆成可读的字段卡片。
 function StateBlock({ state, label }: { state: Record<string, unknown> | null; label: string }) {
   if (!state) return null
   const m = state.memory as Record<string, string | undefined> | undefined
-  const handles = state.handles as Array<{ handle_norm: string }> | undefined
   const keywords = state.keywords as Array<{ keyword_norm: string; weight: number | null }> | undefined
   return (
     <div className="space-y-3">
@@ -30,16 +29,9 @@ function StateBlock({ state, label }: { state: Record<string, unknown> | null; l
           <div className="flex gap-2"><span className="text-muted-foreground shrink-0">标题</span><span className="text-foreground font-medium">{m.title_norm}</span></div>
           <div className="flex gap-2"><span className="text-muted-foreground shrink-0">分类</span><span>{m.category}</span></div>
           <div className="flex gap-2"><span className="text-muted-foreground shrink-0">状态</span><span>{m.status}</span></div>
-          <div className="flex gap-2"><span className="text-muted-foreground shrink-0">摘要</span><span>{m.summary}</span></div>
+          <div className="flex gap-2"><span className="text-muted-foreground shrink-0">摘要</span><span>{m.summary || "未填写"}</span></div>
           {m.content && <div className="flex gap-2"><span className="text-muted-foreground shrink-0">内容</span><span className="text-foreground/80">{m.content}</span></div>}
           {m.recall_when && <div className="flex gap-2"><span className="text-muted-foreground shrink-0">召回条件</span><span>{m.recall_when}</span></div>}
-          {m.exclude_when && <div className="flex gap-2"><span className="text-muted-foreground shrink-0">排除条件</span><span>{m.exclude_when}</span></div>}
-        </div>
-      )}
-      {handles && handles.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground mb-1">Handles</p>
-          <div className="flex flex-wrap gap-1">{handles.map((h, i) => <Badge key={i} variant="secondary" className="text-xs">{h.handle_norm}</Badge>)}</div>
         </div>
       )}
       {keywords && keywords.length > 0 && (
@@ -153,7 +145,7 @@ export function ChangesPage() {
                       </div>
                     ) : detail ? (
                       <div className="space-y-4">
-                        <p className="text-xs text-muted-foreground">{detail.summary}</p>
+                        <p className="text-xs text-muted-foreground">{detail.summary || "未填写摘要"}</p>
                         <StateBlock state={detail.before_state} label="修改前" />
                         <StateBlock state={detail.after_state} label="修改后" />
                         <div className="flex gap-2 pt-2">
