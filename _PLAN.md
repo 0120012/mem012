@@ -12,4 +12,4 @@
 - 后端 API 不兼容旧 URI / node 接口，旧 `src/api/*` 可以删除重建。
 - `memory_units` 是当前工作态。
 - `memory_changes` 是否存在表示该记忆等待用户二次确认。
-- `create_memory` 已完成四表写入：`memory_units`、`memory_keywords`、`memory_handles`、`memory_changes`。
+- `create_memory` 已完成三表写入：`memory_units`、`memory_keywords`、`memory_changes`。

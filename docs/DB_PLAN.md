@@ -15,8 +15,7 @@ profile 私库 + mem_share 共享库 + category 分类 + Memory Unit + 关键词
 - 运行时同时允许访问当前 profile 私库和 `mem_share` 共享库。
 - `category` 是记忆的大类，例如 `core / meta / trace / project / book`；`share` 是共享库专属 category；不需要提前写入 TOML 白名单。
 - URI 不再作为核心寻址方式，也不再有 `domain://path`。
-- `core/instance/Thinking_in_Systems/reflections/chapter_1_system_basics` 这类写法可作为 Agent 快速定位 handle；它不进入 TOML 配置，也不是数据库主键。
-- `kind` 不做配置白名单，不做核心寻址维度；如果需要分类，交给关键词或 handle 处理。
+- `kind` 不做配置白名单，不做核心寻址维度；如果需要分类，交给 category 或关键词处理。
 - `disclosure` 的思想保留，字段改成 `recall_when`。
 - 图继续存在，但图表达记忆之间的关系，不表达路径树。
 - PostgreSQL-only；不再保留 SQLite 分支。
@@ -37,12 +36,8 @@ shared -> mem_share
 - 后端运行时持有两个连接：当前 profile 私库连接、`mem_share` 连接。
 - 普通写入默认进入当前 profile 私库；写入 `mem_share` 必须走明确入口。
 - 搜索默认可以合并当前 profile 私库和 `mem_share`，但返回结果必须带库来源。
-- 私库 handle 按原样解析；共享库 handle 使用完整 `share/...`。
-- handle 第一段是 `share` 时，后端直接查询 `mem_share`，不再查当前 profile 私库。
-- create/update/delete 的目标 handle 第一段是 `share` 时，后端直接操作 `mem_share`。
 - 目标为 `mem_share` 时，工作态写入和二次确认记录都只作用于 `mem_share`。
 - `mem_share` 只允许 `category = share`；profile 私库禁止使用 `category = share`。
-- `share/Thinking_in_Systems/chapter_1_system_basics` 完整写入 `mem_share.memory_handles.handle_norm`。
 - 所有读接口返回 `db_scope = profile | share`；`db_scope = profile` 时同时返回当前 profile 名。
 - `memory_relations` 只在同一个数据库内建边，不做跨数据库外键。
 - AGE 图也按数据库分别维护：私库一个 graph，`mem_share` 一个 graph。
@@ -67,7 +62,7 @@ uuid uuid primary key
 category text not null
 title_norm text not null
 content text not null
-summary text not null
+summary text
 status text not null
 recall_when text
 trashed_at timestamptz
@@ -96,10 +91,10 @@ trashed
 
 字段职责：
 
-- `category`：记忆的大类，不是 profile 隔离边界；必须等于 handle 第一段。
+- `category`：记忆的大类，不是 profile 隔离边界。
 - `title_norm`：唯一标题字段，后端调用数据库 `normalize_title` 后写入；同时用于展示、搜索、embedding、唯一约束和同名判断。
 - `content`：完整正文。
-- `summary`：给 Agent 搜索用的语义压缩文本，不以人类展示为主要目标。
+- `summary`：可选的语义压缩文本；缺失时不能阻塞记忆写入。
 - `recall_when`：什么时候应该召回。
 - `status`：后端内部状态，不放 TOML；固定为 `pending`、`active`、`trashed`。
 - `trashed_at`：进入回收站的时间；只有 `status = trashed` 时有值。
@@ -134,7 +129,7 @@ embedding_dimension = 1024
 - active memory 有 embedding 时参与语义召回；历史导入、升级异常或生成失败导致缺失时，不参与语义召回。
 - 第一版固定 1024 维；远程 embedding 必须请求 1024 维。
 - 本地 fallback 必须选择 1024 维模型；如果本机资源不足，可以作为非常驻重建任务运行。
-- 只有 title_norm / summary / content / keywords 变化时才重算 embedding；usage、纯 handle 变更不重算。
+- 只有 title_norm / summary / content / keywords 变化时才重算 embedding；usage 变更不重算。
 - 如需关系候选，可以临时生成 embedding，但不得把临时结果写入 `memory_embeddings`。
 - 未来更换维度时，新建下一代表，回填完成并建好 HNSW 后再切换查询。
 - `memory_changes` 不记录 `memory_embeddings`；embedding 是派生索引，由写入流程或重建任务生成。
@@ -176,35 +171,6 @@ weight is null or weight between 0 and 100
 - `weight` 可空；为空表示后端使用默认权重。
 - 写入前和查询前都必须 normalize。
 
-### memory_handles
-
-给人类和 Agent 快速定位重要记忆用。handle 是索引，不是主键。
-
-```text
-uuid uuid primary key
-memory_uuid uuid not null references memory_units(uuid) on delete cascade
-handle_norm text not null
-created_at timestamptz not null
-```
-
-约束：
-
-```text
-unique(handle_norm)
-```
-
-规则：
-
-- 一个 memory 可以有多个 handle。
-- `handle_norm` 是规范化后的完整可读定位路径，例如 `core/backend/profile隔离`、`core/instance/thinking_in_systems/reflections/chapter_1_system_basics` 或 `share/thinking_in_systems/chapter_1_system_basics`。
-- 同一个 handle 只能指向一条 memory。
-- `trashed` memory 的 handle 仍然保留并占用唯一约束；用户确认 delete 后随 memory 硬删除释放。
-- 第一段必须等于 memory 的 category；`share/...` 第一段就是共享库专属 category。
-- 中间段不拆表、不建树。
-- 空段非法
-- Agent 可以用 handle 快速定位，但定位后必须使用返回的 `memory_uuid` 继续修改或建关系。
-- handle 语法由后端固定解析，不放 TOML 配置。
-
 ### normalize 规则
 
 第一版只做保守规范化，不做拼音、同义词、翻译或中文分词。
@@ -213,8 +179,7 @@ unique(handle_norm)
 category: trim + lower，必须符合 slug
 title_norm: 后端调用数据库 normalize_title 后写入，数据库 check 约束校验
 keyword_norm: 后端 normalize_keyword 后写入，查询时使用同一规则
-handle_norm: 后端 normalize_handle 后写入，保留 `/` 层级分隔
-query: 后端 normalize_query 后分发到 handle / keyword / trigram / embedding
+query: 后端 normalize_query 后分发到 keyword / trigram / embedding
 ```
 
 规则：
@@ -223,8 +188,6 @@ query: 后端 normalize_query 后分发到 handle / keyword / trigram / embeddin
 - `normalize_title` 至少执行 trim、lower、连续空白折叠；结果不能为空，不得清空中文、数字或下划线。
 - 后端不得维护独立 title normalize 语义；create、update 和冲突检查都必须调用数据库函数得到 `title_norm`。
 - `normalize_keyword` 至少执行 trim、lower、连续空白折叠；空字符串非法。
-- `normalize_handle` 对每个 path segment 执行 trim、lower、连续空白折叠；空 segment 非法。
-- `normalize_handle` 必须保留 `/`，且第一段必须等于 `memory_units.category`。
 - 后端预检只复用数据库函数结果；数据库 check 和唯一约束仍是最终兜底。
 
 ### memory_usage
@@ -271,15 +234,15 @@ unique(memory_uuid)
 - 同一 memory 同时最多一条 change；不建 batch 表。
 - create 会同时写入 `memory_units(status = pending)`、派生索引和 `memory_changes`；`before_state` 为空，`after_state` 是待批准工作态。
 - update / delete / restore 会先修改当前工作态；如果没有 open change，先保存 `before_state`；如果已有 open change，只覆盖 `after_state` 和 `updated_at`。
-- state 以 JSON 保存完整工作态快照，结构固定为 memory、keywords、handles、relations。
-- 创建或更新时，重复检测以 `memory_units`、`memory_handles` 等当前工作态表和正式唯一约束为准；`memory_changes.after_state` 不承担唯一约束。
+- state 以 JSON 保存完整工作态快照，结构固定为 memory、keywords、relations。
+- 创建或更新时，重复检测以 `memory_units` 等当前工作态表和正式唯一约束为准；`memory_changes.after_state` 不承担唯一约束。
 - 用户确认 create 时把 `memory_units.status` 改为 `active`，删除对应 `memory_changes`，并自动写入默认 `related_to` relations。
 - 用户确认 update / restore 时只删除对应 `memory_changes`，不再把 `after_state` 二次写入工作态。
 - 用户确认 delete 时删除对应 `memory_changes`，再硬删除 `memory_units`，由外键级联清理派生表。
 - 用户拒绝 create 时，删除 `memory_changes`，再删除对应 `memory_units`，由外键级联清理派生表。
 - 用户拒绝 update / delete / restore 时，用 `before_state` 恢复当前工作态，再删除 `memory_changes`。
 - 第一版 `memory_changes.memory_uuid` 不建外键；后端事务保证 open change 指向当前工作态，拒绝 create 时也便于先删 change 再删 memory。
-- update 的 title_norm、content、summary、keywords、handles、relations 变化都会立即体现在当前工作态和 `after_state`。
+- update 的 title_norm、content、summary、keywords、relations 变化都会立即体现在当前工作态和 `after_state`。
 - 只修改 relation 也归入 `action = update`，不单独设置 link / unlink action。
 - `memory_uuid` 对所有 action 都表示当前工作态里的目标 memory；create 在同一事务内先写入 `memory_units`。
 - create approve 后自动生成的默认 relations 直接进入 `memory_relations`，不再生成第二条待确认 change。
@@ -293,7 +256,6 @@ state JSON 结构：
 ```text
 memory: {uuid, category, title_norm, content, summary, status, recall_when, trashed_at}
 keywords: [{keyword_norm, weight}]
-handles: [{handle_norm}]
 relations: [{from_memory_uuid, to_memory_uuid, relation_type, weight, note}]
 ```
 
@@ -303,7 +265,7 @@ relations: [{from_memory_uuid, to_memory_uuid, relation_type, weight, note}]
 - `after_state` 是当前完整工作态，不是 patch。
 - `after_state.memory.title_norm` 必须已经由数据库 `normalize_title` 计算完成。
 - `after_state` 不保存 `title`、`raw_title` 或 `display_title`。
-- `keywords`、`handles`、`relations` 都表示当前工作态的完整集合。
+- `keywords`、`relations` 都表示当前工作态的完整集合。
 - `relations` 中至少一端必须等于 `memory_changes.memory_uuid`。
 - `relations` 的另一端必须是同一数据库内的 active memory；`create_memory` 不建 relation，approve create 后才自动建立默认 relation。
 - `memory_changes` 不记录 usage、embedding、AGE 内部数据。
@@ -373,7 +335,7 @@ applies_to
 ```text
 create/update memory
 -> begin
--> 读取当前工作态 memory / keywords / handles / relations
+-> 读取当前工作态 memory / keywords / relations
 -> RelationResolver 生成默认 relation 候选
 -> upsert memory_changes(after_state)
 -> commit
@@ -382,7 +344,7 @@ create/update memory
 输入：
 
 ```text
-当前工作态的 title_norm / summary / content / keywords / handles，以及已有 memory_embeddings 行
+当前工作态的 title_norm / summary / content / keywords，以及已有 memory_embeddings 行
 ```
 
 候选来源：
@@ -390,7 +352,6 @@ create/update memory
 ```text
 同 category
 关键词强重合
-handle 近邻
 embedding topK
 ```
 
@@ -498,7 +459,6 @@ memory_changes(updated_at)
 精确定位索引：
 
 ```text
-memory_handles(handle_norm) unique btree
 memory_keywords(memory_uuid, keyword_norm) unique btree
 memory_keywords(keyword_norm, memory_uuid) btree
 ```
@@ -506,9 +466,7 @@ memory_keywords(keyword_norm, memory_uuid) btree
 中文分路召回：
 
 ```text
-handle exact -> memory_handles.handle_norm unique btree
 keyword exact -> memory_keywords.keyword_norm btree
-handle fuzzy -> memory_handles.handle_norm GIN trigram
 keyword fuzzy -> memory_keywords.keyword_norm GIN trigram
 title_norm / summary / content fuzzy -> memory_units title_norm / summary / content GIN trigram
 ```
@@ -524,7 +482,6 @@ memory_embeddings.embedding -> HNSW cosine index
 
 ```text
 keyword_norm exact match first
-memory_handles.handle_norm -> GIN trigram
 memory_keywords.keyword_norm -> GIN trigram
 memory_units.title_norm -> GIN trigram
 memory_units.summary -> GIN trigram
@@ -533,7 +490,6 @@ memory_units.content -> GIN trigram
 
 规则：
 
-- handle 精确定位先走 unique btree，只有模糊查找才走 trigram。
 - keyword 精确命中优先于 trigram 模糊命中。
 - embedding 使用 cosine 距离；没有 `memory_embeddings` 行的 memory 不参与语义召回。
 - 第一版不使用 PostgreSQL fulltext / tsvector；中文召回由 keyword、trigram、embedding 分路完成。
@@ -543,18 +499,18 @@ memory_units.content -> GIN trigram
 ```text
 lookup_memory(memory_uuid)
 -> 读 memory_units
--> 读 keywords / handles / usage
+-> 读 keywords / usage
 -> 读 memory_relations outgoing + incoming 一跳
 ```
 
 ```text
 recall_memory(query)
--> handle / keyword / trigram / embedding 分路召回候选
+-> keyword / trigram / embedding 分路召回候选
 -> 对候选做 memory_relations 一跳扩展
 -> relation_type + weight 只影响排序，不单独决定命中
 ```
 
-图不负责分类。分类由 `category`、`handle_norm` 和 `keyword_norm` 负责。
+图不负责分类。分类由 `category` 和 `keyword_norm` 负责。
 
 ## 四、搜索合并规则
 
@@ -563,8 +519,7 @@ recall_memory(query)
 ```text
 recall_memory(query)
 1. normalize query
-2. 判断是否是 `share/...` handle
-3. 在目标库集合执行 handle exact / keyword exact / trigram / embedding 分路召回
+2. 在目标库集合执行 keyword exact / trigram / embedding 分路召回
 4. 收集候选 memory_uuid，并合并 match_sources
 5. 对候选做 memory_relations 一跳扩展
 6. 按 db_scope、status、category 过滤
@@ -575,12 +530,9 @@ recall_memory(query)
 
 规则：
 
-- handle 查询只在目标库执行；非 handle 查询在当前 profile 私库和 `mem_share` 分别执行 keyword / trigram / embedding。
+- 查询在当前 profile 私库和 `mem_share` 分别执行 keyword / trigram / embedding。
 - 合并结果只按 `db_scope + memory_uuid` 去重。
 - profile 和 share 没有共同 identity；同名结果同时存在时，作为两条不同结果返回。
-- `share/...` handle 只查 `mem_share`。
-- 非 `share/...` handle 只查当前 profile 私库。
-- 只有非 handle 查询才同时查当前 profile 私库和 `mem_share`。
 - 返回结果必须包含 `db_scope`、`profile`、`memory_uuid`、`title_norm`、`score`、`match_sources`。
 
 状态过滤：
@@ -636,7 +588,7 @@ Agent 写入流程：
 begin
 读取当前工作态；如果没有 open change，保存 before_state
 生成 after_state 工作态
-写入 memory_units / keywords / handles / relations
+写入 memory_units / keywords / relations
 如果没有 change，写 memory_changes(before_state, after_state)
 如果已有 change，只更新 after_state 和 updated_at
 commit
@@ -673,7 +625,7 @@ memory_changes 保留
 
 ```text
 create：删除 memory_changes，再删除 memory_units，级联清理派生数据
-update：用 before_state 恢复 memory_units / keywords / handles / memory_relations，再删除 memory_changes
+update：用 before_state 恢复 memory_units / keywords / memory_relations，再删除 memory_changes
 delete：用 before_state 恢复 active 状态和派生数据，再删除 memory_changes
 restore：用 before_state 恢复 trashed 状态，再删除 memory_changes
 ```
@@ -699,14 +651,14 @@ commit
 ```text
 必需扩展：
 pgvector：用于 memory_embeddings.embedding 的语义召回
-pg_trgm：用于 handle_norm、keyword_norm、title_norm、summary、content 的模糊匹配
+pg_trgm：用于 keyword_norm、title_norm、summary、content 的模糊匹配
 Apache AGE：用于 memory_units / memory_relations 的图查询
 ```
 
 明确不使用：
 
 ```text
-ltree：Agent 不按路径树搜索记忆，handle 只做快速定位
+ltree：Agent 不按路径树搜索记忆
 ```
 
 ## 当前不做

@@ -29,16 +29,16 @@ apply_memory_update
 
 ## 2. 目标确认
 
-`handle` / `title` 只能用于搜索候选，不能直接执行更新。
+`title` 只能用于搜索候选，不能直接执行更新。
 
 执行任意更新工具前必须完成：
 
 ```text
-1. 用 handle 或 title 搜索候选
-2. 展示 memory_uuid、title_norm、handle
+1. 用 title 搜索候选
+2. 展示 memory_uuid、title_norm
 3. 用户确认具体目标
 4. 调用 read_memory_hash
-5. 展示返回的 title_norm、handle、status 做最后确认
+5. 展示返回的 title_norm、status 做最后确认
 6. 拿到字段 hash
 7. 调用更新工具
 ```
@@ -69,7 +69,6 @@ apply_memory_update
   "data": {
     "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
     "title_norm": "profile 隔离规则",
-    "handle": "core/backend/database/profile隔离",
     "status": "active",
     "hash": {
       "state_hash": "0x...",
@@ -78,7 +77,6 @@ apply_memory_update
       "summary_hash": "0x...",
       "recall_when_hash": "0x...",
       "category_hash": "0x...",
-      "handle_hash": "0x...",
       "keywords_hash": "0x..."
     }
   },
@@ -140,18 +138,15 @@ apply_memory_update
 new_title
 new_summary
 new_recall_when
-new_handle
-new_category + new_handle
+new_category
 new_content
 ```
 
 规则：
 
-- 每次只能执行一种替换意图。
+- 可以一次提交多个 `new_*` 字段，后端按固定字段顺序处理。
 - `new_title`、`new_content`、`new_summary` 不能是空字符串。
 - `new_recall_when` 可以是 `null`，表示清空。
-- `new_category` 必须和 `new_handle` 同时提供，并带 `category` 与 `handle` hash。
-- `new_handle` 第一段必须等于最终 `category`。
 - 每个 `new_*` 字段都必须有对应的 `expected_*_hash`。
 
 替换整个 content：
@@ -283,7 +278,7 @@ new_content
 5. 分类 pending / active / existing change
 6. 应用工具动作，生成 next_state
 7. 校验 next_state
-8. 写回 memory_units / memory_keywords / memory_handles
+8. 写回 memory_units / memory_keywords
 9. 回读 after_state
 10. 写入或覆盖 memory_changes
 11. active 记忆标记 graph dirty
@@ -348,7 +343,7 @@ active 且已有 update / restore：
 ```text
 不能直接用 search/list 返回的 uuid 更新
 不能按搜索排序自动选择第一条
-不能通过 title 或 handle 直接执行更新
+不能通过 title 直接执行更新
 必须先确认目标 memory_uuid
 必须带 expected_*_hash
 需要改摘要时使用 update_memory_replace

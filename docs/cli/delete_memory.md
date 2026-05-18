@@ -35,7 +35,7 @@ trashed = 已软删除，等待用户批准 delete 或撤销
 
 - 只允许通过 `memory_uuid` 删除。
 - `memory_uuid` 必填且不能为空。
-- 禁止传 `profile`、`handle`、`title`、`uri`。
+- 禁止传 `profile`、`title`、`uri`。
 
 ## 3. case 1: pending create
 
@@ -132,7 +132,7 @@ DELETE FROM memory_changes WHERE memory_uuid = memory_uuid
 DELETE FROM memory_units WHERE uuid = memory_uuid
 ```
 
-`memory_keywords`、`memory_handles`、`memory_relations`、`memory_usage`、`memory_embeddings` 依赖外键级联清理。
+`memory_keywords`、`memory_relations`、`memory_usage`、`memory_embeddings` 依赖外键级联清理。
 
 ## 8. reject delete
 
@@ -148,4 +148,4 @@ pending/create/delete 被拒绝：恢复 pending 工作态，并把 memory_chang
 - 批量删除
 - 自动 purge
 - 级联删除关联 memory
-- handle / title 删除入口
+- title 删除入口

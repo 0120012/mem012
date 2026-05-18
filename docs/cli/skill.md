@@ -8,13 +8,13 @@ description: Use when creating or deleting mem012 memories through the CLI with 
 ## create_memory
 
 1. 判断是否需要新增记忆。
-2. 准备 `category`、`title`、`content`、`summary`、`keywords`、`handle`。
-3. 可选准备 `recall_when`。
+2. 准备 `category`、`title`、`content`、`keywords`。
+3. 可选准备 `summary`、`recall_when`。
 4. 用目标库名替换 `riko`。
 5. 执行：
 
 ```bash
-mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"core","title":"标题","content":"正文","summary":"摘要","keywords":["关键词"],"handle":"core/group/item"}}'
+mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"core","title":"标题","content":"正文","summary":"摘要","keywords":["关键词"]}}'
 ```
 
 6. 成功后记录返回的 `memory_uuid`。
