@@ -7,6 +7,8 @@ pub struct Config {
     database: BTreeMap<String, String>,
     search: SearchConfig,
     embeddings: EmbeddingsConfig,
+    #[serde(default)]
+    debug: DebugConfig,
     server: ServerConfig,
 }
 
@@ -32,6 +34,11 @@ struct EmbeddingsConfig {
     embeddings_api: String,
     embeddings_key: String,
     embeddings_model: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct DebugConfig {
+    reset_db: bool,
 }
 
 #[derive(Deserialize)]
@@ -60,6 +67,11 @@ impl Config {
         // Why：认证密钥跟随 HTTP 服务配置，避免运行环境变量改变后端认证策略。
         let token = self.server.api_token.as_deref()?.trim();
         (!token.is_empty()).then_some(token)
+    }
+
+    pub fn reset_db(&self) -> bool {
+        // Why：调试清库是破坏性动作，必须由配置显式打开，缺省永远关闭。
+        self.debug.reset_db
     }
 
     pub fn embedding_settings(&self) -> Option<EmbeddingSettings> {

@@ -21,6 +21,10 @@ embeddings_api = ""
 embeddings_model = "BAAI/bge-m3"
 embeddings_key = ""
 
+[debug]
+# true 会在 CLI 启动时清空 profile/share 记忆表并重新建表，只能在本地调试打开。
+reset_db = false
+
 [server]
 addr = "0.0.0.0:37777"
 api_token = "xxx"

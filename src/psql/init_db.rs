@@ -4,11 +4,13 @@ use sqlx::{Pool, Postgres};
 pub async fn init_db(
     pool: &Pool<Postgres>,
     share_pool: &Pool<Postgres>,
+    reset_db: bool,
 ) -> Result<bool, sqlx::Error> {
-    // DEBUG
-    // Why：当前需要保留已有数据，重建表改为手动执行清库命令，避免启动时误删。
-    // reset_memory_tables(pool, "profile").await?;
-    // reset_memory_tables(share_pool, "share").await?;
+    if reset_db {
+        // Why：调试重建必须同时清空 profile 和 share，否则双库 schema 会出现新旧不一致。
+        reset_memory_tables(pool, "profile").await?;
+        reset_memory_tables(share_pool, "share").await?;
+    }
 
     migrate_memory_tables(pool, "profile").await?;
     migrate_memory_tables(share_pool, "share").await?;

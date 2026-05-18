@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let share_pool = sqlx::postgres::PgPoolOptions::new()
         .connect(share_database_url)
         .await?;
-    psql::init_db(&profile_pool, &share_pool).await?;
+    psql::init_db(&profile_pool, &share_pool, config.reset_db()).await?;
 
     // ==== 3. CLI: parse args json
     let args_json = cli_args.args_json.ok_or("缺少参数: --args")?;
