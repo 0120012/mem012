@@ -190,7 +190,6 @@ async fn restore_before_state(
     let state = before_state.ok_or_else(|| std::io::Error::other("before_state is required"))?;
     restore_memory_unit(tx, memory_uuid, state).await?;
     replace_keywords(tx, memory_uuid, state).await?;
-    replace_handles(tx, memory_uuid, state).await?;
     replace_relations(tx, memory_uuid, state).await?;
     super::mark_memory_graph_dirty(tx).await?;
     sqlx::query("DELETE FROM memory_changes WHERE memory_uuid = $1::uuid")
@@ -243,30 +242,6 @@ async fn replace_keywords(
         INSERT INTO memory_keywords (uuid, memory_uuid, keyword_norm, weight, created_at)
         SELECT gen_random_uuid(), $1::uuid, item ->> 'keyword_norm', (item ->> 'weight')::int, now()
         FROM jsonb_array_elements($2::jsonb -> 'keywords') AS items(item)
-        "#,
-    )
-    .bind(memory_uuid)
-    .bind(state)
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
-}
-
-// Why：handles 是定位索引，拒绝时必须回到 before_state 的完整集合。
-async fn replace_handles(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    memory_uuid: &str,
-    state: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM memory_handles WHERE memory_uuid = $1::uuid")
-        .bind(memory_uuid)
-        .execute(&mut **tx)
-        .await?;
-    sqlx::query(
-        r#"
-        INSERT INTO memory_handles (uuid, memory_uuid, handle_norm, created_at)
-        SELECT gen_random_uuid(), $1::uuid, item ->> 'handle_norm', now()
-        FROM jsonb_array_elements($2::jsonb -> 'handles') AS items(item)
         "#,
     )
     .bind(memory_uuid)

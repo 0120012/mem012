@@ -145,10 +145,6 @@ SELECT jsonb_build_object(
         SELECT jsonb_agg(jsonb_build_object('keyword_norm', keyword_norm, 'weight', weight) ORDER BY keyword_norm)
         FROM memory_keywords WHERE memory_uuid = u.uuid
     ), '[]'::jsonb),
-    'handles', COALESCE((
-        SELECT jsonb_agg(jsonb_build_object('handle_norm', handle_norm) ORDER BY handle_norm)
-        FROM memory_handles WHERE memory_uuid = u.uuid
-    ), '[]'::jsonb),
     'relations', COALESCE((
         SELECT jsonb_agg(jsonb_build_object(
             'relation_uuid', uuid::text,

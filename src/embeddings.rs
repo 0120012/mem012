@@ -30,7 +30,7 @@ async fn fetch_embedding_input(
     pool: &sqlx::Pool<sqlx::Postgres>,
     memory_uuid: &str,
 ) -> Result<String, sqlx::Error> {
-    // Why：向量只由语义内容生成，handle 和 usage 不应影响 embedding 稳定性。
+    // Why：向量只由语义内容生成，usage 不应影响 embedding 稳定性。
     sqlx::query_scalar(
         r#"
         SELECT concat_ws(E'\n',

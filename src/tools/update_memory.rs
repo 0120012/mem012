@@ -17,13 +17,11 @@ struct UpdateMemoryReplaceArgs {
     expected_title_hash: Option<String>,
     expected_summary_hash: Option<String>,
     expected_recall_when_hash: Option<String>,
-    expected_handle_hash: Option<String>,
     expected_category_hash: Option<String>,
     expected_content_hash: Option<String>,
     new_title: Option<String>,
     new_summary: Option<String>,
     new_recall_when: Option<Option<String>>,
-    new_handle: Option<String>,
     new_category: Option<String>,
     new_content: Option<String>,
 }
@@ -82,11 +80,10 @@ async fn read_memory_hash(
     // Why：hash 读取是所有 update 的前置步骤，先单独固定入口避免更新工具直接信任列表结果。
     // 1. 解析并校验 memory_uuid 不能为空。
     // 2. 查询 memory_units，确认目标记忆存在且未进入 trashed。
-    // 3. 查询 memory_handles，取当前用于人工确认的 handle。
-    // 4. 查询 memory_keywords，按规范化顺序组装关键词列表。
-    // 5. 构建稳定的 memory state，用于计算 state_hash。
-    // 6. 分别计算 title/content/summary/recall_when/category/handle/keywords hash。
-    // 7. 输出 title_norm、handle、status 和 data.hash，供后续 update 工具原样携带。
+    // 3. 查询 memory_keywords，按规范化顺序组装关键词列表。
+    // 4. 构建稳定的 memory state，用于计算 state_hash。
+    // 5. 分别计算 title/content/summary/recall_when/category/keywords hash。
+    // 6. 输出 title_norm、status 和 data.hash，供后续 update 工具原样携带。
     let read_args = serde_json::from_value::<ReadMemoryHashArgs>(args.clone())?;
     let memory_uuid = validate_required_text("memory_uuid", &read_args.memory_uuid)?;
     let mut tx = context.profile_pool.begin().await?;
@@ -104,10 +101,6 @@ async fn read_memory_hash(
         return Err("read_memory_hash 不支持 trashed memory".into());
     }
 
-    let handle = state["handles"]
-        .as_array()
-        .and_then(|handles| handles.first())
-        .and_then(|handle| handle["handle_norm"].as_str());
     println!(
         "{}",
         serde_json::json!({
@@ -116,7 +109,6 @@ async fn read_memory_hash(
             "data": {
                 "memory_uuid": memory_uuid,
                 "title_norm": read_memory_text(memory, "title_norm")?,
-                "handle": handle,
                 "status": status,
                 "hash": build_memory_hashes(&state)?,
             },
@@ -139,7 +131,6 @@ fn build_memory_hashes(
         "summary_hash": sha256_json(&memory["summary"])?,
         "recall_when_hash": sha256_json(&memory["recall_when"])?,
         "category_hash": sha256_json(&memory["category"])?,
-        "handle_hash": sha256_json(&state["handles"])?,
         "keywords_hash": sha256_json(&state["keywords"])?,
     }))
 }
@@ -178,7 +169,7 @@ async fn update_memory_replace(
     args: &serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：整字段替换和局部 patch 必须分开，避免 Agent 把片段替换误当成字段覆盖。
-    // 1. 解析参数，确认本次只出现一种 new_* 替换意图。
+    // 1. 解析参数，确认本次替换请求形状合法。
     // 2. 校验 memory_uuid 和对应 expected_*_hash 不能为空。
     // 3. 根据 new_* 字段判断要替换的目标字段。
     // 4. 开启统一 update 事务并锁定目标 memory。

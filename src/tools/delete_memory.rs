@@ -30,7 +30,7 @@ pub async fn run(
 }
 
 fn validate_memory_uuid(args: &DeleteMemoryArgs) -> Result<&str, Box<dyn std::error::Error>> {
-    // Why：删除是破坏性操作，只允许强身份 memory_uuid，避免 handle/title 带来歧义。
+    // Why：删除是破坏性操作，只允许强身份 memory_uuid，避免标题等弱定位带来歧义。
     let memory_uuid = args.memory_uuid.trim();
     if memory_uuid.is_empty() {
         return Err("memory_uuid 不能为空".into());

@@ -15,7 +15,6 @@ struct SearchConfig {
     default_limit: i32,
     graph_expand_depth: i32,
     keyword: i32,
-    handle: i32,
     fulltext: i32,
     semantic: i32,
     graph: i32,
