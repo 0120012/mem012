@@ -20,7 +20,7 @@ struct UpdateMemoryReplaceArgs {
     expected_category_hash: Option<String>,
     expected_content_hash: Option<String>,
     new_title: Option<String>,
-    new_summary: Option<String>,
+    new_summary: Option<Option<String>>,
     new_recall_when: Option<Option<String>>,
     new_category: Option<String>,
     new_content: Option<String>,
@@ -83,7 +83,7 @@ async fn read_memory_hash(
     // 3. 查询 memory_keywords，按规范化顺序组装关键词列表。
     // 4. 构建稳定的 memory state，用于计算 state_hash。
     // 5. 分别计算 title/content/summary/recall_when/category/keywords hash。
-    // 6. 输出 title_norm、status 和 data.hash，供后续 update 工具原样携带。
+    // 6. 输出 title_norm 和 data.hash，供后续 update 工具原样携带。
     let read_args = serde_json::from_value::<ReadMemoryHashArgs>(args.clone())?;
     let memory_uuid = validate_required_text("memory_uuid", &read_args.memory_uuid)?;
     let mut tx = context.profile_pool.begin().await?;
@@ -109,7 +109,6 @@ async fn read_memory_hash(
             "data": {
                 "memory_uuid": memory_uuid,
                 "title_norm": read_memory_text(memory, "title_norm")?,
-                "status": status,
                 "hash": build_memory_hashes(&state)?,
             },
             "error": null,
@@ -164,22 +163,353 @@ fn validate_required_text<'a>(
     Ok(value)
 }
 
+fn validate_replace_args(args: &UpdateMemoryReplaceArgs) -> Result<(), Box<dyn std::error::Error>> {
+    // Why：replace 接受多字段组合，入口需要先挡住缺 hash 的不可信写入请求。
+    validate_required_text("memory_uuid", &args.memory_uuid)?;
+    let mut updates = 0;
+    let require_hash =
+        |field: &str, hash: Option<&str>| -> Result<(), Box<dyn std::error::Error>> {
+            let name = format!("expected_{field}_hash");
+            validate_required_text(&name, hash.ok_or_else(|| format!("{name} 缺失"))?)?;
+            Ok(())
+        };
+    for (field, value, hash) in [
+        (
+            "title",
+            args.new_title.as_deref(),
+            args.expected_title_hash.as_deref(),
+        ),
+        (
+            "category",
+            args.new_category.as_deref(),
+            args.expected_category_hash.as_deref(),
+        ),
+        (
+            "content",
+            args.new_content.as_deref(),
+            args.expected_content_hash.as_deref(),
+        ),
+    ] {
+        if let Some(value) = value {
+            validate_required_text(&format!("new_{field}"), value)?;
+            require_hash(field, hash)?;
+            updates += 1;
+        }
+    }
+    for (field, value, hash) in [
+        (
+            "summary",
+            &args.new_summary,
+            args.expected_summary_hash.as_deref(),
+        ),
+        (
+            "recall_when",
+            &args.new_recall_when,
+            args.expected_recall_when_hash.as_deref(),
+        ),
+    ] {
+        if let Some(value) = value {
+            if let Some(text) = value {
+                validate_required_text(&format!("new_{field}"), text)?;
+            }
+            require_hash(field, hash)?;
+            updates += 1;
+        }
+    }
+    if updates == 0 {
+        return Err("至少需要一个 new_* 字段".into());
+    }
+    Ok(())
+}
+
+async fn lock_replace_target(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
+    // Why：更新必须先锁定工作态和待确认记录，否则 hash 校验后的写入仍可能踩到并发变更。
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM memory_units WHERE uuid = $1::uuid FOR UPDATE")
+            .bind(memory_uuid)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let Some(status) = status else {
+        return Err("memory_uuid 不存在".into());
+    };
+    let action: Option<String> = sqlx::query_scalar(
+        "SELECT action FROM memory_changes WHERE memory_uuid = $1::uuid FOR UPDATE",
+    )
+    .bind(memory_uuid)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if status == "trashed" || action.as_deref() == Some("delete") {
+        return Err("update_memory_replace 不支持已删除记忆".into());
+    }
+    Ok((status, action))
+}
+
+fn assert_replace_hashes(
+    args: &UpdateMemoryReplaceArgs,
+    state: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Why：hash 必须在锁定后的当前 state 上重算，才能阻止 Agent 基于过期读取继续写入。
+    let hashes = build_memory_hashes(state)?;
+    let check = |name: &str, expected: Option<&String>| -> Result<(), Box<dyn std::error::Error>> {
+        let actual = hashes[name]
+            .as_str()
+            .ok_or_else(|| format!("{name} 缺失"))?;
+        let expected = expected
+            .map(String::as_str)
+            .ok_or_else(|| format!("expected_{name} 缺失"))?;
+        if actual != expected {
+            return Err(format!("{name} 不匹配").into());
+        }
+        Ok(())
+    };
+    if args.new_title.is_some() {
+        check("title_hash", args.expected_title_hash.as_ref())?;
+    }
+    if args.new_summary.is_some() {
+        check("summary_hash", args.expected_summary_hash.as_ref())?;
+    }
+    if args.new_recall_when.is_some() {
+        check("recall_when_hash", args.expected_recall_when_hash.as_ref())?;
+    }
+    if args.new_category.is_some() {
+        check("category_hash", args.expected_category_hash.as_ref())?;
+    }
+    if args.new_content.is_some() {
+        check("content_hash", args.expected_content_hash.as_ref())?;
+    }
+    Ok(())
+}
+
+fn build_replace_next_state(
+    state: &serde_json::Value,
+    args: &UpdateMemoryReplaceArgs,
+    title_norm: Option<&str>,
+) -> Result<(serde_json::Value, Vec<&'static str>), Box<dyn std::error::Error>> {
+    // Why：写库前先形成完整快照，后续 memory_units 和 memory_changes 才能共享同一个结果。
+    let mut next_state = state.clone();
+    let memory = next_state
+        .get_mut("memory")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("memory state 缺少 memory")?;
+    let mut updated_fields = Vec::new();
+    let mut set = |key: &str, output: &'static str, value: serde_json::Value| {
+        if memory.get(key) != Some(&value) {
+            memory.insert(key.to_string(), value);
+            updated_fields.push(output);
+        }
+    };
+    if args.new_title.is_some() {
+        set(
+            "title_norm",
+            "title",
+            serde_json::json!(title_norm.ok_or("title_norm 缺失")?),
+        );
+    }
+    if let Some(value) = args.new_category.as_deref() {
+        set("category", "category", serde_json::json!(value.trim()));
+    }
+    if let Some(value) = args.new_content.as_deref() {
+        set("content", "content", serde_json::json!(value.trim()));
+    }
+    if let Some(value) = &args.new_summary {
+        set(
+            "summary",
+            "summary",
+            value
+                .as_deref()
+                .map(|text| serde_json::json!(text.trim()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    if let Some(value) = &args.new_recall_when {
+        set(
+            "recall_when",
+            "recall_when",
+            value
+                .as_deref()
+                .map(|text| serde_json::json!(text.trim()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    drop(set);
+    if updated_fields.is_empty() {
+        return Err("NO_CHANGE".into());
+    }
+    Ok((next_state, updated_fields))
+}
+
+async fn reject_replace_duplicates(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    next_state: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Why：更新后的工作态也必须维持唯一性，否则 approve/reject 之外的读路径会先看到冲突数据。
+    let memory = next_state
+        .get("memory")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("memory state 缺少 memory")?;
+    let duplicate_message: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT CASE
+            WHEN EXISTS (SELECT 1 FROM memory_units WHERE uuid <> $1::uuid AND status IN ('pending', 'active') AND title_norm = $2) THEN 'DUPLICATE_TITLE: title_norm 已存在'
+            WHEN EXISTS (SELECT 1 FROM memory_units WHERE uuid <> $1::uuid AND status IN ('pending', 'active') AND content = $3) THEN 'DUPLICATE_CONTENT: content 已存在'
+            WHEN $4::text IS NOT NULL AND EXISTS (SELECT 1 FROM memory_units WHERE uuid <> $1::uuid AND status IN ('pending', 'active') AND summary = $4) THEN 'DUPLICATE_SUMMARY: summary 已存在'
+        END
+        "#,
+    )
+    .bind(memory_uuid)
+    .bind(read_memory_text(memory, "title_norm")?)
+    .bind(read_memory_text(memory, "content")?)
+    .bind(memory.get("summary").and_then(serde_json::Value::as_str))
+    .fetch_one(&mut **tx)
+    .await?;
+    if let Some(message) = duplicate_message {
+        return Err(message.into());
+    }
+    Ok(())
+}
+
+async fn write_memory_unit_from_state(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    next_state: &serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    // Why：写回只信任后端构建的完整快照，避免多字段更新时漏改工作态字段。
+    sqlx::query(
+        r#"
+        UPDATE memory_units
+        SET category = input.state #>> '{memory,category}',
+            title_norm = input.state #>> '{memory,title_norm}',
+            content = input.state #>> '{memory,content}',
+            summary = input.state #>> '{memory,summary}',
+            recall_when = input.state #>> '{memory,recall_when}',
+            updated_at = now()
+        FROM (SELECT $2::jsonb AS state) input
+        WHERE uuid = $1::uuid
+        "#,
+    )
+    .bind(memory_uuid)
+    .bind(next_state.to_string())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn upsert_update_change(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    status: &str,
+    action: Option<&str>,
+    before_state: &serde_json::Value,
+    after_state: &serde_json::Value,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // Why：更新确认记录必须保留最早回滚基线，否则连续修改后拒绝会回不到原状态。
+    let after_state = after_state.to_string();
+    match (status, action) {
+        ("pending", Some("create")) => {
+            sqlx::query("UPDATE memory_changes SET after_state = $2::jsonb, updated_at = now() WHERE memory_uuid = $1::uuid AND action = 'create'")
+                .bind(memory_uuid)
+                .bind(&after_state)
+                .execute(&mut **tx)
+                .await?;
+            Ok("create".to_string())
+        }
+        ("active", None) => {
+            let before_state = before_state.to_string();
+            sqlx::query("INSERT INTO memory_changes (uuid, memory_uuid, action, before_state, after_state, created_at, updated_at) VALUES ($1::uuid, $1::uuid, 'update', $2::jsonb, $3::jsonb, now(), now())")
+                .bind(memory_uuid)
+                .bind(before_state)
+                .bind(&after_state)
+                .execute(&mut **tx)
+                .await?;
+            Ok("update".to_string())
+        }
+        ("active", Some(action @ ("update" | "restore"))) => {
+            sqlx::query("UPDATE memory_changes SET after_state = $2::jsonb, updated_at = now() WHERE memory_uuid = $1::uuid")
+                .bind(memory_uuid)
+                .bind(&after_state)
+                .execute(&mut **tx)
+                .await?;
+            Ok(action.to_string())
+        }
+        _ => Err("update_memory_replace 不支持当前 memory 状态".into()),
+    }
+}
+
 async fn update_memory_replace(
     context: &super::ToolContext<'_>,
     args: &serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：整字段替换和局部 patch 必须分开，避免 Agent 把片段替换误当成字段覆盖。
-    // 1. 解析参数，确认本次替换请求形状合法。
-    // 2. 校验 memory_uuid 和对应 expected_*_hash 不能为空。
-    // 3. 根据 new_* 字段判断要替换的目标字段。
-    // 4. 开启统一 update 事务并锁定目标 memory。
-    // 5. 重新计算当前字段 hash，和 expected_*_hash 不一致时拒绝。
-    // 6. 应用整字段替换，生成 next_state。
-    // 7. 写回工作态，并写入或覆盖 memory_changes。
-    // 8. 如果 active 记忆发生变化，标记 graph dirty。
-    // 9. 输出 updated_fields 和 pending_review 结果。
-    let _args = serde_json::from_value::<UpdateMemoryReplaceArgs>(args.clone())?;
-    tool_not_implemented(context, "update_memory_replace")
+    let replace_args = serde_json::from_value::<UpdateMemoryReplaceArgs>(args.clone())?;
+    validate_replace_args(&replace_args)?;
+    let memory_uuid = validate_required_text("memory_uuid", &replace_args.memory_uuid)?;
+
+    // Why：hash 校验和写入必须共用同一个锁定窗口，否则中途并发更新会绕过版本保护。
+    let mut tx = context.profile_pool.begin().await?;
+    let (status, action) = lock_replace_target(&mut tx, memory_uuid).await?;
+    let state_text = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_replace_hashes(&replace_args, &state)?;
+
+    // Why：title_norm 必须由数据库函数生成，避免 Rust 和 PostgreSQL 的规范化规则分叉。
+    let title_norm = match replace_args.new_title.as_deref() {
+        Some(title) => Some(
+            sqlx::query_scalar::<_, String>("SELECT normalize_title($1)")
+                .bind(title)
+                .fetch_one(&mut *tx)
+                .await?,
+        ),
+        None => None,
+    };
+
+    // Why：先生成完整 next_state，后续主表写入和变更记录才能使用同一份结果。
+    let (next_state, updated_fields) =
+        build_replace_next_state(&state, &replace_args, title_norm.as_deref())?;
+    reject_replace_duplicates(&mut tx, memory_uuid, &next_state).await?;
+    write_memory_unit_from_state(&mut tx, memory_uuid, &next_state).await?;
+    let after_state_text = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let after_state = serde_json::from_str::<serde_json::Value>(&after_state_text)?;
+
+    // Why：memory_changes 是用户二次确认入口，必须和工作态写入保持同一事务。
+    let action = upsert_update_change(
+        &mut tx,
+        memory_uuid,
+        &status,
+        action.as_deref(),
+        &state,
+        &after_state,
+    )
+    .await?;
+    if status == "active" {
+        crate::psql::mark_memory_graph_dirty(&mut tx).await?;
+    }
+    tx.commit().await?;
+
+    // Why：提交后再输出成功，避免调用方看到成功但数据库事务实际失败。
+    println!(
+        "{}",
+        serde_json::json!({
+            "state": "success",
+            "tool": "update_memory_replace",
+            "data": {
+                "memory_uuid": memory_uuid,
+                "action": action,
+                "result": "pending_review",
+                "updated_fields": updated_fields
+            },
+            "error": null,
+            "profile": context.profile
+        })
+    );
+    Ok(())
 }
 
 async fn update_memory_patch_content(
