@@ -119,10 +119,18 @@ fn database_url(project: &str) -> Result<String, ApiError> {
 }
 
 async fn refresh_embedding_after_approve(project: &str, database_url: &str, change: &Value) {
-    // Why：embedding 是 approve create 的派生索引，失败只降级语义召回，不撤销批准。
-    let Some(memory_uuid) = approved_create_memory_uuid(change) else {
+    // Why：approve 后 active 工作态已确定，语义索引应该跟随最终确认结果重建。
+    let Some((memory_uuid, action)) = reviewed_change(change) else {
         return;
     };
+    if action == "delete" {
+        return;
+    }
+    refresh_embedding(project, database_url, memory_uuid).await;
+}
+
+async fn refresh_embedding(project: &str, database_url: &str, memory_uuid: &str) {
+    // Why：embedding 是派生索引，刷新失败只降级语义召回，不撤销用户审核结果。
     let Ok(config) = crate::config::load_config("config.toml") else {
         return;
     };
@@ -136,12 +144,12 @@ async fn refresh_embedding_after_approve(project: &str, database_url: &str, chan
     }
 }
 
-fn approved_create_memory_uuid(change: &Value) -> Option<&str> {
-    // Why：只有 create 批准会让 pending 变 active，update/delete 不应在这里重算 embedding。
-    if change.get("action")?.as_str()? != "create" {
-        return None;
-    }
-    change.get("memory_uuid")?.as_str()
+fn reviewed_change(change: &Value) -> Option<(&str, &str)> {
+    // Why：刷新派生索引只需要审核动作和目标 uuid，不应让 HTTP 层解析完整状态快照。
+    Some((
+        change.get("memory_uuid")?.as_str()?,
+        change.get("action")?.as_str()?,
+    ))
 }
 
 // Why：详情读取需要区分不存在和数据库失败，前端才能展示正确状态。

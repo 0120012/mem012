@@ -106,11 +106,19 @@ pub async fn reject_change(
     Ok(true)
 }
 
-// Why：FOR UPDATE 锁定 change，避免 approve/reject 并发时同一变更被处理两次。
+// Why：审批路径必须和 update 工具保持同一锁顺序，避免 memory_units / memory_changes 反向拿锁造成死锁。
 async fn lock_change(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
 ) -> Result<Option<(String, String, Option<String>)>, sqlx::Error> {
+    let locked_memory: Option<String> =
+        sqlx::query_scalar("SELECT uuid::text FROM memory_units WHERE uuid = $1::uuid FOR UPDATE")
+            .bind(memory_uuid)
+            .fetch_optional(&mut **tx)
+            .await?;
+    if locked_memory.is_none() {
+        return Ok(None);
+    }
     sqlx::query_as(
         r#"
         SELECT action, memory_uuid::text, before_state::text

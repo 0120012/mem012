@@ -4,7 +4,7 @@
 
 更新记忆对 Agent 暴露 1 个读取工具和 5 个更新工具；后端内部必须走同一个更新事务。
 
-当前状态：`read_memory_hash` 和 `update_memory_replace` 已接入 Rust CLI。
+当前状态：`read_memory_hash`、`update_memory_replace` 和 `update_memory_patch_content` 已接入 Rust CLI。
 
 ```text
 read_memory_hash        = 更新前读取目标身份和字段 hash
@@ -302,6 +302,7 @@ active 且没有 open change：
 保存 before_state
 写入 memory_changes.action = update
 标记 graph dirty
+approve 后刷新 embedding 并覆盖旧 embedding
 ```
 
 active 且已有 update / restore：
@@ -310,6 +311,7 @@ active 且已有 update / restore：
 保留已有 before_state
 只覆盖 after_state
 标记 graph dirty
+approve 后刷新 embedding 并覆盖旧 embedding
 ```
 
 已有 delete：

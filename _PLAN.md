@@ -1,10 +1,11 @@
-# update_memory_replace 计划
+# update_memory 计划
 
 ## Context conclusions
 
 - `read_memory_hash` 已完成，返回字段 hash，hash 格式为 `0x...`。
-- `update_memory_replace` 已接入路由，但当前仍返回 `tool_not_implemented`。
-- `update_memory_replace` 只处理整字段替换，不处理 content 片段 patch、append、keywords。
+- `update_memory_replace` 已接入 Rust CLI，负责整字段替换。
+- `update_memory_patch_content` 已接入 Rust CLI，负责 content 唯一片段替换。
+- `update_memory_append`、keywords 增删仍未实现。
 - 一次请求可以传多个 `new_*` 字段；后端按固定顺序应用。
 - 每个 `new_*` 字段必须携带对应的 `expected_*_hash`。
 - 本轮不强制 `expected_state_hash`，避免扩大 CLI 协议；并发保护先按字段 hash 做。

@@ -222,7 +222,25 @@ fn validate_replace_args(args: &UpdateMemoryReplaceArgs) -> Result<(), Box<dyn s
     Ok(())
 }
 
-async fn lock_replace_target(
+fn validate_patch_content_args(
+    args: &UpdateMemoryPatchContentArgs,
+) -> Result<&str, Box<dyn std::error::Error>> {
+    // Why：片段替换依赖精确文本，校验只能挡空值，不能改写用户传入的空格和换行。
+    let memory_uuid = validate_required_text("memory_uuid", &args.memory_uuid)?;
+    validate_required_text("expected_content_hash", &args.expected_content_hash)?;
+    if args.match_content.trim().is_empty() {
+        return Err("match_content 不能为空".into());
+    }
+    if args.replace_content.trim().is_empty() {
+        return Err("replace_content 不能为空".into());
+    }
+    if args.match_content == args.replace_content {
+        return Err("NO_CHANGE".into());
+    }
+    Ok(memory_uuid)
+}
+
+async fn lock_update_target(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
 ) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
@@ -242,7 +260,7 @@ async fn lock_replace_target(
     .fetch_optional(&mut **tx)
     .await?;
     if status == "trashed" || action.as_deref() == Some("delete") {
-        return Err("update_memory_replace 不支持已删除记忆".into());
+        return Err("update_memory 不支持已删除记忆".into());
     }
     Ok((status, action))
 }
@@ -279,6 +297,19 @@ fn assert_replace_hashes(
     }
     if args.new_content.is_some() {
         check("content_hash", args.expected_content_hash.as_ref())?;
+    }
+    Ok(())
+}
+
+fn assert_content_hash(
+    expected_content_hash: &str,
+    state: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Why：局部替换也必须基于锁定后的正文，避免 Agent 用过期片段覆盖新内容。
+    let hashes = build_memory_hashes(state)?;
+    let actual = hashes["content_hash"].as_str().ok_or("content_hash 缺失")?;
+    if actual != expected_content_hash {
+        return Err("content_hash 不匹配".into());
     }
     Ok(())
 }
@@ -339,6 +370,35 @@ fn build_replace_next_state(
         return Err("NO_CHANGE".into());
     }
     Ok((next_state, updated_fields))
+}
+
+fn build_patch_content_next_state(
+    state: &serde_json::Value,
+    match_content: &str,
+    replace_content: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    // Why：片段替换必须先在内存快照中完成，主表和 change 才能写入同一个结果。
+    let memory = state
+        .get("memory")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("memory state 缺少 memory")?;
+    let content = read_memory_text(memory, "content")?;
+    let count = content.match_indices(match_content).take(2).count();
+    match count {
+        0 => return Err("match_content 未找到".into()),
+        1 => {}
+        _ => return Err("match_content 出现多次".into()),
+    }
+    let mut next_state = state.clone();
+    let memory = next_state
+        .get_mut("memory")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("memory state 缺少 memory")?;
+    memory.insert(
+        "content".to_string(),
+        serde_json::json!(content.replacen(match_content, replace_content, 1)),
+    );
+    Ok(next_state)
 }
 
 async fn reject_replace_duplicates(
@@ -435,7 +495,7 @@ async fn upsert_update_change(
                 .await?;
             Ok(action.to_string())
         }
-        _ => Err("update_memory_replace 不支持当前 memory 状态".into()),
+        _ => Err("update_memory 不支持当前 memory 状态".into()),
     }
 }
 
@@ -450,7 +510,7 @@ async fn update_memory_replace(
 
     // Why：hash 校验和写入必须共用同一个锁定窗口，否则中途并发更新会绕过版本保护。
     let mut tx = context.profile_pool.begin().await?;
-    let (status, action) = lock_replace_target(&mut tx, memory_uuid).await?;
+    let (status, action) = lock_update_target(&mut tx, memory_uuid).await?;
     let state_text = crate::psql::memory_state(&mut tx, memory_uuid)
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -525,8 +585,55 @@ async fn update_memory_patch_content(
     // 6. 写回 memory_units.content，并写入或覆盖 memory_changes。
     // 7. 如果 active 记忆发生变化，标记 graph dirty。
     // 8. 输出 updated_fields = ["content"] 和 pending_review 结果。
-    let _args = serde_json::from_value::<UpdateMemoryPatchContentArgs>(args.clone())?;
-    tool_not_implemented(context, "update_memory_patch_content")
+    let patch_args = serde_json::from_value::<UpdateMemoryPatchContentArgs>(args.clone())?;
+    let memory_uuid = validate_patch_content_args(&patch_args)?;
+    let mut tx = context.profile_pool.begin().await?;
+    let (status, action) = lock_update_target(&mut tx, memory_uuid).await?;
+    let state_text = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_content_hash(&patch_args.expected_content_hash, &state)?;
+    let next_state = build_patch_content_next_state(
+        &state,
+        &patch_args.match_content,
+        &patch_args.replace_content,
+    )?;
+    reject_replace_duplicates(&mut tx, memory_uuid, &next_state).await?;
+    write_memory_unit_from_state(&mut tx, memory_uuid, &next_state).await?;
+    let after_state_text = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let after_state = serde_json::from_str::<serde_json::Value>(&after_state_text)?;
+    let action = upsert_update_change(
+        &mut tx,
+        memory_uuid,
+        &status,
+        action.as_deref(),
+        &state,
+        &after_state,
+    )
+    .await?;
+    if status == "active" {
+        crate::psql::mark_memory_graph_dirty(&mut tx).await?;
+    }
+    tx.commit().await?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "state": "success",
+            "tool": "update_memory_patch_content",
+            "data": {
+                "memory_uuid": memory_uuid,
+                "action": action,
+                "result": "pending_review",
+                "updated_fields": ["content"]
+            },
+            "error": null,
+            "profile": context.profile
+        })
+    );
+    Ok(())
 }
 
 async fn update_memory_append(
@@ -589,4 +696,40 @@ fn tool_not_implemented(
     // Why：架构接入后必须显式失败，避免调用方误以为 update 已经完成数据库写入。
     let _ = context.profile;
     Err(format!("{tool} 已接入参数解析，具体实现尚未完成").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_patch_content_next_state;
+
+    fn sample_state(content: &str) -> serde_json::Value {
+        // Why：patch_content 的核心风险在内存快照构造，测试用最小 state 就能覆盖。
+        serde_json::json!({
+            "memory": {
+                "content": content
+            }
+        })
+    }
+
+    // Why：正常片段替换必须保留非目标文本，避免局部更新退化成整字段覆盖。
+    #[test]
+    fn patch_content_replaces_unique_fragment() {
+        let state = sample_state("before old after");
+        let next = build_patch_content_next_state(&state, "old", "new").unwrap();
+        assert_eq!(next["memory"]["content"], "before new after");
+    }
+
+    // Why：找不到片段时继续写库会制造假成功，必须在构造 next_state 阶段拒绝。
+    #[test]
+    fn patch_content_rejects_missing_fragment() {
+        let state = sample_state("before old after");
+        assert!(build_patch_content_next_state(&state, "missing", "new").is_err());
+    }
+
+    // Why：多次匹配无法确定用户意图，不能让后端自行选择第一处修改。
+    #[test]
+    fn patch_content_rejects_duplicate_fragment() {
+        let state = sample_state("old before old after");
+        assert!(build_patch_content_next_state(&state, "old", "new").is_err());
+    }
 }
