@@ -292,6 +292,39 @@ fn validate_append_args(
     }
 }
 
+fn normalize_keyword_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn validate_add_keywords_args(
+    args: &UpdateMemoryKeywordsArgs,
+) -> Result<(&str, &str, Vec<String>), Box<dyn std::error::Error>> {
+    // What：校验 add_keywords 的 memory_uuid、keywords_hash 和待新增关键词集合。
+    // Why：关键词写入有唯一约束，入口先拒绝空值和请求内部重复，避免进入事务后才报库错误。
+    let memory_uuid = validate_required_text("memory_uuid", &args.memory_uuid)?;
+    let expected_hash =
+        validate_required_text("expected_keywords_hash", &args.expected_keywords_hash)?;
+    if args.keywords.is_empty() {
+        return Err("keywords 必须是非空字符串数组".into());
+    }
+    let mut keywords = Vec::new();
+    for keyword in &args.keywords {
+        let keyword_norm = normalize_keyword_text(keyword);
+        if keyword_norm.is_empty() {
+            return Err("keywords 必须是非空字符串数组".into());
+        }
+        if keywords.iter().any(|existing| existing == &keyword_norm) {
+            return Err("keywords 规范化后不能重复".into());
+        }
+        keywords.push(keyword_norm);
+    }
+    Ok((memory_uuid, expected_hash, keywords))
+}
+
 async fn lock_update_target(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
@@ -381,6 +414,43 @@ fn assert_append_hash(
         .ok_or_else(|| format!("{hash_name} 缺失"))?;
     if actual != expected_hash {
         return Err(format!("{hash_name} 不匹配").into());
+    }
+    Ok(())
+}
+
+fn assert_keywords_hash(
+    expected_keywords_hash: &str,
+    state: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：校验锁定后 state 中 keywords 集合的稳定 hash。
+    // Why：关键词增删必须基于最新集合，否则会把并发新增或删除覆盖掉。
+    let hashes = build_memory_hashes(state)?;
+    let actual = hashes["keywords_hash"]
+        .as_str()
+        .ok_or("keywords_hash 缺失")?;
+    if actual != expected_keywords_hash {
+        return Err("keywords_hash 不匹配".into());
+    }
+    Ok(())
+}
+
+fn reject_existing_keywords(
+    state: &serde_json::Value,
+    keywords: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：检查待新增关键词不能已存在于当前 memory state。
+    // Why：add_keywords 是增量新增语义，重复关键词必须明确拒绝而不是静默跳过。
+    let existing = state
+        .get("keywords")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("memory state 缺少 keywords")?;
+    for keyword in keywords {
+        let exists = existing.iter().any(|item| {
+            item.get("keyword_norm").and_then(serde_json::Value::as_str) == Some(keyword.as_str())
+        });
+        if exists {
+            return Err(format!("keyword 已存在: {keyword}").into());
+        }
     }
     Ok(())
 }
@@ -552,6 +622,27 @@ async fn write_memory_unit_from_state(
     )
     .bind(memory_uuid)
     .bind(next_state.to_string())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn insert_added_keywords(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    keywords: &[String],
+) -> Result<(), sqlx::Error> {
+    // What：把已经规范化的新关键词写入 memory_keywords。
+    // Why：add_keywords 只新增增量关键词，不能重建整张关键词集合。
+    sqlx::query(
+        r#"
+        INSERT INTO memory_keywords (uuid, memory_uuid, keyword_norm, weight, created_at)
+        SELECT gen_random_uuid(), $1::uuid, keyword, NULL::int, now()
+        FROM jsonb_array_elements_text($2::jsonb) AS keywords(keyword)
+        "#,
+    )
+    .bind(memory_uuid)
+    .bind(serde_json::json!(keywords).to_string())
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -809,8 +900,50 @@ async fn update_memory_add_keywords(
     // 7. 写入或覆盖 memory_changes。
     // 8. 如果 active 记忆发生变化，标记 graph dirty。
     // 9. 输出 updated_fields = ["keywords"] 和 pending_review 结果。
-    let _args = serde_json::from_value::<UpdateMemoryKeywordsArgs>(args.clone())?;
-    tool_not_implemented(context, "update_memory_add_keywords")
+    let keyword_args = serde_json::from_value::<UpdateMemoryKeywordsArgs>(args.clone())?;
+    let (memory_uuid, expected_hash, keywords) = validate_add_keywords_args(&keyword_args)?;
+    let mut tx = context.profile_pool.begin().await?;
+    let (status, action) = lock_update_target(&mut tx, memory_uuid).await?;
+    let state_text = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_keywords_hash(expected_hash, &state)?;
+    reject_existing_keywords(&state, &keywords)?;
+    insert_added_keywords(&mut tx, memory_uuid, &keywords).await?;
+    let after_state_text = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let after_state = serde_json::from_str::<serde_json::Value>(&after_state_text)?;
+    let action = upsert_update_change(
+        &mut tx,
+        memory_uuid,
+        &status,
+        action.as_deref(),
+        &state,
+        &after_state,
+    )
+    .await?;
+    if status == "active" {
+        crate::psql::mark_memory_graph_dirty(&mut tx).await?;
+    }
+    tx.commit().await?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "state": "success",
+            "tool": "update_memory_add_keywords",
+            "data": {
+                "memory_uuid": memory_uuid,
+                "action": action,
+                "result": "pending_review",
+                "updated_fields": ["keywords"]
+            },
+            "error": null,
+            "profile": context.profile
+        })
+    );
+    Ok(())
 }
 
 async fn update_memory_remove_keywords(
