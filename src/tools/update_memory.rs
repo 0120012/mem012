@@ -257,6 +257,41 @@ fn validate_patch_content_args(
     Ok(memory_uuid)
 }
 
+fn validate_append_args(
+    args: &UpdateMemoryAppendArgs,
+) -> Result<(&str, &'static str, &str, &str), Box<dyn std::error::Error>> {
+    // What：校验 append 请求只选择 content 或 recall_when 其中一个目标。
+    // Why：字段追加依赖对应字段 hash 做版本锁，入口必须先拒绝歧义写入。
+    let memory_uuid = validate_required_text("memory_uuid", &args.memory_uuid)?;
+    match (
+        args.append_content.as_deref(),
+        args.append_recall_when.as_deref(),
+    ) {
+        (Some(text), None) => {
+            validate_required_text("append_content", text)?;
+            let hash = validate_required_text(
+                "expected_content_hash",
+                args.expected_content_hash
+                    .as_deref()
+                    .ok_or("expected_content_hash 缺失")?,
+            )?;
+            Ok((memory_uuid, "content", hash, text))
+        }
+        (None, Some(text)) => {
+            validate_required_text("append_recall_when", text)?;
+            let hash = validate_required_text(
+                "expected_recall_when_hash",
+                args.expected_recall_when_hash
+                    .as_deref()
+                    .ok_or("expected_recall_when_hash 缺失")?,
+            )?;
+            Ok((memory_uuid, "recall_when", hash, text))
+        }
+        (None, None) => Err("必须提供 append_content 或 append_recall_when".into()),
+        (Some(_), Some(_)) => Err("每次只能追加一个字段".into()),
+    }
+}
+
 async fn lock_update_target(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
@@ -327,6 +362,25 @@ fn assert_content_hash(
     let actual = hashes["content_hash"].as_str().ok_or("content_hash 缺失")?;
     if actual != expected_content_hash {
         return Err("content_hash 不匹配".into());
+    }
+    Ok(())
+}
+
+fn assert_append_hash(
+    field: &str,
+    expected_hash: &str,
+    state: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：按 append 目标字段校验锁定后 state 的字段 hash。
+    // Why：append 只修改一个字段，必须拒绝基于过期字段快照的追加请求。
+    let hashes = build_memory_hashes(state)?;
+    let hash_name = format!("{field}_hash");
+    let actual = hashes
+        .get(&hash_name)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{hash_name} 缺失"))?;
+    if actual != expected_hash {
+        return Err(format!("{hash_name} 不匹配").into());
     }
     Ok(())
 }
@@ -414,6 +468,34 @@ fn build_patch_content_next_state(
     memory.insert(
         "content".to_string(),
         serde_json::json!(content.replacen(match_content, replace_content, 1)),
+    );
+    Ok(next_state)
+}
+
+fn build_append_next_state(
+    state: &serde_json::Value,
+    field: &str,
+    append_text: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    // What：在 memory state 中构造追加后的 content 或 recall_when。
+    // Why：append 后续写库和 change 记录必须共享同一份快照，不能分别拼接。
+    let memory = state
+        .get("memory")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("memory state 缺少 memory")?;
+    let current = match memory.get(field) {
+        Some(serde_json::Value::String(text)) => text.as_str(),
+        Some(serde_json::Value::Null) if field == "recall_when" => "",
+        _ => return Err(format!("memory state 字段缺失或不是可追加文本: {field}").into()),
+    };
+    let mut next_state = state.clone();
+    let memory = next_state
+        .get_mut("memory")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("memory state 缺少 memory")?;
+    memory.insert(
+        field.to_string(),
+        serde_json::json!(format!("{current}{append_text}")),
     );
     Ok(next_state)
 }
@@ -666,8 +748,51 @@ async fn update_memory_append(
     // 6. 写回目标字段，并写入或覆盖 memory_changes。
     // 7. 如果 active 记忆发生变化，标记 graph dirty。
     // 8. 输出 updated_fields 和 pending_review 结果。
-    let _args = serde_json::from_value::<UpdateMemoryAppendArgs>(args.clone())?;
-    tool_not_implemented(context, "update_memory_append")
+    let append_args = serde_json::from_value::<UpdateMemoryAppendArgs>(args.clone())?;
+    let (memory_uuid, field, expected_hash, append_text) = validate_append_args(&append_args)?;
+    let mut tx = context.profile_pool.begin().await?;
+    let (status, action) = lock_update_target(&mut tx, memory_uuid).await?;
+    let state_text = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_append_hash(field, expected_hash, &state)?;
+    let next_state = build_append_next_state(&state, field, append_text)?;
+    reject_replace_duplicates(&mut tx, memory_uuid, &next_state).await?;
+    write_memory_unit_from_state(&mut tx, memory_uuid, &next_state).await?;
+    let after_state_text = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let after_state = serde_json::from_str::<serde_json::Value>(&after_state_text)?;
+    let action = upsert_update_change(
+        &mut tx,
+        memory_uuid,
+        &status,
+        action.as_deref(),
+        &state,
+        &after_state,
+    )
+    .await?;
+    if status == "active" {
+        crate::psql::mark_memory_graph_dirty(&mut tx).await?;
+    }
+    tx.commit().await?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "state": "success",
+            "tool": "update_memory_append",
+            "data": {
+                "memory_uuid": memory_uuid,
+                "action": action,
+                "result": "pending_review",
+                "updated_fields": [field]
+            },
+            "error": null,
+            "profile": context.profile
+        })
+    );
+    Ok(())
 }
 
 async fn update_memory_add_keywords(
