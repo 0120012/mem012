@@ -166,59 +166,76 @@ fn validate_required_text<'a>(
 fn validate_replace_args(args: &UpdateMemoryReplaceArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Why：replace 接受多字段组合，入口需要先挡住缺 hash 的不可信写入请求。
     validate_required_text("memory_uuid", &args.memory_uuid)?;
-    let mut updates = 0;
-    let require_hash =
-        |field: &str, hash: Option<&str>| -> Result<(), Box<dyn std::error::Error>> {
-            let name = format!("expected_{field}_hash");
-            validate_required_text(&name, hash.ok_or_else(|| format!("{name} 缺失"))?)?;
-            Ok(())
-        };
-    for (field, value, hash) in [
-        (
+    let updates = [
+        validate_required_replace_field(
             "title",
             args.new_title.as_deref(),
             args.expected_title_hash.as_deref(),
-        ),
-        (
+        )?,
+        validate_required_replace_field(
             "category",
             args.new_category.as_deref(),
             args.expected_category_hash.as_deref(),
-        ),
-        (
+        )?,
+        validate_required_replace_field(
             "content",
             args.new_content.as_deref(),
             args.expected_content_hash.as_deref(),
-        ),
-    ] {
-        if let Some(value) = value {
-            validate_required_text(&format!("new_{field}"), value)?;
-            require_hash(field, hash)?;
-            updates += 1;
-        }
-    }
-    for (field, value, hash) in [
-        (
+        )?,
+        validate_nullable_replace_field(
             "summary",
             &args.new_summary,
             args.expected_summary_hash.as_deref(),
-        ),
-        (
+        )?,
+        validate_nullable_replace_field(
             "recall_when",
             &args.new_recall_when,
             args.expected_recall_when_hash.as_deref(),
-        ),
-    ] {
-        if let Some(value) = value {
-            if let Some(text) = value {
-                validate_required_text(&format!("new_{field}"), text)?;
-            }
-            require_hash(field, hash)?;
-            updates += 1;
-        }
-    }
-    if updates == 0 {
+        )?,
+    ];
+    if !updates.into_iter().any(|updated| updated) {
         return Err("至少需要一个 new_* 字段".into());
     }
+    Ok(())
+}
+
+fn validate_required_replace_field(
+    field: &str,
+    value: Option<&str>,
+    hash: Option<&str>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    // Why：必填型字段不能用 null 表示清空，出现 new_* 时必须同时带字段 hash。
+    let Some(value) = value else {
+        return Ok(false);
+    };
+    validate_required_text(&format!("new_{field}"), value)?;
+    validate_expected_hash(field, hash)?;
+    Ok(true)
+}
+
+fn validate_nullable_replace_field(
+    field: &str,
+    value: &Option<Option<String>>,
+    hash: Option<&str>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    // Why：可空字段允许显式 null，但非 null 文本仍要拒绝空字符串。
+    let Some(value) = value else {
+        return Ok(false);
+    };
+    if let Some(text) = value.as_deref() {
+        validate_required_text(&format!("new_{field}"), text)?;
+    }
+    validate_expected_hash(field, hash)?;
+    Ok(true)
+}
+
+fn validate_expected_hash(
+    field: &str,
+    hash: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Why：字段 hash 是 update 的版本锁，缺失时不能进入事务。
+    let name = format!("expected_{field}_hash");
+    validate_required_text(&name, hash.ok_or_else(|| format!("{name} 缺失"))?)?;
     Ok(())
 }
 
