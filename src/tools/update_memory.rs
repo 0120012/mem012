@@ -325,6 +325,31 @@ fn validate_add_keywords_args(
     Ok((memory_uuid, expected_hash, keywords))
 }
 
+fn validate_remove_keywords_args(
+    args: &UpdateMemoryKeywordsArgs,
+) -> Result<(&str, &str, Vec<String>), Box<dyn std::error::Error>> {
+    // What：校验 remove_keywords 的 memory_uuid、keywords_hash 和待删除关键词集合。
+    // Why：删除请求也必须先规范化并拒绝空值或内部重复，后续才能可靠判断关键词是否存在。
+    let memory_uuid = validate_required_text("memory_uuid", &args.memory_uuid)?;
+    let expected_hash =
+        validate_required_text("expected_keywords_hash", &args.expected_keywords_hash)?;
+    if args.keywords.is_empty() {
+        return Err("keywords 必须是非空字符串数组".into());
+    }
+    let mut keywords = Vec::new();
+    for keyword in &args.keywords {
+        let keyword_norm = normalize_keyword_text(keyword);
+        if keyword_norm.is_empty() {
+            return Err("keywords 必须是非空字符串数组".into());
+        }
+        if keywords.iter().any(|existing| existing == &keyword_norm) {
+            return Err("keywords 规范化后不能重复".into());
+        }
+        keywords.push(keyword_norm);
+    }
+    Ok((memory_uuid, expected_hash, keywords))
+}
+
 async fn lock_update_target(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
@@ -451,6 +476,30 @@ fn reject_existing_keywords(
         if exists {
             return Err(format!("keyword 已存在: {keyword}").into());
         }
+    }
+    Ok(())
+}
+
+fn assert_removable_keywords(
+    state: &serde_json::Value,
+    keywords: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：确认待删除关键词全部存在，并且删除后集合仍非空。
+    // Why：remove_keywords 是精确删除语义，缺失关键词或删空集合都应在写库前失败。
+    let existing = state
+        .get("keywords")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("memory state 缺少 keywords")?;
+    for keyword in keywords {
+        let exists = existing.iter().any(|item| {
+            item.get("keyword_norm").and_then(serde_json::Value::as_str) == Some(keyword.as_str())
+        });
+        if !exists {
+            return Err(format!("keyword 不存在: {keyword}").into());
+        }
+    }
+    if existing.len() == keywords.len() {
+        return Err("keywords 删除后不能为空".into());
     }
     Ok(())
 }
@@ -646,6 +695,49 @@ async fn insert_added_keywords(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+async fn delete_removed_keywords(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    keywords: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：按规范化关键词集合删除 memory_keywords 中的匹配行。
+    // Why：remove_keywords 是精确删除，删除数量必须和已校验的请求数量一致。
+    let result = sqlx::query(
+        r#"
+        DELETE FROM memory_keywords
+        WHERE memory_uuid = $1::uuid
+          AND keyword_norm IN (
+            SELECT keyword
+            FROM jsonb_array_elements_text($2::jsonb) AS keywords(keyword)
+          )
+        "#,
+    )
+    .bind(memory_uuid)
+    .bind(serde_json::json!(keywords).to_string())
+    .execute(&mut **tx)
+    .await?;
+    if result.rows_affected() != keywords.len() as u64 {
+        return Err("keyword 删除数量不匹配".into());
+    }
+    Ok(())
+}
+
+async fn upsert_removed_keywords_change(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    status: &str,
+    action: Option<&str>,
+    before_state: &serde_json::Value,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // What：删除关键词后读取最新 state，并写入或覆盖 memory_changes。
+    // Why：change 记录必须来自删除后的数据库视图，避免手工拼装关键词集合产生偏差。
+    let after_state_text = crate::psql::memory_state(tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let after_state = serde_json::from_str::<serde_json::Value>(&after_state_text)?;
+    upsert_update_change(tx, memory_uuid, status, action, before_state, &after_state).await
 }
 
 async fn upsert_update_change(
@@ -960,17 +1052,40 @@ async fn update_memory_remove_keywords(
     // 7. 构建更新后的 next_state，并写入或覆盖 memory_changes。
     // 8. 如果 active 记忆发生变化，标记 graph dirty。
     // 9. 输出 updated_fields = ["keywords"] 和 pending_review 结果。
-    let _args = serde_json::from_value::<UpdateMemoryKeywordsArgs>(args.clone())?;
-    tool_not_implemented(context, "update_memory_remove_keywords")
-}
-
-fn tool_not_implemented(
-    context: &super::ToolContext<'_>,
-    tool: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Why：架构接入后必须显式失败，避免调用方误以为 update 已经完成数据库写入。
-    let _ = context.profile;
-    Err(format!("{tool} 已接入参数解析，具体实现尚未完成").into())
+    let keyword_args = serde_json::from_value::<UpdateMemoryKeywordsArgs>(args.clone())?;
+    let (memory_uuid, expected_hash, keywords) = validate_remove_keywords_args(&keyword_args)?;
+    let mut tx = context.profile_pool.begin().await?;
+    let (status, action) = lock_update_target(&mut tx, memory_uuid).await?;
+    let state_text = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_keywords_hash(expected_hash, &state)?;
+    assert_removable_keywords(&state, &keywords)?;
+    delete_removed_keywords(&mut tx, memory_uuid, &keywords).await?;
+    let action =
+        upsert_removed_keywords_change(&mut tx, memory_uuid, &status, action.as_deref(), &state)
+            .await?;
+    if status == "active" {
+        crate::psql::mark_memory_graph_dirty(&mut tx).await?;
+    }
+    tx.commit().await?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "state": "success",
+            "tool": "update_memory_remove_keywords",
+            "data": {
+                "memory_uuid": memory_uuid,
+                "action": action,
+                "result": "pending_review",
+                "updated_fields": ["keywords"]
+            },
+            "error": null,
+            "profile": context.profile
+        })
+    );
+    Ok(())
 }
 
 #[cfg(test)]
