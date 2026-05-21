@@ -5,13 +5,6 @@ use sha2::{Digest, Sha256};
 #[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ReadMemoryHashArgs {
-    memory_uuid: String,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct UpdateMemoryReplaceArgs {
     memory_uuid: String,
     expected_title_hash: Option<String>,
@@ -63,7 +56,6 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：同一组 update 工具共享入口，先固定参数外壳，具体数据库动作后续逐个补。
     match tool {
-        "read_memory_hash" => read_memory_hash(context, args).await,
         "update_memory_replace" => update_memory_replace(context, args).await,
         "update_memory_patch_content" => update_memory_patch_content(context, args).await,
         "update_memory_append" => update_memory_append(context, args).await,
@@ -71,51 +63,6 @@ pub async fn run(
         "update_memory_remove_keywords" => update_memory_remove_keywords(context, args).await,
         _ => Err(format!("未知 update 工具: {tool}").into()),
     }
-}
-
-async fn read_memory_hash(
-    context: &super::ToolContext<'_>,
-    args: &serde_json::Value,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Why：hash 读取是所有 update 的前置步骤，先单独固定入口避免更新工具直接信任列表结果。
-    // 1. 解析并校验 memory_uuid 不能为空。
-    // 2. 查询 memory_units，确认目标记忆存在且未进入 trashed。
-    // 3. 查询 memory_keywords，按规范化顺序组装关键词列表。
-    // 4. 构建稳定的 memory state，用于计算 state_hash。
-    // 5. 分别计算 title/content/summary/recall_when/category/keywords hash。
-    // 6. 输出 title_norm 和 data.hash，供后续 update 工具原样携带。
-    let read_args = serde_json::from_value::<ReadMemoryHashArgs>(args.clone())?;
-    let memory_uuid = validate_required_text("memory_uuid", &read_args.memory_uuid)?;
-    let mut tx = context.profile_pool.begin().await?;
-    let state_text = crate::psql::memory_state(&mut tx, memory_uuid)
-        .await
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-    tx.commit().await?;
-    let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
-    let memory = state
-        .get("memory")
-        .and_then(serde_json::Value::as_object)
-        .ok_or("memory state 缺少 memory")?;
-    let status = read_memory_text(memory, "status")?;
-    if status == "trashed" {
-        return Err("read_memory_hash 不支持 trashed memory".into());
-    }
-
-    println!(
-        "{}",
-        serde_json::json!({
-            "state": "success",
-            "tool": "read_memory_hash",
-            "data": {
-                "memory_uuid": memory_uuid,
-                "title_norm": read_memory_text(memory, "title_norm")?,
-                "hash": build_memory_hashes(&state)?,
-            },
-            "error": null,
-            "profile": context.profile
-        })
-    );
-    Ok(())
 }
 
 fn build_memory_hashes(

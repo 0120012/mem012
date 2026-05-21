@@ -1,45 +1,28 @@
-# update_memory 计划
+# read_memory 计划
 
 ## Context conclusions
 
-- `read_memory_hash` 已完成，返回字段 hash，hash 格式为 `0x...`。
-- `update_memory_replace` 已接入 Rust CLI，负责整字段替换。
-- `update_memory_patch_content` 已接入 Rust CLI，负责 content 唯一片段替换。
-- `update_memory_append`、keywords 增删仍未实现。
-- 一次请求可以传多个 `new_*` 字段；后端按固定顺序应用。
-- 每个 `new_*` 字段必须携带对应的 `expected_*_hash`。
-- 本轮不强制 `expected_state_hash`，避免扩大 CLI 协议；并发保护先按字段 hash 做。
-- `memory_units` 是当前工作态，更新必须先落到 `memory_units`。
-- `memory_changes` 是待用户二次确认记录；同一 `memory_uuid` 最多一条。
-- `pending + create`：保留 `action = create`，只覆盖 `after_state`，不标记 graph dirty。
-- `active + 无 change`：保存当前 state 为 `before_state`，插入 `action = update`。
-- `active + update/restore`：保留原 `before_state` 和原 `action`，只覆盖 `after_state`。
-- `delete` 或 `trashed` 状态拒绝更新。
-- 写回 `memory_units` 使用 `next_state` 的静态 SQL，不做动态字段 SQL。
-- `summary`、`recall_when` 允许用 `null` 清空；空字符串拒绝。
-- `title` 写入前必须走数据库 `normalize_title`。
-- 更新后必须执行重复检测，避免 title/content/summary 撞到其它 pending/active 记忆。
+- 当前 CLI 已有 `create_memory`、`delete_memory`、`read_memory_hash` 和 `update_memory_*` 工具，但没有 `read_memory`。
+- `read_memory_hash` 位于 `src/tools/update_memory.rs`，通过 `crate::psql::memory_state` 读取同一份稳定快照，只返回标题和字段 hash。
+- `crate::psql::memory_state` 已能返回完整当前工作态：`memory`、`keywords`、`relations`。
+- `memory.summary` 和 `memory.recall_when` 可以是 `null`，读取工具必须原样返回，不能转成空字符串。
+- `memory.status = trashed` 目前被 `read_memory_hash` 拒绝；`read_memory` 默认沿用这个边界，避免把已删除记忆当成可读工作态。
+- `read_memory` 是只读工具，不应写入 `memory_units`、`memory_keywords`、`memory_changes`，不应标记 graph dirty，也不应处理 embedding。
+- 工具输出应沿用现有 envelope：`state`、`tool`、`data`、`error`、`profile`。
+- 当前工作区已有未提交的 `docs/cli/skill.md` 修改；开发 `read_memory` 时必须避开或单独提交，不能混进代码提交。
 
 ## Failure points
 
-- 不能覆盖已有 `before_state`，否则用户拒绝时无法回到最早状态。
-- 不能让 pending create 标记 graph dirty，因为 pending 不进入正式图谱。
-- 不能在 hash 不匹配时写入任何表。
-- 不能在没有实际变化时制造 `memory_changes`。
-- 不能只改 `memory_units` 而不更新 `memory_changes.after_state`。
-- 不能把 `new_title` 原文直接写入 `title_norm`。
+- 不能手工拼多个表的局部字段，避免和 `memory_state` 的快照结构分叉。
+- 不能在读取时修改 `memory_changes`，否则只读工具会影响 approve/reject 流程。
+- 不能吞掉 `null` 字段，否则调用方无法区分“未设置”和“空文本”。
+- 不能让未知参数静默通过，Public CLI 入参必须继续 `deny_unknown_fields`。
+- 不能把不存在的 `memory_uuid` 包装成成功空对象，必须返回明确错误。
 
 ## Checklist
 
-- [x] 调整 `UpdateMemoryReplaceArgs`，让 `summary` 支持显式 `null`。
-- [x] 提取 `validate_replace_args`，只校验 `memory_uuid`、字段配对、空字符串和至少一个更新字段。
-- [x] 提取 `lock_replace_target`，在事务内锁定 `memory_units` 和可选 `memory_changes`，并拒绝 `trashed/delete`。
-- [x] 提取 `assert_replace_hashes`，用当前 state 校验每个被修改字段的 `expected_*_hash`。
-- [x] 移除 `read_memory_hash` 响应中的 `status`，状态只在后端内部判断。
-- [x] 提取 `build_replace_next_state`，在内存中应用 `new_*`，并返回实际变化的 `updated_fields`。
-- [x] 提取 `reject_replace_duplicates`，排除自身后检查 title/content/summary 是否重复。
-- [x] 提取 `write_memory_unit_from_state`，用静态 SQL 从 `next_state` 写回 `memory_units`。
-- [x] 提取 `upsert_update_change`，按 pending/create、active/new、active/existing 三类写入或覆盖 `memory_changes`。
-- [x] 接入 `update_memory_replace` 写库路径但保持回滚，避免提交后仍返回未实现错误。
-- [x] 提交事务并返回成功响应，返回 `action`、`result = pending_review`、`updated_fields`。
-- [x] 运行 `cargo check -q`。
+- [x] 将 `read_memory_hash` 从 `update_memory` 模块移动到独立 `read_memory` 模块，保持现有响应不变；验证 `cargo fmt --check` 和 `cargo check`。
+- [x] 接入 `read_memory` 的 CLI 路由和参数结构，只做 `memory_uuid` 入参校验并保持最小可编译切片；验证 `cargo fmt --check` 和 `cargo check`。
+- [x] 实现 `read_memory` 读取路径：复用 `memory_state`，拒绝不存在或 `trashed` 记忆，返回完整 `memory`、`keywords`、`relations`；验证 `cargo fmt --check` 和 `cargo check`。
+- [ ] 用一条已存在或新建记忆执行 CLI smoke：`create_memory` 后调用 `read_memory`，确认返回 `memory_uuid`、正文、摘要、召回条件和关键词；失败时只修正本工具范围。
+- [x] 增加 `read_memory` 的文档示例，说明用途、调用命令和验证成功方式；验证 `git diff --check`。
