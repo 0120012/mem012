@@ -6,6 +6,8 @@ use serde::Deserialize;
 pub struct Config {
     database: BTreeMap<String, String>,
     search: SearchConfig,
+    #[serde(default)]
+    rerank: RerankConfig,
     embeddings: EmbeddingsConfig,
     #[serde(default)]
     debug: DebugConfig,
@@ -21,6 +23,14 @@ struct SearchConfig {
     semantic: i32,
     graph: i32,
     stale_penalty: i32,
+}
+
+#[derive(Default, Deserialize)]
+struct RerankConfig {
+    enabled: bool,
+    rerank_api: Option<String>,
+    rerank_model: Option<String>,
+    rerank_key: Option<String>,
 }
 
 pub struct EmbeddingSettings {
@@ -78,7 +88,10 @@ impl Config {
         // Why：embedding 是派生索引能力，配置为空时应跳过生成而不是阻塞主流程。
         let api = self.embeddings.embeddings_api.trim();
         let key = self.embeddings.embeddings_key.trim();
-        if api.is_empty() || key.is_empty() {
+        if api.is_empty() {
+            return None;
+        }
+        if api != "local" && key.is_empty() {
             return None;
         }
         Some(EmbeddingSettings {

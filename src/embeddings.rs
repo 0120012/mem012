@@ -54,15 +54,16 @@ async fn request_embedding(
     input: &str,
 ) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
     // Why：远程模型必须返回 1024 维，和 pgvector 表结构保持硬一致。
-    let response: EmbeddingResponse = reqwest::Client::new()
-        .post(embedding_endpoint(&settings.api))
-        .bearer_auth(&settings.key)
-        .json(&serde_json::json!({ "model": settings.model, "input": input }))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let endpoint = embedding_endpoint(&settings.api)?;
+    let request = reqwest::Client::new()
+        .post(endpoint)
+        .json(&serde_json::json!({ "model": settings.model, "input": input }));
+    let request = if settings.key.trim().is_empty() {
+        request
+    } else {
+        request.bearer_auth(&settings.key)
+    };
+    let response: EmbeddingResponse = request.send().await?.error_for_status()?.json().await?;
     let embedding = response
         .data
         .into_iter()
@@ -109,12 +110,15 @@ async fn upsert_embedding(
     Ok(())
 }
 
-fn embedding_endpoint(api: &str) -> String {
+fn embedding_endpoint(api: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     // Why：配置可以写 base URL 或完整 endpoint，部署时不必因为路径形式改代码。
     let api = api.trim_end_matches('/');
+    if api == "local" {
+        return Err("local embedding executor 尚未接入".into());
+    }
     if api.ends_with("/embeddings") {
-        api.to_string()
+        Ok(api.to_string())
     } else {
-        format!("{api}/embeddings")
+        Ok(format!("{api}/embeddings"))
     }
 }
