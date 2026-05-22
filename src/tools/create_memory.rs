@@ -18,7 +18,7 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：create_memory 独立成文件，后续字段校验和写入 memory_changes 不污染工具路由层。
     let create_args = serde_json::from_value::<CreateMemoryArgs>(args.clone())?;
-    validate_create_memory_args(&create_args)?;
+    validate_create_memory_args(&create_args, context.profile)?;
     let title_norm: String = sqlx::query_scalar("SELECT normalize_title($1)")
         .bind(&create_args.title)
         .fetch_one(context.profile_pool)
@@ -28,7 +28,7 @@ pub async fn run(
         .await?;
 
     // state
-    let after_state = build_after_state(&create_args, &title_norm, &memory_uuid)?;
+    let after_state = build_after_state(&create_args, &title_norm, &memory_uuid, context.profile)?;
     reject_duplicate_memory(context.profile_pool, &after_state).await?;
 
     // database writes
@@ -54,6 +54,7 @@ fn build_after_state(
     args: &CreateMemoryArgs,
     title_norm: &str,
     memory_uuid: &str,
+    profile: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     // Why：after_state 是当前工作态快照，二次确认和回滚都必须基于同一份完整状态。
     let normalize_text = |value: &str| {
@@ -63,11 +64,14 @@ fn build_after_state(
             .join(" ")
             .to_lowercase()
     };
-    let category = args
-        .category
-        .as_deref()
-        .map(normalize_text)
-        .unwrap_or_else(|| "core".to_string());
+    let category = if profile == "share" {
+        "share".to_string()
+    } else {
+        args.category
+            .as_deref()
+            .map(normalize_text)
+            .unwrap_or_else(|| "core".to_string())
+    };
     let keywords = args
         .keywords
         .iter()
@@ -242,7 +246,10 @@ async fn insert_memory_relations(
     Ok(())
 }
 
-fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn std::error::Error>> {
+fn validate_create_memory_args(
+    args: &CreateMemoryArgs,
+    profile: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Why：serde 只保证类型正确，业务入口还必须拒绝空值和会破坏分类边界的参数。
     for (name, value) in [("title", &args.title), ("content", &args.content)] {
         if value.trim().is_empty() {
@@ -250,17 +257,7 @@ fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn st
         }
     }
 
-    let category = args.category.as_deref().unwrap_or("core");
-    let category_slug = category
-        .as_bytes()
-        .first()
-        .is_some_and(u8::is_ascii_lowercase)
-        && category
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
-    if category == "share" || !category_slug {
-        return Err("category 必须是非 share 的 slug".into());
-    }
+    validate_create_category(args.category.as_deref(), profile)?;
 
     if args.keywords.is_empty() || args.keywords.iter().any(|item| item.trim().is_empty()) {
         return Err("keywords 必须是非空字符串数组".into());
@@ -283,6 +280,35 @@ fn validate_create_memory_args(args: &CreateMemoryArgs) -> Result<(), Box<dyn st
         .is_some_and(|text| text.trim().is_empty())
     {
         return Err("recall_when 不能是空字符串".into());
+    }
+
+    Ok(())
+}
+
+fn validate_create_category(
+    category: Option<&str>,
+    profile: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：校验 create_memory 的 category 与目标 profile 是否一致。
+    // Why：数据库路由只由 --profile 决定，category 只能表达目标库允许的分类值。
+    if profile == "share" {
+        return match category {
+            Some("share") => Ok(()),
+            Some(_) => Err("profile share 的 category 只能是 share".into()),
+            None => Err("profile share must have category share".into()),
+        };
+    }
+
+    let category = category.unwrap_or("core");
+    let category_slug = category
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_lowercase)
+        && category
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    if category == "share" || !category_slug {
+        return Err("category 必须是非 share 的 slug".into());
     }
 
     Ok(())
