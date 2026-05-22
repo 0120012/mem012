@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { api, type GraphStatus, type GraphOverviewRelation, type NeighborMemory, type NeighborRelation, type SuggestedRelation, RELATION_TYPES } from "@/api/client"
 import { useAuth } from "@/auth/AuthProvider"
 import { Badge } from "@/components/ui/badge"
@@ -89,6 +89,7 @@ export function GraphPage() {
   const [status, setStatus] = useState<GraphStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [rebuilding, setRebuilding] = useState(false)
+  const autoRebuildAttemptedRef = useRef(false)
 
   const [searchUuid, setSearchUuid] = useState("")
   const [center, setCenter] = useState<{ uuid: string; title: string; category: string } | null>(null)
@@ -125,7 +126,7 @@ export function GraphPage() {
 
   // ---- Fetch Status ----
   const fetchStatus = useCallback(async () => {
-    try { setStatus(await api.graph.status()) } catch {}
+    try { setStatus(await api.graph.status()) } catch { setStatus(null) }
     setStatusLoading(false)
   }, [])
 
@@ -149,7 +150,13 @@ export function GraphPage() {
     setLoading(false)
   }, [setNodes, setEdges])
 
-  useEffect(() => { fetchStatus(); loadOverview() }, [activeProject, fetchStatus, loadOverview])
+  useEffect(() => {
+    autoRebuildAttemptedRef.current = false
+    void Promise.resolve().then(async () => {
+      await fetchStatus()
+      await loadOverview()
+    })
+  }, [activeProject, fetchStatus, loadOverview])
 
   // ---- Load Memory ----
   const loadMemory = useCallback(async (uuid: string) => {
@@ -171,6 +178,29 @@ export function GraphPage() {
     }
     setLoading(false)
   }, [setNodes, setEdges])
+
+  const rebuildGraph = useCallback(async () => {
+    setRebuilding(true)
+    try {
+      await api.graph.rebuild()
+      await fetchStatus()
+      if (center) await loadMemory(center.uuid)
+      else await loadOverview()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "重建失败")
+    }
+    setRebuilding(false)
+  }, [center, fetchStatus, loadMemory, loadOverview])
+
+  useEffect(() => {
+    if (status && !status.dirty) autoRebuildAttemptedRef.current = false
+  }, [status])
+
+  useEffect(() => {
+    if (!status?.dirty || rebuilding || autoRebuildAttemptedRef.current) return
+    autoRebuildAttemptedRef.current = true
+    void rebuildGraph()
+  }, [rebuildGraph, rebuilding, status?.dirty])
 
   // ---- Node/Edge clicks ----
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
@@ -249,7 +279,7 @@ export function GraphPage() {
   const loadSuggestions = async () => {
     if (!center) return
     setSuggestLoading(true)
-    try { setSuggestions(await api.graph.suggest(center.uuid) || []) } catch {}
+    try { setSuggestions(await api.graph.suggest(center.uuid) || []) } catch { setSuggestions([]) }
     setSuggestLoading(false)
     setShowSuggest(true)
   }
@@ -276,7 +306,7 @@ export function GraphPage() {
             <span className="text-muted-foreground">{status.relation_count} relations</span>
             <span className="text-muted-foreground hidden sm:inline">{new Date(status.updated_at).toLocaleString("zh-CN")}</span>
             {status.dirty && (
-              <Button size="sm" className="h-6 text-xs" disabled={rebuilding} onClick={async () => { setRebuilding(true); try { await api.graph.rebuild(); await fetchStatus(); await loadOverview() } catch {}; setRebuilding(false) }}>
+              <Button size="sm" className="h-6 text-xs" disabled={rebuilding} onClick={rebuildGraph}>
                 <RefreshCw className={cn("h-3 w-3 mr-1", rebuilding && "animate-spin")} />Rebuild
               </Button>
             )}
