@@ -22,7 +22,14 @@ pub async fn refresh_memory_embedding(
         .await?;
     let input = fetch_embedding_input(&pool, memory_uuid).await?;
     let embedding = request_embedding(&settings, &input).await?;
-    upsert_embedding(&pool, memory_uuid, &settings.model, &embedding).await?;
+    upsert_embedding(
+        &pool,
+        memory_uuid,
+        &settings.model,
+        settings.dimension as i32,
+        &embedding,
+    )
+    .await?;
     Ok(())
 }
 
@@ -53,7 +60,7 @@ async fn request_embedding(
     settings: &crate::config::EmbeddingSettings,
     input: &str,
 ) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
-    // Why：远程模型必须返回 1024 维，和 pgvector 表结构保持硬一致。
+    // Why：远程模型必须返回配置维度，和 pgvector 表结构保持硬一致。
     let endpoint = embedding_endpoint(&settings.api)?;
     let request = reqwest::Client::new()
         .post(endpoint)
@@ -70,7 +77,7 @@ async fn request_embedding(
         .next()
         .ok_or("embedding 响应为空")?
         .embedding;
-    if embedding.len() != 1024 {
+    if embedding.len() != settings.dimension {
         return Err(format!("embedding 维度错误: {}", embedding.len()).into());
     }
     Ok(embedding)
@@ -80,6 +87,7 @@ async fn upsert_embedding(
     pool: &sqlx::Pool<sqlx::Postgres>,
     memory_uuid: &str,
     model: &str,
+    dimension: i32,
     embedding: &[f32],
 ) -> Result<(), sqlx::Error> {
     // Why：embedding 可重建，重复生成时直接覆盖同一条派生索引。
@@ -94,7 +102,7 @@ async fn upsert_embedding(
     sqlx::query(
         r#"
         INSERT INTO memory_embeddings (memory_uuid, embedding, embedding_model, embedding_dimension, embedded_at)
-        VALUES ($1::uuid, $2::vector, $3, 1024, now())
+        VALUES ($1::uuid, $2::vector, $3, $4, now())
         ON CONFLICT (memory_uuid)
         DO UPDATE SET embedding = EXCLUDED.embedding,
             embedding_model = EXCLUDED.embedding_model,
@@ -105,6 +113,7 @@ async fn upsert_embedding(
     .bind(memory_uuid)
     .bind(vector)
     .bind(model)
+    .bind(dimension)
     .execute(pool)
     .await?;
     Ok(())

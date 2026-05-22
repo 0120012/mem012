@@ -25,6 +25,7 @@ rerank_key = "" # rerank_api = local 时可为空。
 # local 表示本地 embedding；否则填写 embedding API URL。
 embeddings_api = "local"
 embeddings_model = "BAAI/bge-m3"
+embeddings_dimension = 1024
 embeddings_key = "" # embeddings_api = local 时可为空。
 
 [debug]

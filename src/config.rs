@@ -37,6 +37,7 @@ pub struct EmbeddingSettings {
     pub api: String,
     pub key: String,
     pub model: String,
+    pub dimension: usize,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +45,7 @@ struct EmbeddingsConfig {
     embeddings_api: String,
     embeddings_key: String,
     embeddings_model: Option<String>,
+    embeddings_dimension: Option<usize>,
 }
 
 #[derive(Default, Deserialize)]
@@ -103,6 +105,7 @@ impl Config {
                 .as_deref()
                 .unwrap_or("BAAI/bge-m3")
                 .to_string(),
+            dimension: self.embeddings.embeddings_dimension.unwrap_or(1024),
         })
     }
 }
