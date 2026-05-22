@@ -110,10 +110,10 @@ fn auth_response(
     )
 }
 
-// Why：cookie 属性集中生成，避免登录成功路径散落浏览器安全策略细节。
+// Why：当前服务没有 TLS 终止信息，强制 Secure 会让 HTTP/VPS 登录后浏览器丢弃 session。
 fn session_headers(secret: &str) -> HeaderMap {
     let cookie = format!(
-        "{SESSION_COOKIE}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800",
+        "{SESSION_COOKIE}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800",
         session_token(secret)
     );
     let mut headers = HeaderMap::new();
