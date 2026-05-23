@@ -247,7 +247,7 @@ BAAI/bge-reranker-v2-m3    = 开源权重备选，输入倍率 5x，补全倍率
 ```text
 1. 从 memory_search_index 读取候选搜索文本。
 2. 使用 pg_trgm 对 query 和 terms 做字面召回。
-3. status 固定排除 trashed。
+3. status 固定排除 trashed，pending 和 active 都可返回。
 4. filters 控制 query 和 terms 参与匹配的字段范围。
 5. terms.all / terms.none / terms.any 作为硬过滤。
 6. 字面召回结果为 0 时，才允许 embedding fallback。
@@ -272,6 +272,21 @@ pgvector = memory_embeddings.embedding
 ```
 
 当前不开放 `category` 作为 filter；如果后续要让 `category` 参与召回，只能作为搜索面，不作为硬过滤。
+
+字段规则：
+
+```text
+filters = [] = title / summary / keywords / content / recall_when
+category     = 不进入 filters = []，也不参与 matched_fields
+```
+
+返回规则：
+
+```text
+matched_fields = 由实际命中的字段文本二次判断生成
+all_text       = 只用于搜索，不作为 matched_fields 返回
+preview        = 只在 content 命中时返回，最长 120 字
+```
 
 ## 9. 成功响应
 
@@ -308,7 +323,7 @@ pgvector = memory_embeddings.embedding
 - `strategy.rerank = true` 表示本次结果已由 rerank 重排。
 - `score` 只在 `strategy.rerank = true` 时返回，用于说明 rerank 排序分。
 - `matched_fields` 只说明单条候选的命中来源，不能替代 `read_memory`。
-- `preview` 是命中上下文短文本，最多 120 字，不能返回完整 `content`。
+- `preview` 只在 content 命中时返回，是命中上下文短文本，最多 120 字，不能返回完整 `content`。
 - `summary` 可以是 `null`。
 
 ## 10. Agent 使用规则

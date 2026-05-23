@@ -203,9 +203,12 @@ all_text         = title / summary / keywords / content / recall_when 拼接
 
 - `memory_search_index` 只能由内部刷新函数写入，Agent 和工具不能直接编辑。
 - `memory_search_index` 保存当前工作态，不保存 `memory_changes.before_state` 或历史状态。
-- `filters = []` 时查询 `all_text`。
+- `pending` 和 `active` 都可以被 `search_memory` 搜到。
+- `filters = []` 时查询 `all_text`，字段范围是 title / summary / keywords / content / recall_when。
 - `filters` 非空时只查询对应字段文本。
 - `terms.all`、`terms.none`、`terms.any` 都必须在同一字段范围内判断。
+- `matched_fields` 必须由实际命中的字段文本二次判断生成，不能把 `all_text` 作为返回字段。
+- `preview` 只用于 content 命中时的短上下文，最长 120 字。
 - 搜索时永远排除 `status = trashed`；表内可以保留 trashed 行，便于 reject/restore 后重建。
 - `category` 当前不进入 `all_text`，也不作为搜索硬过滤开放。
 

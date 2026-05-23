@@ -4,7 +4,7 @@
 
 更新记忆对 Agent 暴露 1 个读取工具和 5 个更新工具；后端内部必须走同一个更新事务。
 
-当前状态：`read_memory_hash`、`update_memory_replace` 和 `update_memory_patch_content` 已接入 Rust CLI。
+当前状态：`read_memory_hash`、`update_memory_replace`、`update_memory_patch_content`、`update_memory_append`、`update_memory_add_keywords` 和 `update_memory_remove_keywords` 已接入 Rust CLI。
 
 ```text
 read_memory_hash        = 更新前读取目标身份和字段 hash

@@ -2,14 +2,21 @@
 
 ## 1. 定位
 
-CLI Memory 当前保留两个写入工具：
+CLI Memory 当前保留的 Rust CLI 工具有：
 
 ```text
 create_memory
 delete_memory
+read_memory
+read_memory_hash
+update_memory_replace
+update_memory_patch_content
+update_memory_append
+update_memory_add_keywords
+update_memory_remove_keywords
 ```
 
-CLI 的职责是让 Agent 或人类用一次性 JSON 请求创建或删除记忆。读取、审核、项目选择和图谱展示不走 CLI，交给 HTTP API。
+CLI 的职责是让 Agent 或人类用一次性 JSON 请求创建、删除、读取和更新记忆。搜索、审核、项目选择和图谱展示不走 CLI，交给 HTTP API。
 
 Why：CLI 先保持最小可执行面，避免 Rust 到 C++ 迁移前同时维护多套调用入口。
 
@@ -50,10 +57,10 @@ mem012 --profile riko --args {"tool":"create_memory","params":{}}
 
 顶层规则：
 
-- 只允许 `tool` 和 `args`。
+- 只允许 `tool` 和 `params`。
 - `tool` 必须是字符串。
-- `args` 必须是 object。
-- 当前合法 `tool` 是 `create_memory` 或 `delete_memory`。
+- `params` 必须是 object。
+- 当前合法 `tool` 是 `create_memory`、`delete_memory`、`read_memory`、`read_memory_hash`、`update_memory_replace`、`update_memory_patch_content`、`update_memory_append`、`update_memory_add_keywords` 或 `update_memory_remove_keywords`。
 
 ## 4. 响应
 
@@ -190,9 +197,7 @@ mem012 --profile riko --args {"tool":"create_memory","params":{}}
 
 CLI Memory 不提供：
 
-- memory 查询
 - memory 搜索
-- memory 更新
 - change approve / reject
 - graph status
 - graph rebuild
