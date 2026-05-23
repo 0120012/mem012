@@ -13,14 +13,14 @@ export MEM012_NEW_PASSWORD='你的密码'
 ## 2. 创建用户
 
 ```bash
-docker exec -it mem012-postgres psql -U uutest -d TESTD \
+docker exec -it mem012-postgres psql -U uutest -d postgres \
   -c "CREATE USER ${MEM012_NEW_USER} WITH PASSWORD '${MEM012_NEW_PASSWORD}';"
 ```
 
 ## 3. 创建数据库
 
 ```bash
-docker exec -it mem012-postgres psql -U uutest -d TESTD \
+docker exec -it mem012-postgres psql -U uutest -d postgres \
   -c "CREATE DATABASE ${MEM012_NEW_DB} OWNER ${MEM012_NEW_USER};"
 ```
 

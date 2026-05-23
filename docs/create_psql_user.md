@@ -29,7 +29,7 @@ export MEM012_PSQL_USER_PASSWORD='你的业务账号密码'
 docker ps --format '{{.Names}}' | grep '^mem012-postgres$'
 ```
 
-以下命令默认使用管理账号 `uutest`，管理库为 `"TESTD"`。
+以下命令默认使用管理账号 `uutest`，管理库为 `postgres`。
 
 ## 3. 创建或更新账号
 
@@ -38,7 +38,7 @@ docker exec -i mem012-postgres psql \
   -v ON_ERROR_STOP=1 \
   -v user_password="$MEM012_PSQL_USER_PASSWORD" \
   -U uutest \
-  -d TESTD <<'SQL'
+  -d postgres <<'SQL'
 SELECT format(
   'CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
   role_name
@@ -65,7 +65,7 @@ SQL
 ## 4. 创建缺失数据库
 
 ```bash
-docker exec -i mem012-postgres psql -v ON_ERROR_STOP=1 -U uutest -d TESTD <<'SQL'
+docker exec -i mem012-postgres psql -v ON_ERROR_STOP=1 -U uutest -d postgres <<'SQL'
 SELECT format('CREATE DATABASE %I OWNER uutest', db_name)
 FROM (VALUES
   ('mem_riko'),
@@ -89,7 +89,7 @@ SQL
 ## 5. 收紧数据库连接权限
 
 ```bash
-docker exec -i mem012-postgres psql -v ON_ERROR_STOP=1 -U uutest -d TESTD <<'SQL'
+docker exec -i mem012-postgres psql -v ON_ERROR_STOP=1 -U uutest -d postgres <<'SQL'
 SELECT format('REVOKE ALL PRIVILEGES ON DATABASE %I FROM PUBLIC', datname)
 FROM pg_database
 WHERE datallowconn AND NOT datistemplate\gexec
@@ -110,7 +110,7 @@ SQL
 ## 6. 配置私有库权限
 
 ```bash
-docker exec -i mem012-postgres psql -v ON_ERROR_STOP=1 -U uutest -d TESTD <<'SQL'
+docker exec -i mem012-postgres psql -v ON_ERROR_STOP=1 -U uutest -d postgres <<'SQL'
 \connect mem_riko
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -273,10 +273,10 @@ SQL
 ## 8. 验证角色权限
 
 ```bash
-docker exec mem012-postgres psql -U uutest -d TESTD -Atc \
+docker exec mem012-postgres psql -U uutest -d postgres -Atc \
   "select rolname, rolsuper, rolcreatedb, rolcreaterole, rolreplication from pg_roles where rolname in ('riko','herm','doge','share','hakimi','claw') order by rolname;"
 
-docker exec mem012-postgres psql -U uutest -d TESTD -Atc \
+docker exec mem012-postgres psql -U uutest -d postgres -Atc \
   "select member::regrole || '->' || roleid::regrole from pg_auth_members where member in ('riko'::regrole,'herm'::regrole,'doge'::regrole,'share'::regrole,'hakimi'::regrole,'claw'::regrole);"
 ```
 
@@ -298,17 +298,17 @@ docker exec -e PGPASSWORD="$MEM012_PSQL_USER_PASSWORD" mem012-postgres psql -h 1
 ```bash
 docker exec -e PGPASSWORD="$MEM012_PSQL_USER_PASSWORD" mem012-postgres sh -lc '
 for spec in \
-  riko:mem_herm riko:mem_doge riko:mem_share riko:TESTD riko:postgres \
+  riko:mem_herm riko:mem_doge riko:mem_share riko:postgres \
   riko:mem_hakimi riko:mem_claw \
-  herm:mem_riko herm:mem_doge herm:mem_share herm:TESTD herm:postgres \
+  herm:mem_riko herm:mem_doge herm:mem_share herm:postgres \
   herm:mem_hakimi herm:mem_claw \
-  doge:mem_riko doge:mem_herm doge:mem_share doge:TESTD doge:postgres \
+  doge:mem_riko doge:mem_herm doge:mem_share doge:postgres \
   doge:mem_hakimi doge:mem_claw \
-  share:mem_riko share:mem_herm share:mem_doge share:TESTD share:postgres \
+  share:mem_riko share:mem_herm share:mem_doge share:postgres \
   share:mem_hakimi share:mem_claw \
-  hakimi:mem_riko hakimi:mem_herm hakimi:mem_doge hakimi:mem_share hakimi:TESTD hakimi:postgres \
+  hakimi:mem_riko hakimi:mem_herm hakimi:mem_doge hakimi:mem_share hakimi:postgres \
   hakimi:mem_claw \
-  claw:mem_riko claw:mem_herm claw:mem_doge claw:mem_share claw:TESTD claw:postgres \
+  claw:mem_riko claw:mem_herm claw:mem_doge claw:mem_share claw:postgres \
   claw:mem_hakimi
 do
   user=${spec%%:*}
