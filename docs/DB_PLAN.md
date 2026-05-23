@@ -171,6 +171,58 @@ weight is null or weight between 0 and 100
 - `weight` 可空；为空表示后端使用默认权重。
 - 写入前和查询前都必须 normalize。
 
+### memory_search_index
+
+`search_memory` 专用派生搜索投影表。它不是事实来源，只从当前工作态的 `memory_units` 和 `memory_keywords` 重建。
+
+```text
+memory_uuid uuid primary key references memory_units(uuid) on delete cascade
+status text not null
+title_text text not null default ''
+summary_text text not null default ''
+keywords_text text not null default ''
+content_text text not null default ''
+recall_when_text text not null default ''
+all_text text not null default ''
+indexed_at timestamptz not null
+```
+
+字段来源：
+
+```text
+status           = memory_units.status
+title_text       = memory_units.title_norm
+summary_text     = memory_units.summary
+keywords_text    = memory_keywords.keyword_norm 聚合
+content_text     = memory_units.content
+recall_when_text = memory_units.recall_when
+all_text         = title / summary / keywords / content / recall_when 拼接
+```
+
+规则：
+
+- `memory_search_index` 只能由内部刷新函数写入，Agent 和工具不能直接编辑。
+- `memory_search_index` 保存当前工作态，不保存 `memory_changes.before_state` 或历史状态。
+- `filters = []` 时查询 `all_text`。
+- `filters` 非空时只查询对应字段文本。
+- `terms.all`、`terms.none`、`terms.any` 都必须在同一字段范围内判断。
+- 搜索时永远排除 `status = trashed`；表内可以保留 trashed 行，便于 reject/restore 后重建。
+- `category` 当前不进入 `all_text`，也不作为搜索硬过滤开放。
+
+刷新规则：
+
+```text
+create_memory 写入 pending 工作态后刷新
+update_memory_* 写回 memory_units / memory_keywords 后刷新
+delete_memory 标记 trashed 后刷新
+restore 写回 active 后刷新
+approve create 把 pending 改 active 后刷新
+approve delete 硬删除 memory_units，依靠外键级联清理
+approve update / restore 不改变工作态，不需要刷新
+reject create 硬删除 memory_units，依靠外键级联清理
+reject update / delete / restore 恢复 before_state 后刷新
+```
+
 ### normalize 规则
 
 第一版只做保守规范化，不做拼音、同义词、翻译或中文分词。
@@ -234,6 +286,7 @@ unique(memory_uuid)
 - 同一 memory 同时最多一条 change；不建 batch 表。
 - create 会同时写入 `memory_units(status = pending)`、派生索引和 `memory_changes`；`before_state` 为空，`after_state` 是待批准工作态。
 - update / delete / restore 会先修改当前工作态；如果没有 open change，先保存 `before_state`；如果已有 open change，只覆盖 `after_state` 和 `updated_at`。
+- 工作态写入或回滚后必须刷新 `memory_search_index`；embedding 仍按 approve 后刷新规则处理。
 - state 以 JSON 保存完整工作态快照，结构固定为 memory、keywords、relations。
 - 创建或更新时，重复检测以 `memory_units` 等当前工作态表和正式唯一约束为准；`memory_changes.after_state` 不承担唯一约束。
 - 用户确认 create 时把 `memory_units.status` 改为 `active`，删除对应 `memory_changes`，并自动写入默认 `related_to` relations。
@@ -447,6 +500,8 @@ memory_units(category, title_norm) unique where status in ('pending', 'active')
 memory_embeddings(memory_uuid) primary key btree
 memory_embeddings(embedding) HNSW cosine
 memory_embeddings(embedded_at)
+memory_search_index(memory_uuid) primary key btree
+memory_search_index(status)
 memory_usage(use_count)
 memory_usage(last_used_at)
 memory_relations(from_memory_uuid)
@@ -467,8 +522,9 @@ memory_keywords(keyword_norm, memory_uuid) btree
 
 ```text
 keyword exact -> memory_keywords.keyword_norm btree
-keyword fuzzy -> memory_keywords.keyword_norm GIN trigram
-title_norm / summary / content fuzzy -> memory_units title_norm / summary / content GIN trigram
+keyword fuzzy -> memory_search_index.keywords_text GIN trigram
+title / summary / content / recall_when fuzzy -> memory_search_index 对应字段 GIN trigram
+filters = [] -> memory_search_index.all_text GIN trigram
 ```
 
 语义搜索：
@@ -481,16 +537,17 @@ memory_embeddings.embedding -> HNSW cosine index
 模糊搜索：
 
 ```text
-keyword_norm exact match first
-memory_keywords.keyword_norm -> GIN trigram
-memory_units.title_norm -> GIN trigram
-memory_units.summary -> GIN trigram
-memory_units.content -> GIN trigram
+memory_search_index.title_text -> GIN trigram
+memory_search_index.summary_text -> GIN trigram
+memory_search_index.keywords_text -> GIN trigram
+memory_search_index.content_text -> GIN trigram
+memory_search_index.recall_when_text -> GIN trigram
+memory_search_index.all_text -> GIN trigram
 ```
 
 规则：
 
-- keyword 精确命中优先于 trigram 模糊命中。
+- `search_memory` 字面召回优先查询 `memory_search_index`，避免运行时重复 join `memory_units` 和 `memory_keywords`。
 - embedding 使用 cosine 距离；没有 `memory_embeddings` 行的 memory 不参与语义召回。
 - 第一版不使用 PostgreSQL fulltext / tsvector；中文召回由 keyword、trigram、embedding 分路完成。
 
@@ -589,6 +646,7 @@ begin
 读取当前工作态；如果没有 open change，保存 before_state
 生成 after_state 工作态
 写入 memory_units / keywords / relations
+刷新 memory_search_index
 如果没有 change，写 memory_changes(before_state, after_state)
 如果已有 change，只更新 after_state 和 updated_at
 commit
@@ -609,7 +667,8 @@ begin
 锁定并读取 memory_changes
 确认当前工作态仍与 after_state 一致
 如果 action = delete：删除 memory_changes，再删除 memory_units
-如果 action != delete：删除 memory_changes
+如果 action = create：memory_units.status 改为 active，刷新 memory_search_index，再删除 memory_changes
+如果 action = update 或 restore：删除 memory_changes
 commit
 ```
 
@@ -625,9 +684,9 @@ memory_changes 保留
 
 ```text
 create：删除 memory_changes，再删除 memory_units，级联清理派生数据
-update：用 before_state 恢复 memory_units / keywords / memory_relations，再删除 memory_changes
-delete：用 before_state 恢复 active 状态和派生数据，再删除 memory_changes
-restore：用 before_state 恢复 trashed 状态，再删除 memory_changes
+update：用 before_state 恢复 memory_units / keywords / memory_relations，刷新 memory_search_index，再删除 memory_changes
+delete：用 before_state 恢复 active 状态和派生数据，刷新 memory_search_index，再删除 memory_changes
+restore：用 before_state 恢复 trashed 状态，刷新 memory_search_index，再删除 memory_changes
 ```
 
 自动清理规则：
