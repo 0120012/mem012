@@ -38,7 +38,7 @@ FROM postgres:${PG_MAJOR}-bookworm
 
 ARG PG_MAJOR
 
-ENV POSTGRES_USER=utest
+ENV POSTGRES_USER=uutest
 ENV POSTGRES_DB=TESTD
 
 COPY --from=builder /usr/lib/postgresql/${PG_MAJOR}/lib/vector.so /usr/lib/postgresql/${PG_MAJOR}/lib/

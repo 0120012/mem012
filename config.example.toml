@@ -1,8 +1,10 @@
 [database]
-riko = "postgresql://riko:password@127.0.0.1:5632/mem_riko"
-herm = "postgresql://herm:password@127.0.0.1:5632/mem_herm"
-doge = "postgresql://doge:password@127.0.0.1:5632/mem_doge"
-share = "postgresql://share:password@127.0.0.1:5632/mem_share"
+riko = "postgresql://riko:zxz456123@127.0.0.1:5632/mem_riko"
+herm = "postgresql://herm:zxz456123@127.0.0.1:5632/mem_herm"
+doge = "postgresql://doge:zxz456123@127.0.0.1:5632/mem_doge"
+share = "postgresql://share:zxz456123@127.0.0.1:5632/mem_share"
+hakimi = "postgresql://hakimi:zxz456123@127.0.0.1:5632/mem_hakimi"
+claw = "postgresql://claw:zxz456123@127.0.0.1:5632/mem_claw"
 
 [search]
 # 搜索运行参数：先保留开关用于早期调试；关键词和全文后续可能固定为后端基础能力。
