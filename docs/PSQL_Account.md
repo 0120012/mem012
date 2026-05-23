@@ -2,7 +2,7 @@
 
 ## 0. 目标与边界
 
-- [ ] 一账号一库, riko->mem_riko, herm->mem_herm, doge->mem_doge, share->mem_share
+- [ ] 一账号一库, riko->mem_riko, herm->mem_herm, doge->mem_doge, share->mem_share, hakimi->mem_hakimi, claw->mem_claw
 - [ ] `mem_share` 是共享记忆库，但使用独立 `share` 账号访问
 - [ ] 每个账号仅可访问本库，其他数据库无 `CONNECT`
 - [ ] 运行态不做自动初始化（`init_db()` 为 no-op）
