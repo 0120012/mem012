@@ -7,13 +7,13 @@ BEGIN
     EXECUTE format(
       'CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L',
       'uutest',
-      'D974420AADA#'
+      'D9744sfg20AADA'
     );
   ELSE
     EXECUTE format(
       'ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L',
       'uutest',
-      'D974420AADA#'
+      'D9744sfg20AADA'
     );
   END IF;
 END $$;

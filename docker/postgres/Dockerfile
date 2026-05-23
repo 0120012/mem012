@@ -39,7 +39,7 @@ FROM postgres:${PG_MAJOR}-bookworm
 ARG PG_MAJOR
 
 ENV POSTGRES_USER=uutest
-ENV POSTGRES_DB=TESTD
+ENV POSTGRES_DB=postgres
 
 COPY --from=builder /usr/lib/postgresql/${PG_MAJOR}/lib/vector.so /usr/lib/postgresql/${PG_MAJOR}/lib/
 COPY --from=builder /usr/share/postgresql/${PG_MAJOR}/extension/vector* /usr/share/postgresql/${PG_MAJOR}/extension/

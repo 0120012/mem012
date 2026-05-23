@@ -1,9 +1,4 @@
 -- Why：首次启动时一次性建好 profile 库和扩展，避免每个环境手工补 PostgreSQL 状态。
-\connect TESTD
-CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS age;
-
 CREATE DATABASE mem_riko;
 \connect mem_riko
 CREATE EXTENSION IF NOT EXISTS vector;
