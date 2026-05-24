@@ -138,7 +138,7 @@ async fn refresh_embedding(project: &str, database_url: &str, memory_uuid: &str)
         return;
     };
     if let Err(error) =
-        crate::embeddings::refresh_memory_embedding(database_url, settings, memory_uuid).await
+        crate::provider::refresh_memory_embedding(database_url, settings, memory_uuid).await
     {
         eprintln!("{project}: embedding 生成失败: {error}");
     }

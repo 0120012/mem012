@@ -1,7 +1,7 @@
 mod api;
 mod config;
-mod embeddings;
 mod parse;
+mod provider;
 mod psql;
 mod server;
 mod tools;
