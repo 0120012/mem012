@@ -56,6 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         profile: profile.as_str(),
         profile_pool: &profile_pool,
         share_pool: &share_pool,
+        search_default_limit: config.search_default_limit(),
     };
 
     // ==== 4. 选择工具, 开始

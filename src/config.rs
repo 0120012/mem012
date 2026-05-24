@@ -86,6 +86,11 @@ impl Config {
         self.debug.reset_db
     }
 
+    pub fn search_default_limit(&self) -> i32 {
+        // Why：搜索入口必须统一遵守配置上限，避免各工具各自解释 limit。
+        self.search.default_limit.max(1)
+    }
+
     pub fn embedding_settings(&self) -> Option<EmbeddingSettings> {
         // Why：embedding 是派生索引能力，配置为空时应跳过生成而不是阻塞主流程。
         let api = self.embeddings.embeddings_api.trim();

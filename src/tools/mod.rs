@@ -1,6 +1,7 @@
 mod create_memory;
 mod delete_memory;
 mod read_memory;
+mod search_memory;
 mod update_memory;
 
 pub struct ToolContext<'a> {
@@ -8,6 +9,7 @@ pub struct ToolContext<'a> {
     pub profile: &'a str,
     pub profile_pool: &'a sqlx::Pool<sqlx::Postgres>,
     pub share_pool: &'a sqlx::Pool<sqlx::Postgres>,
+    pub search_default_limit: i32,
 }
 
 pub async fn dispatch_tool_request(
@@ -38,6 +40,7 @@ pub async fn dispatch_tool_request(
         "create_memory" => create_memory::run(context, args).await,
         "delete_memory" => delete_memory::run(context, args).await,
         "read_memory" | "read_memory_hash" => read_memory::run(context, tool, args).await,
+        "search_memory" => search_memory::run(context, args).await,
         "update_memory_replace"
         | "update_memory_patch_content"
         | "update_memory_append"
