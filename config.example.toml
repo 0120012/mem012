@@ -31,7 +31,7 @@ embeddings_dimension = 1024
 embeddings_key = "" # embeddings_api = local 时可为空。
 
 [network]
-proxy = "" # 可选；支持 "http://127.0.0.1:12828"、"socks5://127.0.0.1:12828"；省略 scheme 时按 http 处理。
+proxy = "socks5://127.0.0.1:12828" # 可选；也支持 "http://127.0.0.1:12828"。
 
 [debug]
 # true 会在 CLI 启动时清空 profile/share 记忆表并重新建表，只能在本地调试打开。
