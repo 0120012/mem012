@@ -31,12 +31,24 @@ struct SearchConfig {
 struct RerankConfig {
     enabled: bool,
     rerank_api: Option<String>,
+    #[serde(alias = "rerand_api_type")]
+    rerank_api_type: Option<String>,
     rerank_model: Option<String>,
     rerank_key: Option<String>,
 }
 
+#[allow(dead_code)]
+pub struct RerankSettings {
+    pub api: String,
+    pub api_type: String,
+    pub key: String,
+    pub model: String,
+    pub proxy: Option<String>,
+}
+
 pub struct EmbeddingSettings {
     pub api: String,
+    pub api_type: String,
     pub key: String,
     pub model: String,
     pub dimension: usize,
@@ -46,6 +58,7 @@ pub struct EmbeddingSettings {
 #[derive(Deserialize)]
 struct EmbeddingsConfig {
     embeddings_api: String,
+    embeddings_api_type: Option<String>,
     embeddings_key: String,
     embeddings_model: Option<String>,
     embeddings_dimension: Option<usize>,
@@ -99,6 +112,44 @@ impl Config {
         self.search.default_limit.max(1)
     }
 
+    #[allow(dead_code)]
+    pub fn rerank_settings(&self) -> Option<RerankSettings> {
+        // Why：rerank 是可选 provider 能力，关闭或缺少远程鉴权时不应阻塞基础搜索。
+        if !self.rerank.enabled {
+            return None;
+        }
+        let api = self.rerank.rerank_api.as_deref().unwrap_or("local").trim();
+        let key = self.rerank.rerank_key.as_deref().unwrap_or("").trim();
+        if api.is_empty() || (api != "local" && key.is_empty()) {
+            return None;
+        }
+        Some(RerankSettings {
+            api: api.to_string(),
+            api_type: self
+                .rerank
+                .rerank_api_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("rerank")
+                .to_string(),
+            key: key.to_string(),
+            model: self
+                .rerank
+                .rerank_model
+                .as_deref()
+                .unwrap_or("Qwen3-Reranker-4B")
+                .to_string(),
+            proxy: self
+                .network
+                .proxy
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+        })
+    }
+
     pub fn embedding_settings(&self) -> Option<EmbeddingSettings> {
         // Why：embedding 是派生索引能力，配置为空时应跳过生成而不是阻塞主流程。
         let api = self.embeddings.embeddings_api.trim();
@@ -111,6 +162,14 @@ impl Config {
         }
         Some(EmbeddingSettings {
             api: api.to_string(),
+            api_type: self
+                .embeddings
+                .embeddings_api_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("embeddings")
+                .to_string(),
             key: key.to_string(),
             model: self
                 .embeddings

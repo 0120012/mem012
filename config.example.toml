@@ -19,13 +19,15 @@ stale_penalty = 10 # 过期或需要复审的记忆扣分。
 
 [rerank]
 enabled = false # 是否启用 rerank 模型重排；关闭时只按基础召回分排序。
-rerank_api = "local" # local 表示本地 rerank；否则填写 rerank API URL。
+rerank_api = "local" # local 表示本地 rerank；否则填写 rerank API base URL 或完整 endpoint。
+rerank_api_type = "rerank"
 rerank_model = "Qwen/Qwen3-Reranker-4B"
 rerank_key = "" # rerank_api = local 时可为空。
 
 [embeddings]
-# local 表示本地 embedding；否则填写 embedding API URL。
+# local 表示本地 embedding；否则填写 embedding API base URL 或完整 endpoint。
 embeddings_api = "local"
+embeddings_api_type = "embeddings"
 embeddings_model = "BAAI/bge-m3"
 embeddings_dimension = 1024
 embeddings_key = "" # embeddings_api = local 时可为空。

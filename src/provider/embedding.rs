@@ -1,5 +1,9 @@
 use serde::Deserialize;
 
+use super::http::{http_client, provider_endpoint};
+
+// 备注：当前仅用于 provider/API 测试；search_memory 尚未接入，正式搜索链路还需二次迭代。
+
 #[derive(Deserialize)]
 struct EmbeddingResponse {
     data: Vec<EmbeddingData>,
@@ -61,7 +65,7 @@ async fn request_embedding(
     input: &str,
 ) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
     // Why：远程模型必须返回配置维度，和 pgvector 表结构保持硬一致。
-    let endpoint = embedding_endpoint(&settings.api)?;
+    let endpoint = provider_endpoint(&settings.api, &settings.api_type)?;
     let request = http_client(settings.proxy.as_deref())?
         .post(endpoint)
         .json(&serde_json::json!({ "model": settings.model, "input": input }));
@@ -81,26 +85,6 @@ async fn request_embedding(
         return Err(format!("embedding 维度错误: {}", embedding.len()).into());
     }
     Ok(embedding)
-}
-
-fn http_client(
-    proxy: Option<&str>,
-) -> Result<reqwest::Client, Box<dyn std::error::Error + Send + Sync>> {
-    // Why：模型 API 可能只能通过本机代理访问，代理地址来自配置而不是调用点临时拼接。
-    let mut builder = reqwest::Client::builder();
-    if let Some(proxy) = proxy {
-        builder = builder.proxy(reqwest::Proxy::all(proxy_url(proxy))?);
-    }
-    Ok(builder.build()?)
-}
-
-fn proxy_url(proxy: &str) -> String {
-    let proxy = proxy.trim();
-    if proxy.contains("://") {
-        proxy.to_string()
-    } else {
-        format!("http://{proxy}")
-    }
 }
 
 async fn upsert_embedding(
@@ -137,17 +121,4 @@ async fn upsert_embedding(
     .execute(pool)
     .await?;
     Ok(())
-}
-
-fn embedding_endpoint(api: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    // Why：配置可以写 base URL 或完整 endpoint，部署时不必因为路径形式改代码。
-    let api = api.trim_end_matches('/');
-    if api == "local" {
-        return Err("local embedding executor 尚未接入".into());
-    }
-    if api.ends_with("/embeddings") {
-        Ok(api.to_string())
-    } else {
-        Ok(format!("{api}/embeddings"))
-    }
 }
