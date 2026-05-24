@@ -24,5 +24,5 @@
 - [x] 将 `read_memory_hash` 从 `update_memory` 模块移动到独立 `read_memory` 模块，保持现有响应不变；验证 `cargo fmt --check` 和 `cargo check`。
 - [x] 接入 `read_memory` 的 CLI 路由和参数结构，只做 `memory_uuid` 入参校验并保持最小可编译切片；验证 `cargo fmt --check` 和 `cargo check`。
 - [x] 实现 `read_memory` 读取路径：复用 `memory_state`，拒绝不存在或 `trashed` 记忆，返回完整 `memory`、`keywords`、`relations`；验证 `cargo fmt --check` 和 `cargo check`。
-- [ ] 用一条已存在或新建记忆执行 CLI smoke：`create_memory` 后调用 `read_memory`，确认返回 `memory_uuid`、正文、摘要、召回条件和关键词；失败时只修正本工具范围。
+- [x] 用一条已存在或新建记忆执行 CLI smoke：`create_memory` 后调用 `read_memory`，确认返回 `memory_uuid`、正文、摘要、召回条件和关键词；失败时只修正本工具范围。
 - [x] 增加 `read_memory` 的文档示例，说明用途、调用命令和验证成功方式；验证 `git diff --check`。
