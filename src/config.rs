@@ -10,6 +10,8 @@ pub struct Config {
     rerank: RerankConfig,
     embeddings: EmbeddingsConfig,
     #[serde(default)]
+    network: NetworkConfig,
+    #[serde(default)]
     debug: DebugConfig,
     server: ServerConfig,
 }
@@ -38,6 +40,7 @@ pub struct EmbeddingSettings {
     pub key: String,
     pub model: String,
     pub dimension: usize,
+    pub proxy: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -46,6 +49,11 @@ struct EmbeddingsConfig {
     embeddings_key: String,
     embeddings_model: Option<String>,
     embeddings_dimension: Option<usize>,
+}
+
+#[derive(Default, Deserialize)]
+struct NetworkConfig {
+    proxy: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -111,6 +119,13 @@ impl Config {
                 .unwrap_or("BAAI/bge-m3")
                 .to_string(),
             dimension: self.embeddings.embeddings_dimension.unwrap_or(1024),
+            proxy: self
+                .network
+                .proxy
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
         })
     }
 }

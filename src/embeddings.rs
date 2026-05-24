@@ -62,7 +62,7 @@ async fn request_embedding(
 ) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
     // Why：远程模型必须返回配置维度，和 pgvector 表结构保持硬一致。
     let endpoint = embedding_endpoint(&settings.api)?;
-    let request = reqwest::Client::new()
+    let request = http_client(settings.proxy.as_deref())?
         .post(endpoint)
         .json(&serde_json::json!({ "model": settings.model, "input": input }));
     let request = if settings.key.trim().is_empty() {
@@ -81,6 +81,26 @@ async fn request_embedding(
         return Err(format!("embedding 维度错误: {}", embedding.len()).into());
     }
     Ok(embedding)
+}
+
+fn http_client(
+    proxy: Option<&str>,
+) -> Result<reqwest::Client, Box<dyn std::error::Error + Send + Sync>> {
+    // Why：模型 API 可能只能通过本机代理访问，代理地址来自配置而不是调用点临时拼接。
+    let mut builder = reqwest::Client::builder();
+    if let Some(proxy) = proxy {
+        builder = builder.proxy(reqwest::Proxy::all(proxy_url(proxy))?);
+    }
+    Ok(builder.build()?)
+}
+
+fn proxy_url(proxy: &str) -> String {
+    let proxy = proxy.trim();
+    if proxy.contains("://") {
+        proxy.to_string()
+    } else {
+        format!("http://{proxy}")
+    }
 }
 
 async fn upsert_embedding(
