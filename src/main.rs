@@ -52,11 +52,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==== 3. CLI: parse args json
     let args_json = cli_args.args_json.ok_or("缺少参数: --args")?;
     let request_args = parse::parse_args_json(args_json.as_str())?;
+    let embedding_settings = config.embedding_settings();
+    let rerank_settings = config.rerank_settings();
     let tool_context = tools::ToolContext {
         profile: profile.as_str(),
         profile_pool: &profile_pool,
         share_pool: &share_pool,
         search_default_limit: config.search_default_limit(),
+        embedding_settings: embedding_settings.as_ref(),
+        rerank_settings: rerank_settings.as_ref(),
     };
 
     // ==== 4. 选择工具, 开始

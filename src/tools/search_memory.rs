@@ -4,23 +4,6 @@ use serde::Deserialize;
 
 type ToolResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-pub async fn run(context: &super::ToolContext<'_>, args: &serde_json::Value) -> ToolResult<()> {
-    // What：串联 search_memory 的参数、召回、重排和响应阶段。
-    // Why：先固定执行骨架，避免后续实现时把输入校验、查询和输出格式混在一起。
-    let request = parse_search_request(args)?;
-    let plan = build_search_plan(context, request)?;
-    let mut outcome = search_literal_candidates(context, &plan).await?;
-
-    if outcome.results.is_empty() {
-        outcome = search_embedding_fallback(context, &plan).await?;
-    }
-    if outcome.results.len() > 1 {
-        outcome = rerank_candidates(context, &plan, outcome).await?;
-    }
-
-    print_search_response(context, outcome)
-}
-
 #[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,10 +38,40 @@ struct SearchTermsPlan {
     any: Vec<String>,
 }
 
-struct SearchCandidate;
+#[allow(dead_code)]
+struct SearchCandidate {
+    memory_uuid: String,
+    title_norm: String,
+    status: String,
+    summary: String,
+    content_preview: Option<String>,
+    matched_fields: Vec<String>,
+    score: f32,
+}
 
 struct SearchOutcome {
     results: Vec<SearchCandidate>,
+    embedding_fallback: bool,
+    rerank: bool,
+}
+
+pub async fn run(context: &super::ToolContext<'_>, args: &serde_json::Value) -> ToolResult<()> {
+    // What：串联 search_memory 的参数、召回、重排和响应阶段。
+    // Why：先固定执行骨架，避免后续实现时把输入校验、查询和输出格式混在一起。
+    let request = parse_search_request(args)?;
+    let plan = build_search_plan(context, request)?;
+    // 字面召回是第一阶段；只有 0 命中时才进入 embedding 保底。
+    let mut outcome = search_literal_candidates(context, &plan).await?;
+
+    // 保底召回只在字面搜索完全无结果时触发，不能扩大已有候选集合。
+    if outcome.results.is_empty() {
+        outcome = search_embedding_fallback(context, &plan).await?;
+    }
+    if outcome.results.len() > 1 {
+        outcome = rerank_candidates(context, &plan, outcome).await?;
+    }
+
+    print_search_response(context, outcome)
 }
 
 fn parse_search_request(args: &serde_json::Value) -> ToolResult<SearchRequest> {
@@ -92,7 +105,7 @@ fn parse_search_request(args: &serde_json::Value) -> ToolResult<SearchRequest> {
         validate_filters(filters)?;
     }
 
-    // 8. terms 内部数组如果出现，必须非空且不能包含空关键词。
+    // 8. terms 可以带空数组，但 all/none/any 三组里至少要有一个有效关键词。
     if let Some(terms) = &request.terms {
         validate_terms(terms)?;
     }
@@ -126,18 +139,22 @@ fn validate_filters(filters: &[String]) -> ToolResult<()> {
 }
 
 fn validate_terms(terms: &SearchTerms) -> ToolResult<()> {
+    let mut has_term = false;
     for (field, values) in [
         ("terms.all", terms.all.as_ref()),
         ("terms.none", terms.none.as_ref()),
         ("terms.any", terms.any.as_ref()),
     ] {
         if let Some(values) = values {
-            if values.is_empty() || values.iter().any(|value| value.trim().is_empty()) {
+            if values.iter().any(|value| value.trim().is_empty()) {
                 return Err(format!("{field} 不能为空").into());
             }
+            has_term |= !values.is_empty();
         }
     }
-    Ok(())
+    has_term
+        .then_some(())
+        .ok_or_else(|| "terms.all、terms.none、terms.any 至少一个必须非空".into())
 }
 
 fn build_search_plan(
@@ -190,32 +207,299 @@ fn build_search_plan(
 }
 
 async fn search_literal_candidates(
-    _context: &super::ToolContext<'_>,
-    _plan: &SearchPlan,
+    context: &super::ToolContext<'_>,
+    plan: &SearchPlan,
 ) -> ToolResult<SearchOutcome> {
-    Err("search_memory 字面召回尚未实现".into())
+    // What：从 memory_search_index 做第一段字面候选召回。
+    // Why：搜索必须消费派生投影表，避免运行时重复 join 工作态表和关键词表。
+    let field_enabled = |name: &str| plan.fields.iter().any(|field| field == name);
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Vec<String>, f32)>(
+        r#"
+        WITH scoped AS (
+            SELECT *,
+                concat_ws(' ',
+                    CASE WHEN $2 THEN title_text END,
+                    CASE WHEN $3 THEN summary_text END,
+                    CASE WHEN $4 THEN keywords_text END,
+                    CASE WHEN $5 THEN content_text END,
+                    CASE WHEN $6 THEN recall_when_text END
+                ) AS search_text
+            FROM memory_search_index
+            WHERE status <> 'trashed'
+        )
+        SELECT memory_uuid::text, title_text, status, summary_text,
+            CASE WHEN $5 AND (content_text % $1 OR strpos(lower(content_text), lower($1)) > 0
+                    OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(content_text), lower(term)) > 0))
+                THEN left(content_text, 120)
+            END AS content_preview,
+            ARRAY_REMOVE(ARRAY[
+                CASE WHEN $2 AND (title_text % $1 OR strpos(lower(title_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(title_text), lower(term)) > 0)) THEN 'title' END,
+                CASE WHEN $3 AND (summary_text % $1 OR strpos(lower(summary_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(summary_text), lower(term)) > 0)) THEN 'summary' END,
+                CASE WHEN $4 AND (keywords_text % $1 OR strpos(lower(keywords_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(keywords_text), lower(term)) > 0)) THEN 'keywords' END,
+                CASE WHEN $5 AND (content_text % $1 OR strpos(lower(content_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(content_text), lower(term)) > 0)) THEN 'content' END,
+                CASE WHEN $6 AND (recall_when_text % $1 OR strpos(lower(recall_when_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(recall_when_text), lower(term)) > 0)) THEN 'recall_when' END
+            ]::text[], NULL) AS matched_fields,
+            (
+                SELECT count(DISTINCT lower(term))::real
+                FROM regexp_split_to_table($1, '\s+') AS query_terms(term)
+                WHERE btrim(term) <> '' AND strpos(lower(search_text), lower(term)) > 0
+            ) + GREATEST(
+                CASE WHEN $2 THEN similarity(title_text, $1) ELSE 0 END,
+                CASE WHEN $3 THEN similarity(summary_text, $1) ELSE 0 END,
+                CASE WHEN $4 THEN similarity(keywords_text, $1) ELSE 0 END,
+                CASE WHEN $5 THEN similarity(content_text, $1) ELSE 0 END,
+                CASE WHEN $6 THEN similarity(recall_when_text, $1) ELSE 0 END
+            ) AS score
+        FROM scoped
+        WHERE (
+                ($2 AND (title_text % $1 OR strpos(lower(title_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(title_text), lower(term)) > 0)))
+                OR ($3 AND (summary_text % $1 OR strpos(lower(summary_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(summary_text), lower(term)) > 0)))
+                OR ($4 AND (keywords_text % $1 OR strpos(lower(keywords_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(keywords_text), lower(term)) > 0)))
+                OR ($5 AND (content_text % $1 OR strpos(lower(content_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(content_text), lower(term)) > 0)))
+                OR ($6 AND (recall_when_text % $1 OR strpos(lower(recall_when_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(recall_when_text), lower(term)) > 0)))
+            )
+            AND NOT EXISTS (SELECT 1 FROM unnest($7::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) = 0)
+            AND NOT EXISTS (SELECT 1 FROM unnest($8::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) > 0)
+            AND (cardinality($9::text[]) = 0 OR EXISTS (SELECT 1 FROM unnest($9::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) > 0))
+        ORDER BY score DESC, title_text ASC
+        LIMIT $10
+        "#,
+    )
+    .bind(&plan.query)
+    .bind(field_enabled("title"))
+    .bind(field_enabled("summary"))
+    .bind(field_enabled("keywords"))
+    .bind(field_enabled("content"))
+    .bind(field_enabled("recall_when"))
+    .bind(&plan.terms.all)
+    .bind(&plan.terms.none)
+    .bind(&plan.terms.any)
+    .bind(plan.effective_limit)
+    .fetch_all(context.profile_pool)
+    .await?;
+    Ok(SearchOutcome {
+        embedding_fallback: false,
+        rerank: false,
+        results: rows
+            .into_iter()
+            .map(
+                |(
+                    memory_uuid,
+                    title_norm,
+                    status,
+                    summary,
+                    content_preview,
+                    matched_fields,
+                    score,
+                )| {
+                    SearchCandidate {
+                        memory_uuid,
+                        title_norm,
+                        status,
+                        summary,
+                        content_preview,
+                        matched_fields,
+                        score,
+                    }
+                },
+            )
+            .collect(),
+    })
 }
 
 async fn search_embedding_fallback(
-    _context: &super::ToolContext<'_>,
-    _plan: &SearchPlan,
+    context: &super::ToolContext<'_>,
+    plan: &SearchPlan,
 ) -> ToolResult<SearchOutcome> {
-    Err("search_memory embedding 保底尚未实现".into())
+    // What：在字面召回为 0 时，用 query embedding 从已生成的向量索引召回候选。
+    // Why：embedding 只是保底路径，仍必须复用 memory_search_index 执行状态、字段和 terms 边界。
+    let Some(settings) = context.embedding_settings else {
+        return Ok(SearchOutcome {
+            results: vec![],
+            embedding_fallback: false,
+            rerank: false,
+        });
+    };
+    let Ok(embedding) = crate::provider::embedding::request_embedding(settings, &plan.query).await
+    else {
+        return Ok(SearchOutcome {
+            results: vec![],
+            embedding_fallback: false,
+            rerank: false,
+        });
+    };
+    let vector = format!(
+        "[{}]",
+        embedding
+            .iter()
+            .map(f32::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let field_enabled = |name: &str| plan.fields.iter().any(|field| field == name);
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Vec<String>, f32)>(
+        r#"
+        WITH scoped AS (
+            SELECT i.*, (e.embedding <=> $1::vector) AS distance,
+                concat_ws(' ',
+                    CASE WHEN $2 THEN i.title_text END,
+                    CASE WHEN $3 THEN i.summary_text END,
+                    CASE WHEN $4 THEN i.keywords_text END,
+                    CASE WHEN $5 THEN i.content_text END,
+                    CASE WHEN $6 THEN i.recall_when_text END
+                ) AS search_text
+            FROM memory_embeddings e
+            JOIN memory_search_index i ON i.memory_uuid = e.memory_uuid
+            WHERE i.status = 'active'
+                AND e.embedding_model = $10
+                AND e.embedding_dimension = $11
+        )
+        SELECT memory_uuid::text, title_text, status, summary_text,
+            NULL::text AS content_preview, ARRAY[]::text[] AS matched_fields, (1 - distance)::real AS score
+        FROM scoped
+        WHERE NOT EXISTS (SELECT 1 FROM unnest($7::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) = 0)
+            AND NOT EXISTS (SELECT 1 FROM unnest($8::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) > 0)
+            AND (cardinality($9::text[]) = 0 OR EXISTS (SELECT 1 FROM unnest($9::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) > 0))
+        ORDER BY distance ASC, title_text ASC
+        LIMIT $12
+        "#,
+    )
+    .bind(vector)
+    .bind(field_enabled("title"))
+    .bind(field_enabled("summary"))
+    .bind(field_enabled("keywords"))
+    .bind(field_enabled("content"))
+    .bind(field_enabled("recall_when"))
+    .bind(&plan.terms.all)
+    .bind(&plan.terms.none)
+    .bind(&plan.terms.any)
+    .bind(&settings.model)
+    .bind(settings.dimension as i32)
+    .bind(plan.effective_limit)
+    .fetch_all(context.profile_pool)
+    .await?;
+    Ok(SearchOutcome {
+        embedding_fallback: true,
+        rerank: false,
+        results: rows
+            .into_iter()
+            .map(
+                |(
+                    memory_uuid,
+                    title_norm,
+                    status,
+                    summary,
+                    content_preview,
+                    matched_fields,
+                    score,
+                )| {
+                    SearchCandidate {
+                        memory_uuid,
+                        title_norm,
+                        status,
+                        summary,
+                        content_preview,
+                        matched_fields,
+                        score,
+                    }
+                },
+            )
+            .collect(),
+    })
 }
 
 async fn rerank_candidates(
-    _context: &super::ToolContext<'_>,
-    _plan: &SearchPlan,
-    _outcome: SearchOutcome,
+    context: &super::ToolContext<'_>,
+    plan: &SearchPlan,
+    outcome: SearchOutcome,
 ) -> ToolResult<SearchOutcome> {
-    Err("search_memory rerank 尚未实现".into())
+    // What：调用 rerank provider 重排已有候选。
+    // Why：rerank 只能调整顺序，provider 失败或缺失配置时必须保留原召回结果。
+    let Some(settings) = context.rerank_settings else {
+        return Ok(outcome);
+    };
+    let documents = outcome
+        .results
+        .iter()
+        .map(|candidate| match candidate.content_preview.as_deref() {
+            Some(content_preview) => format!(
+                "{}\n{}\n{}",
+                candidate.title_norm, candidate.summary, content_preview
+            ),
+            None => format!("{}\n{}", candidate.title_norm, candidate.summary),
+        })
+        .collect::<Vec<_>>();
+    let Ok(ranked) =
+        crate::provider::rerank::rerank_text_documents(settings, &plan.query, &documents).await
+    else {
+        return Ok(outcome);
+    };
+    if ranked.is_empty() {
+        return Ok(outcome);
+    }
+    let embedding_fallback = outcome.embedding_fallback;
+    let mut remaining = outcome.results.into_iter().map(Some).collect::<Vec<_>>();
+    let mut results = Vec::with_capacity(remaining.len());
+    for item in ranked {
+        if let Some(slot) = remaining.get_mut(item.index) {
+            if let Some(mut candidate) = slot.take() {
+                candidate.score = item.score;
+                results.push(candidate);
+            }
+        }
+    }
+    results.extend(remaining.into_iter().flatten());
+    Ok(SearchOutcome {
+        results,
+        embedding_fallback,
+        rerank: true,
+    })
 }
 
 fn print_search_response(
-    _context: &super::ToolContext<'_>,
-    _outcome: SearchOutcome,
+    context: &super::ToolContext<'_>,
+    outcome: SearchOutcome,
 ) -> ToolResult<()> {
-    Err("search_memory 响应输出尚未实现".into())
+    // What：输出 search_memory 的成功 JSON 响应。
+    // Why：当前切片只接通字面召回的可观察结果，策略标记先保持未启用状态。
+    let embedding_fallback = outcome.embedding_fallback;
+    let rerank = outcome.rerank;
+    let results = outcome
+        .results
+        .into_iter()
+        .map(|candidate| {
+            let mut result = serde_json::json!({
+                "memory_uuid": candidate.memory_uuid,
+                "title_norm": candidate.title_norm,
+                "status": candidate.status,
+                "summary": candidate.summary,
+                "matched_fields": candidate.matched_fields
+            });
+            if let Some(content_preview) = candidate.content_preview {
+                result["content_preview"] = serde_json::json!(content_preview);
+            }
+            if rerank {
+                result["score"] = serde_json::json!(candidate.score);
+            }
+            result
+        })
+        .collect::<Vec<_>>();
+    let count = results.len();
+    println!(
+        "{}",
+        serde_json::json!({
+            "state": "success",
+            "tool": "search_memory",
+            "data": {
+                "strategy": { "embedding_fallback": embedding_fallback, "rerank": rerank },
+                "results": results,
+                "count": count
+            },
+            "error": null,
+            "profile": context.profile
+        })
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -228,7 +512,11 @@ mod tests {
         let request = parse_search_request(&basic).unwrap();
         assert_eq!(request.query, "尼采深渊");
 
-        let advanced = serde_json::json!({"query": "微信读书导出", "terms": {}, "filters": []});
+        let advanced = serde_json::json!({
+            "query": "微信读书导出",
+            "terms": {"all": ["导出"], "none": [], "any": []},
+            "filters": []
+        });
         assert!(parse_search_request(&advanced).is_ok());
     }
 
@@ -242,6 +530,7 @@ mod tests {
             serde_json::json!({"query": "a", "terms": {}}),
             serde_json::json!({"query": "a", "filters": []}),
             serde_json::json!({"query": "a", "terms": {}, "filters": ["status"]}),
+            serde_json::json!({"query": "a", "terms": {}, "filters": []}),
             serde_json::json!({"query": "a", "terms": {"all": []}, "filters": []}),
             serde_json::json!({"query": "a", "terms": {"any": [""]}, "filters": []}),
             serde_json::json!({"query": "a", "limit": 0}),

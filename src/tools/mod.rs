@@ -10,6 +10,8 @@ pub struct ToolContext<'a> {
     pub profile_pool: &'a sqlx::Pool<sqlx::Postgres>,
     pub share_pool: &'a sqlx::Pool<sqlx::Postgres>,
     pub search_default_limit: i32,
+    pub embedding_settings: Option<&'a crate::config::EmbeddingSettings>,
+    pub rerank_settings: Option<&'a crate::config::RerankSettings>,
 }
 
 pub async fn dispatch_tool_request(

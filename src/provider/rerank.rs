@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use super::http::{http_client, provider_endpoint};
 
-// 备注：当前仅用于 provider/API 测试；search_memory 尚未接入，正式搜索链路还需二次迭代。
+// 备注：当前已接入 search_memory 重排；provider 协议细节仍需随模型返回格式迭代。
 
 type ProviderResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
