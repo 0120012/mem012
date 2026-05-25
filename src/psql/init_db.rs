@@ -153,20 +153,24 @@ async fn ensure_memory_status_constraint(pool: &Pool<Postgres>) -> Result<(), sq
 }
 
 async fn ensure_memory_change_identity(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
-    // Why：审核入口已经统一使用 memory_uuid，旧库里的审核 ID 必须收敛到同一个值。
-    sqlx::query("UPDATE memory_changes SET uuid = memory_uuid WHERE uuid <> memory_uuid")
-        .execute(pool)
+    // What：迁移 memory_changes 的审核 ID 约束。
+    // Why：CLI 可能并发启动，约束 drop/add 必须串行化，否则两个 init_db 会重复 ADD CONSTRAINT。
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('mem012:init_db:memory_changes_identity'))")
+        .execute(&mut *tx)
         .await?;
-    sqlx::query(
-        "ALTER TABLE memory_changes DROP CONSTRAINT IF EXISTS memory_changes_uuid_matches_memory_uuid",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE memory_changes SET uuid = memory_uuid WHERE uuid <> memory_uuid")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("ALTER TABLE memory_changes DROP CONSTRAINT IF EXISTS memory_changes_uuid_matches_memory_uuid")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(
         "ALTER TABLE memory_changes ADD CONSTRAINT memory_changes_uuid_matches_memory_uuid CHECK (uuid = memory_uuid)",
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 
