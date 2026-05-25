@@ -762,6 +762,7 @@ async fn update_memory_replace(
         build_replace_next_state(&state, &replace_args, title_norm.as_deref())?;
     reject_replace_duplicates(&mut tx, memory_uuid, &next_state).await?;
     write_memory_unit_from_state(&mut tx, memory_uuid, &next_state).await?;
+    crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     let after_state_text = crate::psql::memory_state(&mut tx, memory_uuid)
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -830,6 +831,7 @@ async fn update_memory_patch_content(
     )?;
     reject_replace_duplicates(&mut tx, memory_uuid, &next_state).await?;
     write_memory_unit_from_state(&mut tx, memory_uuid, &next_state).await?;
+    crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     let after_state_text = crate::psql::memory_state(&mut tx, memory_uuid)
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -890,6 +892,7 @@ async fn update_memory_append(
     let next_state = build_append_next_state(&state, field, append_text)?;
     reject_replace_duplicates(&mut tx, memory_uuid, &next_state).await?;
     write_memory_unit_from_state(&mut tx, memory_uuid, &next_state).await?;
+    crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     let after_state_text = crate::psql::memory_state(&mut tx, memory_uuid)
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -950,6 +953,7 @@ async fn update_memory_add_keywords(
     assert_keywords_hash(expected_hash, &state)?;
     reject_existing_keywords(&state, &keywords)?;
     insert_added_keywords(&mut tx, memory_uuid, &keywords).await?;
+    crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     let after_state_text = crate::psql::memory_state(&mut tx, memory_uuid)
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -1010,6 +1014,7 @@ async fn update_memory_remove_keywords(
     assert_keywords_hash(expected_hash, &state)?;
     assert_removable_keywords(&state, &keywords)?;
     delete_removed_keywords(&mut tx, memory_uuid, &keywords).await?;
+    crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     let action =
         upsert_removed_keywords_change(&mut tx, memory_uuid, &status, action.as_deref(), &state)
             .await?;
