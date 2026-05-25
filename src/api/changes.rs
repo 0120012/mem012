@@ -67,7 +67,7 @@ pub async fn approve(
             return error_response(db_error("CHANGE_DETAIL_FAILED", error), Some(&project));
         }
     };
-    let embedding = match embedding_for_approve(&change).await {
+    let embedding = match embedding_for_approve(&url, &memory_uuid, &change).await {
         Ok(embedding) => embedding,
         Err(error) => return error_response(error, Some(&project)),
     };
@@ -77,7 +77,15 @@ pub async fn approve(
             api_response(Some(Value::Null), None, Some(&project)),
         ),
         Ok(false) => missing_change(&project),
-        Err(error) => error_response(db_error("CHANGE_APPROVE_FAILED", error), Some(&project)),
+        Err(error) => {
+            let message = error.to_string();
+            let code = if message.starts_with("APPROVE_CONFLICT:") {
+                "APPROVE_CONFLICT"
+            } else {
+                "CHANGE_APPROVE_FAILED"
+            };
+            error_response(ApiError { code, message }, Some(&project))
+        }
     }
 }
 
@@ -120,10 +128,12 @@ fn database_url(project: &str) -> Result<String, ApiError> {
 }
 
 async fn embedding_for_approve(
+    database_url: &str,
+    memory_uuid: &str,
     change: &Value,
 ) -> Result<Option<crate::psql::ApprovedEmbedding>, ApiError> {
-    // What：在 approve 提交前为非 delete 变更生成 embedding。
-    // Why：远程生成失败必须阻断 approve，避免用户看到失败但数据库已经进入 active。
+    // What：在 approve 提交前从当前 memory_units 工作态生成 embedding。
+    // Why：memory_units 是 Agent 可回读的确定状态，embedding 必须绑定这份状态而不是 change 快照。
     let Some((_, action)) = reviewed_change(change) else {
         return Ok(None);
     };
@@ -137,7 +147,8 @@ async fn embedding_for_approve(
     let Some(settings) = config.embedding_settings() else {
         return Ok(None);
     };
-    let input = embedding_input_from_change(change)?;
+    let source_state = load_current_memory_state(database_url, memory_uuid).await?;
+    let input = embedding_input_from_state(&source_state)?;
     let values = crate::provider::embedding::request_embedding(&settings, &input)
         .await
         .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error))?;
@@ -145,17 +156,43 @@ async fn embedding_for_approve(
         model: settings.model,
         dimension: settings.dimension as i32,
         values,
+        source_state: source_state.to_string(),
     }))
 }
 
-fn embedding_input_from_change(change: &Value) -> Result<String, ApiError> {
-    let state = change.get("after_state").ok_or(ApiError {
+async fn load_current_memory_state(
+    database_url: &str,
+    memory_uuid: &str,
+) -> Result<Value, ApiError> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await
+        .map_err(|error| db_error("EMBEDDING_INPUT_LOAD_FAILED", error.into()))?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| db_error("EMBEDDING_INPUT_LOAD_FAILED", error.into()))?;
+    let state = crate::psql::memory_state(&mut tx, memory_uuid)
+        .await
+        .map_err(|error| db_error("EMBEDDING_INPUT_LOAD_FAILED", error))?;
+    tx.commit()
+        .await
+        .map_err(|error| db_error("EMBEDDING_INPUT_LOAD_FAILED", error.into()))?;
+    serde_json::from_str(&state).map_err(|error| ApiError {
+        code: "EMBEDDING_INPUT_LOAD_FAILED",
+        message: error.to_string(),
+    })
+}
+
+fn embedding_input_from_state(state: &Value) -> Result<String, ApiError> {
+    let state = state.as_object().ok_or(ApiError {
         code: "EMBEDDING_INPUT_MISSING",
-        message: "change.after_state is missing".to_string(),
+        message: "memory state is invalid".to_string(),
     })?;
     let memory = state.get("memory").ok_or(ApiError {
         code: "EMBEDDING_INPUT_MISSING",
-        message: "change.after_state.memory is missing".to_string(),
+        message: "memory state.memory is missing".to_string(),
     })?;
     let mut parts = ["title_norm", "summary", "content"]
         .into_iter()
@@ -204,6 +241,7 @@ fn error_response(error: ApiError, project: Option<&str>) -> (StatusCode, Json<V
         "UNAUTHORIZED" => StatusCode::UNAUTHORIZED,
         "PROJECT_REQUIRED" => StatusCode::BAD_REQUEST,
         "PROJECT_NOT_FOUND" | "CHANGE_NOT_FOUND" => StatusCode::NOT_FOUND,
+        "APPROVE_CONFLICT" => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, api_response(None, Some(error), project))

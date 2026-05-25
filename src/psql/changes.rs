@@ -37,6 +37,7 @@ pub struct ApprovedEmbedding {
     pub model: String,
     pub dimension: i32,
     pub values: Vec<f32>,
+    pub source_state: String,
 }
 
 // Why：changes 列表只暴露审查摘要，详情里的 before/after 由 detail 接口单独返回。
@@ -85,6 +86,9 @@ pub async fn approve_change(
         tx.rollback().await?;
         return Ok(false);
     };
+    if let Some(embedding) = embedding.as_ref() {
+        validate_embedding_source(&mut tx, memory_uuid, &embedding.source_state).await?;
+    }
     approve_locked_change(&mut tx, &change.0, &change.1).await?;
     if let Some(embedding) = embedding {
         upsert_approved_embedding(&mut tx, memory_uuid, embedding).await?;
@@ -179,6 +183,25 @@ async fn approve_locked_change(
     if action == "create" {
         super::relations::insert_auto_relations_for_approved_memory(tx, memory_uuid).await?;
         super::mark_memory_graph_dirty(tx).await?;
+    }
+    Ok(())
+}
+
+async fn validate_embedding_source(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    source_state: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // What：确认 embedding 来源和锁定后的当前工作态一致。
+    // Why：embedding API 调用期间可能发生 update，必须拒绝把旧向量写入新工作态。
+    let current_state = super::memory_state(tx, memory_uuid).await?;
+    let current = serde_json::from_str::<serde_json::Value>(&current_state)?;
+    let source = serde_json::from_str::<serde_json::Value>(source_state)?;
+    if current != source {
+        return Err(std::io::Error::other(
+            "APPROVE_CONFLICT: memory changed during embedding generation",
+        )
+        .into());
     }
     Ok(())
 }
