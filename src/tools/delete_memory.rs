@@ -103,6 +103,7 @@ async fn mark_pending_create_delete(
         .bind(after_state)
         .execute(&mut *tx)
         .await?;
+    crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     tx.commit().await?;
     println!(
         "{}",
@@ -132,9 +133,10 @@ async fn mark_pending_delete(
     // 4. 更新 memory_units.status = 'trashed'，并写入 trashed_at = now()。
     // 5. 读取删除后完整工作态，生成 after_state。
     // 6. 插入 memory_changes，action = 'delete'，保存 before_state 和 after_state。
-    // 7. 标记 memory_graph_meta.dirty，因为 active memory 可见性已经变化。
-    // 8. 提交事务。
-    // 9. 返回 trashed，表示已软删除并等待用户二次确认硬删除。
+    // 7. 刷新 memory_search_index，保证搜索投影同步变为 trashed。
+    // 8. 标记 memory_graph_meta.dirty，因为 active memory 可见性已经变化。
+    // 9. 提交事务。
+    // 10. 返回 trashed，表示已软删除并等待用户二次确认硬删除。
     let mut tx = context.profile_pool.begin().await?;
     let locked_memory: Option<String> = sqlx::query_scalar(
         "SELECT uuid::text FROM memory_units WHERE uuid = $1::uuid AND status = 'active' FOR UPDATE",
@@ -176,6 +178,7 @@ async fn mark_pending_delete(
     .bind(after_state)
     .execute(&mut *tx)
     .await?;
+    crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     crate::psql::mark_memory_graph_dirty(&mut tx).await?;
     tx.commit().await?;
     println!(
@@ -206,8 +209,9 @@ async fn mark_open_change_delete(
     // 4. 更新 memory_units.status = 'trashed'，trashed_at = COALESCE(trashed_at, now())。
     // 5. 读取删除后完整工作态，生成新的 after_state。
     // 6. 覆盖 memory_changes.action = 'delete'，只更新 after_state 和 updated_at。
-    // 7. 如果删除前是 active，标记 memory_graph_meta.dirty。
-    // 8. 提交事务并返回 trashed。
+    // 7. 刷新 memory_search_index，保证覆盖 open change 后搜索投影同步。
+    // 8. 如果删除前是 active，标记 memory_graph_meta.dirty。
+    // 9. 提交事务并返回 trashed。
     let mut tx = context.profile_pool.begin().await?;
     let row: Option<(String, String, Option<String>)> = sqlx::query_as(
         r#"
@@ -241,6 +245,7 @@ async fn mark_open_change_delete(
             .bind(after_state)
             .execute(&mut *tx)
             .await?;
+        crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
         if status == "active" {
             crate::psql::mark_memory_graph_dirty(&mut tx).await?;
         }
