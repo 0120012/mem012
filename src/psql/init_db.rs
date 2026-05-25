@@ -23,6 +23,7 @@ async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<()
     let tables = [
         "memory_embeddings",
         "memory_keywords",
+        "memory_search_index",
         "memory_relations",
         "memory_usage",
         "memory_changes",
@@ -57,6 +58,7 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     ensure_memory_status_constraint(pool).await?;
     cr_memory_embeddings_table(pool).await?;
     cr_memory_keywords_table(pool).await?;
+    cr_memory_search_index_table(pool).await?;
     cr_memory_usage_table(pool).await?;
     cr_memory_relations_table(pool).await?;
     cr_memory_changes_table(pool).await?;
@@ -93,6 +95,13 @@ async fn cr_memory_indexes(pool: &Pool<Postgres>, db_label: &str) -> Result<(), 
         "CREATE INDEX IF NOT EXISTS memory_changes_updated_at_idx ON memory_changes (updated_at)",
         "CREATE INDEX IF NOT EXISTS memory_keywords_keyword_norm_memory_uuid_idx ON memory_keywords (keyword_norm, memory_uuid)",
         "CREATE INDEX IF NOT EXISTS memory_keywords_keyword_norm_trgm_idx ON memory_keywords USING gin (keyword_norm gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_search_index_status_idx ON memory_search_index (status)",
+        "CREATE INDEX IF NOT EXISTS memory_search_index_title_text_trgm_idx ON memory_search_index USING gin (title_text gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_search_index_summary_text_trgm_idx ON memory_search_index USING gin (summary_text gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_search_index_keywords_text_trgm_idx ON memory_search_index USING gin (keywords_text gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_search_index_content_text_trgm_idx ON memory_search_index USING gin (content_text gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_search_index_recall_when_text_trgm_idx ON memory_search_index USING gin (recall_when_text gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS memory_search_index_all_text_trgm_idx ON memory_search_index USING gin (all_text gin_trgm_ops)",
         "CREATE INDEX IF NOT EXISTS memory_units_title_norm_trgm_idx ON memory_units USING gin (title_norm gin_trgm_ops)",
         "CREATE INDEX IF NOT EXISTS memory_units_summary_trgm_idx ON memory_units USING gin (summary gin_trgm_ops)",
         "CREATE INDEX IF NOT EXISTS memory_units_content_trgm_idx ON memory_units USING gin (content gin_trgm_ops)",
@@ -161,6 +170,29 @@ async fn ensure_memory_change_identity(pool: &Pool<Postgres>) -> Result<(), sqlx
     Ok(())
 }
 
+async fn cr_memory_search_index_table(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    // What：创建 search_memory 使用的派生搜索投影表。
+    // Why：字面搜索需要提前摊平当前工作态文本，避免查询时反复 join 和聚合关键词。
+    sqlx::query(
+        r#"
+        CREATE TABLE memory_search_index (
+            memory_uuid UUID PRIMARY KEY REFERENCES memory_units(uuid) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'trashed')),
+            title_text TEXT NOT NULL DEFAULT '',
+            summary_text TEXT NOT NULL DEFAULT '',
+            keywords_text TEXT NOT NULL DEFAULT '',
+            content_text TEXT NOT NULL DEFAULT '',
+            recall_when_text TEXT NOT NULL DEFAULT '',
+            all_text TEXT NOT NULL DEFAULT '',
+            indexed_at TIMESTAMPTZ NOT NULL
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 async fn memory_indexes_ready(pool: &Pool<Postgres>) -> Result<bool, sqlx::Error> {
     // Why：CREATE INDEX IF NOT EXISTS 仍会逐条访问数据库，先检测完整性可以让已初始化库直接跳过索引阶段。
     let ready: bool = sqlx::query_scalar(
@@ -179,6 +211,13 @@ async fn memory_indexes_ready(pool: &Pool<Postgres>) -> Result<bool, sqlx::Error
             AND to_regclass('public.memory_changes_updated_at_idx') IS NOT NULL
             AND to_regclass('public.memory_keywords_keyword_norm_memory_uuid_idx') IS NOT NULL
             AND to_regclass('public.memory_keywords_keyword_norm_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_search_index_status_idx') IS NOT NULL
+            AND to_regclass('public.memory_search_index_title_text_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_search_index_summary_text_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_search_index_keywords_text_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_search_index_content_text_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_search_index_recall_when_text_trgm_idx') IS NOT NULL
+            AND to_regclass('public.memory_search_index_all_text_trgm_idx') IS NOT NULL
             AND to_regclass('public.memory_units_title_norm_trgm_idx') IS NOT NULL
             AND to_regclass('public.memory_units_summary_trgm_idx') IS NOT NULL
             AND to_regclass('public.memory_units_content_trgm_idx') IS NOT NULL
@@ -370,6 +409,7 @@ async fn schema_ready(_pool: &sqlx::Pool<sqlx::Postgres>) -> Result<bool, sqlx::
             to_regclass('public.memory_units') IS NOT NULL
             AND to_regclass('public.memory_embeddings') IS NOT NULL
             AND to_regclass('public.memory_keywords') IS NOT NULL
+            AND to_regclass('public.memory_search_index') IS NOT NULL
             AND to_regclass('public.memory_usage') IS NOT NULL
             AND to_regclass('public.memory_relations') IS NOT NULL
             AND to_regclass('public.memory_changes') IS NOT NULL

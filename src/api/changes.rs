@@ -67,14 +67,15 @@ pub async fn approve(
             return error_response(db_error("CHANGE_DETAIL_FAILED", error), Some(&project));
         }
     };
-    match crate::psql::approve_change(&url, &memory_uuid).await {
-        Ok(true) => {
-            refresh_embedding_after_approve(&project, &url, &change).await;
-            (
-                StatusCode::OK,
-                api_response(Some(Value::Null), None, Some(&project)),
-            )
-        }
+    let embedding = match embedding_for_approve(&change).await {
+        Ok(embedding) => embedding,
+        Err(error) => return error_response(error, Some(&project)),
+    };
+    match crate::psql::approve_change(&url, &memory_uuid, embedding).await {
+        Ok(true) => (
+            StatusCode::OK,
+            api_response(Some(Value::Null), None, Some(&project)),
+        ),
         Ok(false) => missing_change(&project),
         Err(error) => error_response(db_error("CHANGE_APPROVE_FAILED", error), Some(&project)),
     }
@@ -118,34 +119,71 @@ fn database_url(project: &str) -> Result<String, ApiError> {
         })
 }
 
-async fn refresh_embedding_after_approve(project: &str, database_url: &str, change: &Value) {
-    // Why：approve 后 active 工作态已确定，语义索引应该跟随最终确认结果重建。
-    let Some((memory_uuid, action)) = reviewed_change(change) else {
-        return;
+async fn embedding_for_approve(
+    change: &Value,
+) -> Result<Option<crate::psql::ApprovedEmbedding>, ApiError> {
+    // What：在 approve 提交前为非 delete 变更生成 embedding。
+    // Why：远程生成失败必须阻断 approve，避免用户看到失败但数据库已经进入 active。
+    let Some((_, action)) = reviewed_change(change) else {
+        return Ok(None);
     };
     if action == "delete" {
-        return;
+        return Ok(None);
     }
-    refresh_embedding(project, database_url, memory_uuid).await;
+    let config = crate::config::load_config("config.toml").map_err(|error| ApiError {
+        code: "CONFIG_LOAD_FAILED",
+        message: error.to_string(),
+    })?;
+    let Some(settings) = config.embedding_settings() else {
+        return Ok(None);
+    };
+    let input = embedding_input_from_change(change)?;
+    let values = crate::provider::embedding::request_embedding(&settings, &input)
+        .await
+        .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error))?;
+    Ok(Some(crate::psql::ApprovedEmbedding {
+        model: settings.model,
+        dimension: settings.dimension as i32,
+        values,
+    }))
 }
 
-async fn refresh_embedding(project: &str, database_url: &str, memory_uuid: &str) {
-    // Why：embedding 是派生索引，刷新失败只降级语义召回，不撤销用户审核结果。
-    let Ok(config) = crate::config::load_config("config.toml") else {
-        return;
-    };
-    let Some(settings) = config.embedding_settings() else {
-        return;
-    };
-    if let Err(error) =
-        crate::provider::refresh_memory_embedding(database_url, settings, memory_uuid).await
-    {
-        eprintln!("{project}: embedding 生成失败: {error}");
+fn embedding_input_from_change(change: &Value) -> Result<String, ApiError> {
+    let state = change.get("after_state").ok_or(ApiError {
+        code: "EMBEDDING_INPUT_MISSING",
+        message: "change.after_state is missing".to_string(),
+    })?;
+    let memory = state.get("memory").ok_or(ApiError {
+        code: "EMBEDDING_INPUT_MISSING",
+        message: "change.after_state.memory is missing".to_string(),
+    })?;
+    let mut parts = ["title_norm", "summary", "content"]
+        .into_iter()
+        .filter_map(|field| memory.get(field)?.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if let Some(keywords) = state.get("keywords").and_then(Value::as_array) {
+        let keywords = keywords
+            .iter()
+            .filter_map(|keyword| keyword.get("keyword_norm")?.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !keywords.trim().is_empty() {
+            parts.push(keywords);
+        }
     }
+    (!parts.is_empty())
+        .then(|| parts.join("\n"))
+        .ok_or(ApiError {
+            code: "EMBEDDING_INPUT_MISSING",
+            message: "embedding input is empty".to_string(),
+        })
 }
 
 fn reviewed_change(change: &Value) -> Option<(&str, &str)> {
-    // Why：刷新派生索引只需要审核动作和目标 uuid，不应让 HTTP 层解析完整状态快照。
+    // Why：审核派生流程只需要动作和目标 uuid，不应让 HTTP 层重复解析完整状态机。
     Some((
         change.get("memory_uuid")?.as_str()?,
         change.get("action")?.as_str()?,

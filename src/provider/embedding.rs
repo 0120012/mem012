@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use super::http::{http_client, provider_endpoint};
 
-// 备注：当前仅用于 provider/API 测试；search_memory 尚未接入，正式搜索链路还需二次迭代。
+// 备注：当前已接入 search_memory 保底召回；provider 协议细节仍需随模型返回格式迭代。
 
 #[derive(Deserialize)]
 struct EmbeddingResponse {
@@ -14,53 +14,7 @@ struct EmbeddingData {
     embedding: Vec<f32>,
 }
 
-pub async fn refresh_memory_embedding(
-    database_url: &str,
-    settings: crate::config::EmbeddingSettings,
-    memory_uuid: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Why：embedding 是 active memory 的派生索引，失败不能影响用户批准主流程。
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
-    let input = fetch_embedding_input(&pool, memory_uuid).await?;
-    let embedding = request_embedding(&settings, &input).await?;
-    upsert_embedding(
-        &pool,
-        memory_uuid,
-        &settings.model,
-        settings.dimension as i32,
-        &embedding,
-    )
-    .await?;
-    Ok(())
-}
-
-async fn fetch_embedding_input(
-    pool: &sqlx::Pool<sqlx::Postgres>,
-    memory_uuid: &str,
-) -> Result<String, sqlx::Error> {
-    // Why：向量只由语义内容生成，usage 不应影响 embedding 稳定性。
-    sqlx::query_scalar(
-        r#"
-        SELECT concat_ws(E'\n',
-            u.title_norm,
-            u.summary,
-            u.content,
-            (SELECT string_agg(k.keyword_norm, ' ' ORDER BY k.keyword_norm)
-             FROM memory_keywords k WHERE k.memory_uuid = u.uuid)
-        )
-        FROM memory_units u
-        WHERE u.uuid = $1::uuid AND u.status = 'active'
-        "#,
-    )
-    .bind(memory_uuid)
-    .fetch_one(pool)
-    .await
-}
-
-async fn request_embedding(
+pub async fn request_embedding(
     settings: &crate::config::EmbeddingSettings,
     input: &str,
 ) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
@@ -85,40 +39,4 @@ async fn request_embedding(
         return Err(format!("embedding 维度错误: {}", embedding.len()).into());
     }
     Ok(embedding)
-}
-
-async fn upsert_embedding(
-    pool: &sqlx::Pool<sqlx::Postgres>,
-    memory_uuid: &str,
-    model: &str,
-    dimension: i32,
-    embedding: &[f32],
-) -> Result<(), sqlx::Error> {
-    // Why：embedding 可重建，重复生成时直接覆盖同一条派生索引。
-    let vector = format!(
-        "[{}]",
-        embedding
-            .iter()
-            .map(f32::to_string)
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    sqlx::query(
-        r#"
-        INSERT INTO memory_embeddings (memory_uuid, embedding, embedding_model, embedding_dimension, embedded_at)
-        VALUES ($1::uuid, $2::vector, $3, $4, now())
-        ON CONFLICT (memory_uuid)
-        DO UPDATE SET embedding = EXCLUDED.embedding,
-            embedding_model = EXCLUDED.embedding_model,
-            embedding_dimension = EXCLUDED.embedding_dimension,
-            embedded_at = EXCLUDED.embedded_at
-        "#,
-    )
-    .bind(memory_uuid)
-    .bind(vector)
-    .bind(model)
-    .bind(dimension)
-    .execute(pool)
-    .await?;
-    Ok(())
 }

@@ -33,6 +33,12 @@ LEFT JOIN memory_units u ON u.uuid = c.memory_uuid
 WHERE c.memory_uuid = $1::uuid
 "#;
 
+pub struct ApprovedEmbedding {
+    pub model: String,
+    pub dimension: i32,
+    pub values: Vec<f32>,
+}
+
 // Why：changes 列表只暴露审查摘要，详情里的 before/after 由 detail 接口单独返回。
 pub async fn list_changes(
     database_url: &str,
@@ -68,6 +74,7 @@ pub async fn get_change(
 pub async fn approve_change(
     database_url: &str,
     memory_uuid: &str,
+    embedding: Option<ApprovedEmbedding>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
@@ -79,6 +86,9 @@ pub async fn approve_change(
         return Ok(false);
     };
     approve_locked_change(&mut tx, &change.0, &change.1).await?;
+    if let Some(embedding) = embedding {
+        upsert_approved_embedding(&mut tx, memory_uuid, embedding).await?;
+    }
     tx.commit().await?;
     Ok(true)
 }
@@ -161,6 +171,7 @@ async fn approve_locked_change(
         super::mark_memory_graph_dirty(tx).await?;
         return Ok(());
     }
+    super::search_index::refresh_memory_search_index(tx, memory_uuid).await?;
     sqlx::query("DELETE FROM memory_changes WHERE memory_uuid = $1::uuid")
         .bind(memory_uuid)
         .execute(&mut **tx)
@@ -169,6 +180,42 @@ async fn approve_locked_change(
         super::relations::insert_auto_relations_for_approved_memory(tx, memory_uuid).await?;
         super::mark_memory_graph_dirty(tx).await?;
     }
+    Ok(())
+}
+
+async fn upsert_approved_embedding(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    embedding: ApprovedEmbedding,
+) -> Result<(), sqlx::Error> {
+    // What：在 approve 同一事务内写入已生成的 memory embedding。
+    // Why：embedding 写入失败时必须回滚 approve 状态，避免 HTTP 报错但记忆已变 active。
+    let vector = format!(
+        "[{}]",
+        embedding
+            .values
+            .iter()
+            .map(f32::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    sqlx::query(
+        r#"
+        INSERT INTO memory_embeddings (memory_uuid, embedding, embedding_model, embedding_dimension, embedded_at)
+        VALUES ($1::uuid, $2::vector, $3, $4, now())
+        ON CONFLICT (memory_uuid)
+        DO UPDATE SET embedding = EXCLUDED.embedding,
+            embedding_model = EXCLUDED.embedding_model,
+            embedding_dimension = EXCLUDED.embedding_dimension,
+            embedded_at = EXCLUDED.embedded_at
+        "#,
+    )
+    .bind(memory_uuid)
+    .bind(vector)
+    .bind(embedding.model)
+    .bind(embedding.dimension)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -199,6 +246,7 @@ async fn restore_before_state(
     restore_memory_unit(tx, memory_uuid, state).await?;
     replace_keywords(tx, memory_uuid, state).await?;
     replace_relations(tx, memory_uuid, state).await?;
+    super::search_index::refresh_memory_search_index(tx, memory_uuid).await?;
     super::mark_memory_graph_dirty(tx).await?;
     sqlx::query("DELETE FROM memory_changes WHERE memory_uuid = $1::uuid")
         .bind(memory_uuid)

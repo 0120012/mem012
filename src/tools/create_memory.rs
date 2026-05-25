@@ -137,6 +137,7 @@ async fn create_memory_transaction(
     let mut tx = pool.begin().await?;
     insert_memory_unit(&mut tx, memory_uuid, after_state).await?;
     insert_memory_keywords(&mut tx, memory_uuid, after_state).await?;
+    crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     insert_memory_relations(&mut tx, after_state).await?;
     sqlx::query(
         r#"
