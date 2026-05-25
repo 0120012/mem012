@@ -5,10 +5,9 @@ mod search_memory;
 mod update_memory;
 
 pub struct ToolContext<'a> {
-    // Why：工具执行需要同时看到当前私库和共享库，但连接池生命周期应由 main 持有。
+    // Why：工具执行只操作当前 profile，连接池生命周期应由 main 持有。
     pub profile: &'a str,
     pub profile_pool: &'a sqlx::Pool<sqlx::Postgres>,
-    pub share_pool: &'a sqlx::Pool<sqlx::Postgres>,
     pub search_default_limit: i32,
     pub embedding_settings: Option<&'a crate::config::EmbeddingSettings>,
     pub rerank_settings: Option<&'a crate::config::RerankSettings>,
