@@ -33,6 +33,7 @@ embeddings_dimension = 1024
 embeddings_key = "" # embeddings_api = local 时可为空。
 
 [network]
+enable_proxy = false # true 时才使用下面的 proxy。
 proxy = "socks5://127.0.0.1:12828" # 可选；也支持 "http://127.0.0.1:12828"。
 
 [debug]

@@ -66,6 +66,7 @@ struct EmbeddingsConfig {
 
 #[derive(Default, Deserialize)]
 struct NetworkConfig {
+    enable_proxy: bool,
     proxy: Option<String>,
 }
 
@@ -140,13 +141,7 @@ impl Config {
                 .as_deref()
                 .unwrap_or("Qwen3-Reranker-4B")
                 .to_string(),
-            proxy: self
-                .network
-                .proxy
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
+            proxy: self.provider_proxy(),
         })
     }
 
@@ -178,14 +173,20 @@ impl Config {
                 .unwrap_or("BAAI/bge-m3")
                 .to_string(),
             dimension: self.embeddings.embeddings_dimension.unwrap_or(1024),
-            proxy: self
-                .network
-                .proxy
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
+            proxy: self.provider_proxy(),
         })
+    }
+
+    fn provider_proxy(&self) -> Option<String> {
+        if !self.network.enable_proxy {
+            return None;
+        }
+        self.network
+            .proxy
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
     }
 }
 
