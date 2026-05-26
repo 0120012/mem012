@@ -1,5 +1,17 @@
 # mem012
 
+PostgreSQL 后端的记忆系统。当前 Rust CLI 支持 create / search / read / update / delete；approve / reject 通过 HTTP API 完成。
+
+## 快速开始
+
+```bash
+cp config.example.toml config.toml
+cargo run -- --profile riko --args '{"tool":"search_memory","params":{"query":"李白","limit":8}}'
+cargo run -- server
+```
+
+CLI 文档见 [docs/TOOLS.md](docs/TOOLS.md) 和 [docs/cli/skill.md](docs/cli/skill.md)。
+
 ## 构建 PostgreSQL 镜像
 
 ```bash
