@@ -27,3 +27,4 @@ target
 node_modules/
 frontend/node_modules/
 config.toml
+_PLAN.md
