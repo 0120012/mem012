@@ -13,7 +13,9 @@ profile 私库 + mem_share 共享库 + category 分类 + Memory Unit + 关键词
 - `profile` 只做私有数据库隔离；启动时从 TOML 选定，不进入搜索参数。
 - `delete_memory` 先软删除；用户确认 delete 后立即硬删除。
 - 运行时同时允许访问当前 profile 私库和 `mem_share` 共享库。
-- `category` 是记忆的大类，例如 `core / meta / trace / project / book`；`share` 是共享库专属 category；不需要提前写入 TOML 白名单。
+- `category` 是记忆的大类，例如 `core / book / myhome / user`；普通写入必须来自 `[categories].index_list` TOML 白名单，Agent 不允许自造 category。
+- `init` 用于 Agent 初始化、工具引导和 skill 引导；`mem012 --profile <profile> init` 只读取当前 profile 库中 `category = init` 且 `status != trashed` 的内容，写入 `init` 必须通过 `--admin_auth`。
+- `share` 是 share profile 的专属 category；普通 profile 禁止使用。
 - URI 不再作为核心寻址方式，也不再有 `domain://path`。
 - `kind` 不做配置白名单，不做核心寻址维度；如果需要分类，交给 category 或关键词处理。
 - `disclosure` 的思想保留，字段改成 `recall_when`。

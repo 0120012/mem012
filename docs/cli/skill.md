@@ -5,24 +5,36 @@ description: Use when creating, searching, deleting, reading hashes, or updating
 
 # Mem012 CLI
 
+## init
+
+1. Agent 启动后先读取当前 profile 的初始化内容。
+2. 用目标库名替换 `{profile}` 后执行：
+
+```bash
+mem012 --profile {profile} init
+```
+
+3. 返回值是 JSON 数组，每项只包含 `title_norm` 和 `content`。读取范围固定为当前 profile 库中 `category = init` 且 `status != trashed` 的记忆。
+
 ## create_memory
 
 1. 用 `create_memory` 创建一条新记忆。创建后返回 `memory_uuid`，结果为 `pending`，后续需要走批准或撤销流程。
 2. 准备必填字段 `category`、`title`、`content`、`keywords`。可选字段是 `summary`、`recall_when`。
-3. 用目标库名替换 `{profile}` 后执行：
+3. `category` 必须来自配置 `[categories].index_list`；不要自造 category。
+4. 用目标库名替换 `{profile}` 后执行：
 
 ```bash
 mem012 --profile {profile} --args '{"tool":"create_memory","params":{"category":"core","title":"标题","content":"正文","summary":"摘要","keywords":["关键词"]}}'
 ```
 
-4. 成功后记录返回的 `memory_uuid`。
-5. 先确认返回结果里 `state` 是 `success`，并且 `data.memory_uuid` 存在。然后用返回的 `memory_uuid` 回读 hash：
+5. 成功后记录返回的 `memory_uuid`。
+6. 先确认返回结果里 `state` 是 `success`，并且 `data.memory_uuid` 存在。然后用返回的 `memory_uuid` 回读 hash：
 
 ```bash
 mem012 --profile {profile} --args '{"tool":"read_memory_hash","params":{"memory_uuid":"{memory_uuid}"}}'
 ```
 
-6. 如果回读返回 `state: success`，并且能看到同一个 `memory_uuid`、`title_norm` 和各字段 hash，说明创建已写入成功。
+7. 如果回读返回 `state: success`，并且能看到同一个 `memory_uuid`、`title_norm` 和各字段 hash，说明创建已写入成功。
 
 ## search_memory
 
