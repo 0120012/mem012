@@ -8,6 +8,7 @@ struct CreateMemoryArgs {
     title: String,
     content: String,
     summary: Option<String>,
+    #[serde(default)]
     keywords: Vec<String>,
     recall_when: Option<String>,
 }
@@ -18,13 +19,7 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：create_memory 独立成文件，后续字段校验和写入 memory_changes 不污染工具路由层。
     let create_args = serde_json::from_value::<CreateMemoryArgs>(args.clone())?;
-    validate_create_memory_args(
-        &create_args,
-        context.profile,
-        context.category_index_list,
-        context.admin_auth,
-        context.admin_token,
-    )?;
+    validate_create_memory_args(&create_args, context.profile, context.category_index_list)?;
     let title_norm: String = sqlx::query_scalar("SELECT normalize_title($1)")
         .bind(&create_args.title)
         .fetch_one(context.profile_pool)
@@ -78,11 +73,18 @@ fn build_after_state(
             .map(normalize_text)
             .unwrap_or_else(|| "core".to_string())
     };
-    let keywords = args
+    let mut keywords = args
         .keywords
         .iter()
         .map(|keyword| serde_json::json!({ "keyword_norm": normalize_text(keyword), "weight": null }))
         .collect::<Vec<_>>();
+    if category == "init"
+        && !keywords
+            .iter()
+            .any(|keyword| keyword["keyword_norm"].as_str() == Some("init"))
+    {
+        keywords.push(serde_json::json!({ "keyword_norm": "init", "weight": null }));
+    }
     Ok(serde_json::json!({
         "memory": {
             "uuid": memory_uuid,
@@ -257,8 +259,6 @@ fn validate_create_memory_args(
     args: &CreateMemoryArgs,
     profile: &str,
     category_index_list: &[String],
-    admin_auth: Option<&str>,
-    admin_token: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：serde 只保证类型正确，业务入口还必须拒绝空值和会破坏分类边界的参数。
     for (name, value) in [("title", &args.title), ("content", &args.content)] {
@@ -267,15 +267,12 @@ fn validate_create_memory_args(
         }
     }
 
-    validate_create_category(
-        args.category.as_deref(),
-        profile,
-        category_index_list,
-        admin_auth,
-        admin_token,
-    )?;
+    validate_create_category(args.category.as_deref(), profile, category_index_list)?;
 
-    if args.keywords.is_empty() || args.keywords.iter().any(|item| item.trim().is_empty()) {
+    let is_init = profile != "share" && args.category.as_deref().unwrap_or("core") == "init";
+    if (!is_init && args.keywords.is_empty())
+        || args.keywords.iter().any(|item| item.trim().is_empty())
+    {
         return Err("keywords 必须是非空字符串数组".into());
     }
     let mut keyword_set = HashSet::new();
@@ -305,8 +302,6 @@ fn validate_create_category(
     category: Option<&str>,
     profile: &str,
     category_index_list: &[String],
-    _admin_auth: Option<&str>,
-    _admin_token: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // What：校验 create_memory 的 category 与目标 profile 是否一致。
     // Why：数据库路由只由 --profile 决定，category 只能表达目标库允许的分类值。
@@ -362,14 +357,14 @@ fn init_auth_file_help() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_create_category;
+    use super::{CreateMemoryArgs, build_after_state, validate_create_category};
 
     #[test]
     fn validate_create_category_rejects_unknown_category() {
         let allowed = vec!["core".to_string(), "book".to_string()];
 
-        assert!(validate_create_category(Some("book"), "riko", &allowed, None, None).is_ok());
-        let error = validate_create_category(Some("unknown"), "riko", &allowed, None, None)
+        assert!(validate_create_category(Some("book"), "riko", &allowed).is_ok());
+        let error = validate_create_category(Some("unknown"), "riko", &allowed)
             .unwrap_err()
             .to_string();
         assert!(error.contains("unknown"));
@@ -381,15 +376,33 @@ mod tests {
         let allowed = vec!["core".to_string(), "init".to_string()];
         let no_init = vec!["core".to_string()];
 
-        let missing_category = validate_create_category(Some("init"), "riko", &no_init, None, None)
+        let missing_category = validate_create_category(Some("init"), "riko", &no_init)
             .unwrap_err()
             .to_string();
         assert!(missing_category.contains("category_list: core"));
 
-        let missing_file = validate_create_category(Some("init"), "riko", &allowed, None, None)
+        let missing_file = validate_create_category(Some("init"), "riko", &allowed)
             .unwrap_err()
             .to_string();
         assert!(missing_file.contains("~/.auth/auth_file.mem"));
         assert!(missing_file.contains("请向用户申请授权"));
+    }
+
+    #[test]
+    fn build_after_state_adds_init_keyword_for_init_category() {
+        let args = serde_json::from_value::<CreateMemoryArgs>(serde_json::json!({
+            "category": "init",
+            "title": "标题",
+            "content": "正文"
+        }))
+        .unwrap();
+
+        let state = build_after_state(&args, "标题", "memory-uuid", "riko").unwrap();
+        let keywords = state["keywords"].as_array().unwrap();
+        assert!(
+            keywords
+                .iter()
+                .any(|keyword| keyword["keyword_norm"].as_str() == Some("init"))
+        );
     }
 }

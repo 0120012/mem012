@@ -10,8 +10,6 @@ pub struct ToolContext<'a> {
     pub profile_pool: &'a sqlx::Pool<sqlx::Postgres>,
     pub search_default_limit: i32,
     pub category_index_list: &'a [String],
-    pub admin_auth: Option<&'a str>,
-    pub admin_token: Option<&'a str>,
     pub embedding_settings: Option<&'a crate::config::EmbeddingSettings>,
     pub rerank_settings: Option<&'a crate::config::RerankSettings>,
 }

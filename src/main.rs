@@ -10,7 +10,7 @@ struct CliArgs {
     command: Option<String>,
     profile: Option<String>,
     args_json: Option<String>,
-    admin_auth: Option<String>,
+    auth_token: Option<String>,
 }
 
 #[tokio::main]
@@ -31,6 +31,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let address = config.server_addr();
         server::app_run(address).await;
         return Ok(());
+    }
+    if cli_args.auth_token.is_some() {
+        return Err("mem012 --auth grant exchange 尚未实现".into());
     }
 
     // ==== 2. check for init_db()
@@ -65,8 +68,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         profile_pool: &profile_pool,
         search_default_limit: config.search_default_limit(),
         category_index_list: config.category_index_list(),
-        admin_auth: cli_args.admin_auth.as_deref(),
-        admin_token: config.api_token(),
         embedding_settings: embedding_settings.as_ref(),
         rerank_settings: rerank_settings.as_ref(),
     };

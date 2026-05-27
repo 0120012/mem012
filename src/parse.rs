@@ -5,7 +5,7 @@ pub fn parse_cli_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
     let mut command = None;
     let mut profile = None;
     let mut args_json = None;
-    let mut admin_auth = None;
+    let mut auth_token = None;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -13,7 +13,7 @@ pub fn parse_cli_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
             "server" | "init" => command = Some(arg),
             "--profile" => profile = args.next(),
             "--args" => args_json = args.next(),
-            "--admin_auth" => admin_auth = args.next(),
+            "--auth" => auth_token = args.next(),
             _ => return Err(format!("未知参数: {arg}").into()),
         }
     }
@@ -22,7 +22,7 @@ pub fn parse_cli_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
         command,
         profile,
         args_json,
-        admin_auth,
+        auth_token,
     })
 }
 
