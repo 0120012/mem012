@@ -10,6 +10,7 @@ struct CliArgs {
     command: Option<String>,
     profile: Option<String>,
     args_json: Option<String>,
+    admin_auth: Option<String>,
 }
 
 #[tokio::main]
@@ -37,13 +38,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = config
         .database_url(profile.as_str())
         .ok_or("未找到指定 profile")?;
-    let share_database_url = config
-        .database_url("share")
-        .ok_or("未找到 profile: share")?;
     // Why：main 持有运行期连接池，init_db 和后续工具才能借用同一组数据库连接。
     let profile_pool = sqlx::postgres::PgPoolOptions::new()
         .connect(database_url)
         .await?;
+    if cli_args.command.as_deref() == Some("init") {
+        print_init_memories(&profile_pool).await?;
+        return Ok(());
+    }
+
+    let share_database_url = config
+        .database_url("share")
+        .ok_or("未找到 profile: share")?;
     let share_pool = sqlx::postgres::PgPoolOptions::new()
         .connect(share_database_url)
         .await?;
@@ -58,6 +64,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         profile: profile.as_str(),
         profile_pool: &profile_pool,
         search_default_limit: config.search_default_limit(),
+        category_index_list: config.category_index_list(),
+        admin_auth: cli_args.admin_auth.as_deref(),
+        admin_token: config.api_token(),
         embedding_settings: embedding_settings.as_ref(),
         rerank_settings: rerank_settings.as_ref(),
     };
@@ -65,5 +74,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==== 4. 选择工具, 开始
     tools::dispatch_tool_request(&tool_context, request_args).await?;
 
+    Ok(())
+}
+
+async fn print_init_memories(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：读取当前 profile 中用于 CLI init 的记忆内容。
+    // Why：init 只服务 Agent 启动上下文，应固定读取 init 类并避免输出 uuid/status 等普通记忆元数据。
+    let rows = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT title_norm, content
+        FROM memory_units
+        WHERE category = 'init' AND status <> 'trashed'
+        ORDER BY title_norm ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    let results = rows
+        .into_iter()
+        .map(|(title_norm, content)| serde_json::json!({ "title_norm": title_norm, "content": content }))
+        .collect::<Vec<_>>();
+    println!("{}", serde_json::to_string(&results)?);
     Ok(())
 }

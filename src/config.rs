@@ -5,6 +5,8 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct Config {
     database: BTreeMap<String, String>,
+    #[serde(default)]
+    categories: CategoriesConfig,
     search: SearchConfig,
     #[serde(default)]
     rerank: RerankConfig,
@@ -25,6 +27,11 @@ struct SearchConfig {
     semantic: i32,
     graph: i32,
     stale_penalty: i32,
+}
+
+#[derive(Default, Deserialize)]
+struct CategoriesConfig {
+    index_list: Vec<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -111,6 +118,11 @@ impl Config {
     pub fn search_default_limit(&self) -> i32 {
         // Why：搜索入口必须统一遵守配置上限，避免各工具各自解释 limit。
         self.search.default_limit.max(1)
+    }
+
+    pub fn category_index_list(&self) -> &[String] {
+        // Why：category 白名单只需要一组可写索引名，避免把展示描述和权限状态混进写入校验。
+        &self.categories.index_list
     }
 
     #[allow(dead_code)]

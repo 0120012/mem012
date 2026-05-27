@@ -18,7 +18,13 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：create_memory 独立成文件，后续字段校验和写入 memory_changes 不污染工具路由层。
     let create_args = serde_json::from_value::<CreateMemoryArgs>(args.clone())?;
-    validate_create_memory_args(&create_args, context.profile)?;
+    validate_create_memory_args(
+        &create_args,
+        context.profile,
+        context.category_index_list,
+        context.admin_auth,
+        context.admin_token,
+    )?;
     let title_norm: String = sqlx::query_scalar("SELECT normalize_title($1)")
         .bind(&create_args.title)
         .fetch_one(context.profile_pool)
@@ -250,6 +256,9 @@ async fn insert_memory_relations(
 fn validate_create_memory_args(
     args: &CreateMemoryArgs,
     profile: &str,
+    category_index_list: &[String],
+    admin_auth: Option<&str>,
+    admin_token: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：serde 只保证类型正确，业务入口还必须拒绝空值和会破坏分类边界的参数。
     for (name, value) in [("title", &args.title), ("content", &args.content)] {
@@ -258,7 +267,13 @@ fn validate_create_memory_args(
         }
     }
 
-    validate_create_category(args.category.as_deref(), profile)?;
+    validate_create_category(
+        args.category.as_deref(),
+        profile,
+        category_index_list,
+        admin_auth,
+        admin_token,
+    )?;
 
     if args.keywords.is_empty() || args.keywords.iter().any(|item| item.trim().is_empty()) {
         return Err("keywords 必须是非空字符串数组".into());
@@ -289,6 +304,9 @@ fn validate_create_memory_args(
 fn validate_create_category(
     category: Option<&str>,
     profile: &str,
+    category_index_list: &[String],
+    _admin_auth: Option<&str>,
+    _admin_token: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // What：校验 create_memory 的 category 与目标 profile 是否一致。
     // Why：数据库路由只由 --profile 决定，category 只能表达目标库允许的分类值。
@@ -311,6 +329,67 @@ fn validate_create_category(
     if category == "share" || !category_slug {
         return Err("category 必须是非 share 的 slug".into());
     }
+    if category_index_list.is_empty() {
+        return Err("categories.index_list 不能为空".into());
+    }
+    if !category_index_list
+        .iter()
+        .any(|allowed| allowed == category)
+    {
+        return Err(format!(
+            "category 不在 categories.index_list 中: {category}；category_list: {}",
+            category_index_list.join(", ")
+        )
+        .into());
+    }
+    if category == "init" {
+        let home = std::env::var_os("HOME").ok_or_else(init_auth_file_help)?;
+        let token_path = std::path::PathBuf::from(home)
+            .join(".auth")
+            .join("auth_file.mem");
+        let token = std::fs::read_to_string(&token_path).map_err(|_| init_auth_file_help())?;
+        if token.trim().is_empty() {
+            return Err("auth file 为空；请向用户申请授权后重试".into());
+        }
+    }
 
     Ok(())
+}
+
+fn init_auth_file_help() -> String {
+    "写入 category=init 需要 auth file: ~/.auth/auth_file.mem；请向用户申请授权后重试".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_create_category;
+
+    #[test]
+    fn validate_create_category_rejects_unknown_category() {
+        let allowed = vec!["core".to_string(), "book".to_string()];
+
+        assert!(validate_create_category(Some("book"), "riko", &allowed, None, None).is_ok());
+        let error = validate_create_category(Some("unknown"), "riko", &allowed, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown"));
+        assert!(error.contains("category_list: core, book"));
+    }
+
+    #[test]
+    fn validate_create_category_requires_auth_file_for_init() {
+        let allowed = vec!["core".to_string(), "init".to_string()];
+        let no_init = vec!["core".to_string()];
+
+        let missing_category = validate_create_category(Some("init"), "riko", &no_init, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(missing_category.contains("category_list: core"));
+
+        let missing_file = validate_create_category(Some("init"), "riko", &allowed, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(missing_file.contains("~/.auth/auth_file.mem"));
+        assert!(missing_file.contains("请向用户申请授权"));
+    }
 }
