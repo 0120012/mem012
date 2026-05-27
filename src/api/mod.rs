@@ -4,6 +4,7 @@ mod graph;
 mod health;
 mod memories;
 mod projects;
+mod turnstile;
 mod utils;
 
 use axum::{
@@ -17,6 +18,11 @@ pub fn router_list() -> Router {
         .route("/api/health", get(health::health))
         .route("/api/auth/verify", post(auth::verify))
         .route("/api/auth/session", get(auth::session))
+        .route("/api/auth/init-token", get(auth::init_token_status))
+        .route(
+            "/api/auth/init-token/refresh",
+            post(auth::init_token_refresh),
+        )
         .route("/api/projects", get(projects::list))
         .route("/api/memories", get(memories::list))
         .route("/api/changes", get(changes::list))

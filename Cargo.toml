@@ -11,12 +11,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing-subscriber = "0.3.23"
 dotenvy = "0.15"
+ed25519-dalek = "2"
 hmac = "0.12"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres"] }
 log = "0.4.29"
 sha2 = "0.10"
 toml = "1.1.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks"] }
+rand = "0.8"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
