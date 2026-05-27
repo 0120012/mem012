@@ -8,51 +8,100 @@
 
 ## 角色
 
-- 前端 auth 页面：展示短期 `auth_token`，每 180s 自动刷新；后端验证或消费授权后也必须立即刷新。
-- 用户：从前端页面复制 `auth_token`，手动授权本机 CLI。
+- `/auth` 页面：只在登录 session 存在时可访问；通过 Turnstile 后展示短期 `auth_token`。
+- 用户：从 `/auth` 页面复制 `auth_token`，手动授权本机 CLI。
 - CLI：执行 `mem012 --auth <auth_token>`，换取本机临时授权文件。
-- 后端 API：验证前端 `auth_token`，签发 300s 的 Ed25519 一次性 grant，并在 grant 消费后立即废弃 grant。
+- 后端 API：验证 Turnstile、签发 `auth_token`、签发 300s Ed25519 单活一次性 grant，并消费 grant。
 - auth file：本机短期授权凭据，路径固定为 `~/.auth/auth_file.mem`。
 
-## 算法
+## `/auth` 页面
 
-- `auth_token`：256-bit CSPRNG 随机值，Base64URL no padding 编码，只用于换取 grant。
-- `grant_id` 和 `nonce`：256-bit CSPRNG 随机值，Base64URL no padding 编码。
-- grant：Ed25519 签名票据，签名覆盖 `payload` 的稳定 JSON 字节。
-- 服务端状态：保存 `grant_id` 的有效期、scope 和 consumed 状态，用于一次性消费和撤销。
+页面初始只显示 Cloudflare Turnstile，不展示 token 区域。
 
-## 授权流程
+Turnstile 使用官方 explicit rendering：
 
-1. 前端 auth 页面生成并展示 `auth_token`，有效期 180s。
-2. 用户执行：
-
-```bash
-mem012 --auth <auth_token>
+```html
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
 ```
 
-3. CLI 调用后端 API 验证 `auth_token`。
-4. 验证成功后，后端立即返回一个短期 Ed25519 grant，grant 有效期 300s。
-5. CLI 创建 `~/.auth/auth_file.mem`，写入 grant 信息。
-6. Agent 使用普通 create 命令写入 `init`，命令不再传 `--admin_auth`：
-
-```bash
-mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init","title":"标题","content":"正文","keywords":["init"]}}'
-```
-
-7. `create_memory` 发现 `category = init` 后，读取 `~/.auth/auth_file.mem`，并调用后端 API 验证 grant。
-8. grant 验证通过后才允许写入。
-9. 无论 grant 验证成功、失败、过期或 API 拒绝，后端都立即废弃 grant，并刷新前端 `auth_token`。
-10. CLI 收到验证结果后立即删除 `~/.auth/auth_file.mem`；后续数据库写入失败也不保留 auth file。
-
-## auth file
-
-路径固定：
+前端使用公开 site key：
 
 ```text
-~/.auth/auth_file.mem
+0x4AAAAAADXWPWveDjEIZ8XK
 ```
 
-内容是完整 Ed25519 grant 票据 JSON，不保存前端原始 `auth_token`：
+Turnstile 成功后，前端拿到 challenge token，并调用：
+
+```http
+POST /api/auth/refresh
+```
+
+只有后端返回 `auth_token` 后，页面才展示 token、倒计时和复制按钮。`auth_token` 有效期为 180s。
+
+如果用户已经获取过 `auth_token` 但没有复制，随后刷新页面并再次完成 Turnstile，第二次 refresh 会签发新的 `auth_token`。旧 `auth_token` 和旧 grant 会立即失效，即使它们还没过期。页面刷新本身不生成 token；只有 Turnstile 通过后的 refresh 成功才会轮换授权。
+
+页面每 3-5s 轮询：
+
+```http
+GET /api/auth/status
+```
+
+轮询只用于确认当前 token 是否仍有效。轮询不能生成新 token，也不能返回 token 明文。token 过期、刷新失败、被 CLI 换 grant、grant 被 consume 或后端状态失效时，页面必须立即隐藏旧 token，并要求用户重新通过 Turnstile。
+
+## Turnstile 后端验证
+
+后端按 Cloudflare Siteverify 验证前端提交的 Turnstile token：
+
+```http
+POST https://challenges.cloudflare.com/turnstile/v0/siteverify
+```
+
+请求字段：
+
+- `secret`：Turnstile secret key，只能放在本地 `config.toml`
+- `response`：前端 Turnstile challenge token。
+- `remoteip`：可选。
+
+响应必须检查 `success`。失败时读取 `error-codes` 并拒绝签发 `auth_token`。
+
+仓库只允许提交占位配置和公开 site key，不提交真实 secret key。
+
+## API 合同
+
+`POST /api/auth/refresh`
+
+- 需要登录 session。
+- 请求：`{ "turnstile_token": "..." }`
+- 行为：后端 Siteverify 通过后生成 256-bit `auth_token`，并废弃旧 token 和所有未消费 grant。
+- 响应：`{ "auth_token": "...", "expires_at": 1760000180 }`
+- TTL：180s。
+
+`GET /api/auth/status`
+
+- 需要登录 session。
+- 行为：只返回当前 token 状态，不生成新 token。
+- 响应：`{ "valid": true, "expires_at": 1760000180 }` 或 `{ "valid": false, "expires_at": null }`
+- 禁止返回 token 明文。
+
+`POST /api/auth/grant`
+
+- CLI 调用，不需要浏览器 session。
+- 请求：`{ "auth_token": "..." }`
+- 行为：验证 `auth_token` 成功后立即废弃该 token，废弃旧 grant，并返回新的 300s Ed25519 grant。
+- 失败：不签发 grant。
+
+`POST /api/auth/grant/consume`
+
+- CLI 在 `create_memory category=init` 时调用。
+- 请求：auth file 中的完整 grant JSON。
+- 行为：验签、检查 `scope`、检查过期时间、检查服务端 grant 状态，并一次性消费。
+- 无论成功、失败、过期或拒绝，都废弃该 grant，并让前端 token 状态失效。
+
+## grant 格式
+
+`auth_token`、`grant_id`、`nonce` 都是 256-bit CSPRNG 随机值，使用 Base64URL no padding 编码。
+
+grant 是 Ed25519 签名票据，签名覆盖 `payload` 的稳定 JSON 字节：
 
 ```json
 {
@@ -68,6 +117,18 @@ mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init
 }
 ```
 
+服务端内存状态保存当前有效 `grant_id` 的有效期、scope 和 consumed 状态。v1 中 grant 是单活授权：新 `auth_token` 生成或新 grant 签发时，旧的未消费 grant 必须立即失效。Ed25519 keypair 在服务进程启动时生成，服务重启后旧 grant 全部失效。
+
+## auth file
+
+路径固定：
+
+```text
+~/.auth/auth_file.mem
+```
+
+内容是完整 Ed25519 grant JSON，不保存前端原始 `auth_token`。
+
 约束：
 
 - `~/.auth` 目录权限应为 `0700`。
@@ -76,8 +137,34 @@ mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init
 - `payload.scope` 必须是 `init:create`。
 - `payload.exp` 必须是签发后 300s。
 - 文件存在不代表授权有效，必须通过后端 API 验证 grant。
-- grant 只能使用一次，验证成功、验证失败、过期或 API 拒绝后都必须废弃。
-- 不把前端页面的原始 `auth_token` 长期写入 auth file；`auth_token` 只用于换取 grant。
+- grant 只能使用一次，验证成功、验证失败、过期、API 拒绝、刷新 token 或签发新 grant 后都必须废弃。
+
+## 授权流程
+
+1. 用户登录后访问 `/auth`。
+2. 页面显示 Turnstile，不展示 token。
+3. Turnstile 成功后，页面调用 `POST /api/auth/refresh`。
+4. 后端 Siteverify 通过后返回 180s `auth_token`。
+5. 用户执行：
+
+```bash
+mem012 --auth <auth_token>
+```
+
+6. CLI 调用 `POST /api/auth/grant`。
+7. 后端验证 `auth_token`，成功后废弃该 token 和旧 grant，并返回新的 300s Ed25519 grant。
+8. CLI 创建 `~/.auth/auth_file.mem`，写入 grant JSON。
+9. Agent 使用普通 create 命令写入 `init`：
+
+```bash
+mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init","title":"标题","content":"正文","keywords":["init"]}}'
+```
+
+所有新建记忆都应显式带 `keywords`。`category = init` 时，CLI 内部仍必须确保 keywords 包含 `init`；用户已传 `init` 时不重复追加。
+
+10. `create_memory` 发现 `category = init` 后，读取 `~/.auth/auth_file.mem`，并调用 `POST /api/auth/grant/consume`。
+11. grant 验证通过后才允许写入。
+12. CLI 收到 consume 结果后必须先删除 `~/.auth/auth_file.mem`，再继续数据库写入或返回错误；后续数据库写入失败也不保留 auth file。
 
 ## create_memory 规则
 
@@ -85,10 +172,11 @@ mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init
 
 1. `init` 必须存在于 `[categories].index_list`。
 2. `~/.auth/auth_file.mem` 必须存在且非空。
-3. auth file 内 Ed25519 grant 必须通过后端 API 验签、查状态并消费。
-4. 后端完成 grant 验证后，无论通过或失败，都立即废弃 grant，并刷新前端 `auth_token`。
-5. CLI 无论验证通过或失败，都立即删除 auth file。
-6. 只有 grant 验证通过后，才执行正常写入流程。
+3. 创建 init 记忆时，程序内部必须自动确保 keywords 包含 `init`；用户已传 `init` 时不重复追加，不需要向用户额外提示。
+4. auth file 内 grant 必须通过后端 API 验签、查状态并消费。
+5. 后端完成 grant 验证后，无论通过或失败，都立即废弃 grant，并让前端 token 状态失效。
+6. CLI 无论验证通过或失败，都立即删除 auth file。
+7. 只有 grant 验证通过后，才执行正常写入流程。
 
 如果缺少 auth file，返回错误：
 
@@ -101,4 +189,9 @@ mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init
 - 不在 skill 文档里写 `mem012 --auth`。
 - 不允许 Agent 自己生成或刷新授权。
 - 不使用长期 `server.api_token` 作为 CLI 写入 `init` 的授权凭据。
-- 不通过 `--admin_auth` 在每次 `create_memory` 命令中传 token。
+- 旧 `--admin_auth` 方案不再使用。
+
+## 参考
+
+- Cloudflare Turnstile client-side rendering: <https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/>
+- Cloudflare Turnstile server-side validation: <https://developers.cloudflare.com/turnstile/get-started/server-side-validation/>
