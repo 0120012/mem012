@@ -1,3 +1,4 @@
+pub(crate) mod auth;
 mod create_memory;
 mod delete_memory;
 mod read_memory;
@@ -10,6 +11,7 @@ pub struct ToolContext<'a> {
     pub profile_pool: &'a sqlx::Pool<sqlx::Postgres>,
     pub search_default_limit: i32,
     pub category_index_list: &'a [String],
+    pub api_base_url: &'a str,
     pub embedding_settings: Option<&'a crate::config::EmbeddingSettings>,
     pub rerank_settings: Option<&'a crate::config::RerankSettings>,
 }
