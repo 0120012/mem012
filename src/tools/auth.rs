@@ -7,7 +7,7 @@ pub(crate) async fn run(
     let api_base_url = crate::local_api_base_url(server_addr)?;
     let auth_file_path = crate::init_auth_file_path()?;
     remove_init_auth_file(&auth_file_path)?;
-    let grant = crate::exchange_init_auth_grant(&api_base_url, auth_token).await?;
+    let grant = exchange_init_auth_grant(&api_base_url, auth_token).await?;
     crate::write_init_auth_file(&auth_file_path, &grant)?;
     println!(
         "{}",
@@ -33,9 +33,52 @@ pub(crate) fn remove_init_auth_file(
     }
 }
 
+async fn exchange_init_auth_grant(
+    api_base_url: &str,
+    auth_token: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    // What：向本机 HTTP API 提交前端 auth_token，并换取 init:create grant。
+    // Why：CLI 不能保存前端 token，只能保存后端签发的一次性 Ed25519 grant。
+    let auth_token = auth_token.trim();
+    if auth_token.is_empty() {
+        return Err("--auth token 不能为空".into());
+    }
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/auth/grant",
+            api_base_url.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({ "auth_token": auth_token }))
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.json::<serde_json::Value>().await?;
+    if !status.is_success() {
+        let message = body
+            .pointer("/error/message")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| status.to_string());
+        return Err(format!("换取 init grant 失败: {message}").into());
+    }
+    body.get("data")
+        .cloned()
+        .ok_or_else(|| "init grant 响应缺少 data".into())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::remove_init_auth_file;
+    use super::{exchange_init_auth_grant, remove_init_auth_file};
+
+    #[tokio::test]
+    async fn exchange_init_auth_grant_rejects_empty_token() {
+        let error = exchange_init_auth_grant("http://127.0.0.1:37777", " ")
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("--auth token 不能为空"));
+    }
 
     #[test]
     fn remove_init_auth_file_ignores_missing_file() {

@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if let Some(auth_token) = cli_args.auth_token {
-        tools::auth::run(config.server_addr(), &auth_token).await?;
+        tools::dispatch_auth_command(config.server_addr(), &auth_token).await?;
         return Ok(());
     }
 
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(database_url)
         .await?;
     if cli_args.command.as_deref() == Some("init") {
-        print_init_memories(&profile_pool).await?;
+        tools::dispatch_init_command(&profile_pool).await?;
         return Ok(());
     }
 
@@ -78,29 +78,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==== 4. 选择工具, 开始
     tools::dispatch_tool_request(&tool_context, request_args).await?;
 
-    Ok(())
-}
-
-async fn print_init_memories(
-    pool: &sqlx::Pool<sqlx::Postgres>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // What：读取当前 profile 中用于 CLI init 的记忆内容。
-    // Why：init 只服务 Agent 启动上下文，应固定读取 init 类并避免输出 uuid/status 等普通记忆元数据。
-    let rows = sqlx::query_as::<_, (String, String)>(
-        r#"
-        SELECT title_norm, content
-        FROM memory_units
-        WHERE category = 'init' AND status <> 'trashed'
-        ORDER BY title_norm ASC
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-    let results = rows
-        .into_iter()
-        .map(|(title_norm, content)| serde_json::json!({ "title_norm": title_norm, "content": content }))
-        .collect::<Vec<_>>();
-    println!("{}", serde_json::to_string(&results)?);
     Ok(())
 }
 
@@ -163,47 +140,12 @@ fn write_init_auth_file(
     Ok(())
 }
 
-async fn exchange_init_auth_grant(
-    api_base_url: &str,
-    auth_token: &str,
-) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    // What：向本机 HTTP API 提交前端 auth_token，并换取 init:create grant。
-    // Why：CLI 不能保存前端 token，只能保存后端签发的一次性 Ed25519 grant。
-    let auth_token = auth_token.trim();
-    if auth_token.is_empty() {
-        return Err("--auth token 不能为空".into());
-    }
-    let response = reqwest::Client::new()
-        .post(format!(
-            "{}/api/auth/grant",
-            api_base_url.trim_end_matches('/')
-        ))
-        .json(&serde_json::json!({ "auth_token": auth_token }))
-        .send()
-        .await?;
-    let status = response.status();
-    let body = response.json::<serde_json::Value>().await?;
-    if !status.is_success() {
-        let message = body
-            .pointer("/error/message")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_else(|| status.to_string());
-        return Err(format!("换取 init grant 失败: {message}").into());
-    }
-    body.get("data")
-        .cloned()
-        .ok_or_else(|| "init grant 响应缺少 data".into())
-}
-
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
-    use super::{
-        exchange_init_auth_grant, init_auth_file_path, local_api_base_url, write_init_auth_file,
-    };
+    use super::{init_auth_file_path, local_api_base_url, write_init_auth_file};
 
     #[test]
     fn local_api_base_url_maps_wildcard_listener_to_loopback() {
@@ -227,16 +169,6 @@ mod tests {
             local_api_base_url("https://example.com").unwrap(),
             "https://example.com"
         );
-    }
-
-    #[tokio::test]
-    async fn exchange_init_auth_grant_rejects_empty_token() {
-        let error = exchange_init_auth_grant("http://127.0.0.1:37777", " ")
-            .await
-            .unwrap_err()
-            .to_string();
-
-        assert!(error.contains("--auth token 不能为空"));
     }
 
     #[test]

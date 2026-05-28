@@ -1,4 +1,4 @@
-pub(crate) mod auth;
+mod auth;
 mod create_memory;
 mod delete_memory;
 mod read_memory;
@@ -14,6 +14,38 @@ pub struct ToolContext<'a> {
     pub api_base_url: &'a str,
     pub embedding_settings: Option<&'a crate::config::EmbeddingSettings>,
     pub rerank_settings: Option<&'a crate::config::RerankSettings>,
+}
+
+pub async fn dispatch_auth_command(
+    server_addr: &str,
+    auth_token: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：分发顶层 `mem012 --auth` 命令。
+    // Why：main 只处理 CLI 生命周期，具体 auth 命令仍归 tools 模块管理。
+    auth::run(server_addr, auth_token).await
+}
+
+pub async fn dispatch_init_command(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：读取当前 profile 中用于 CLI init 的记忆内容。
+    // Why：init 只服务 Agent 启动上下文，应固定输出精简上下文，不走普通 tool JSON 外壳。
+    let rows = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT title_norm, content
+        FROM memory_units
+        WHERE category = 'init' AND status <> 'trashed'
+        ORDER BY title_norm ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    let results = rows
+        .into_iter()
+        .map(|(title_norm, content)| serde_json::json!({ "title_norm": title_norm, "content": content }))
+        .collect::<Vec<_>>();
+    println!("{}", serde_json::to_string(&results)?);
+    Ok(())
 }
 
 pub async fn dispatch_tool_request(
