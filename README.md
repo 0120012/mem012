@@ -12,6 +12,12 @@ cargo run -- server
 
 CLI 文档见 [docs/TOOLS.md](docs/TOOLS.md) 和 [docs/cli/skill.md](docs/cli/skill.md)。
 
+## Init 授权
+
+1. 启动服务并登录 Web，打开 `/auth`，通过 Turnstile 获取 5 分钟有效的 `auth_token`。
+2. 在同一用户环境执行 `mem012 --auth <auth_token>`，写入 `~/.auth/auth_file.mem`。
+3. 执行一次 `category=init` 的 `create_memory` 会消费并删除该 auth file；重复写入需要重新授权。
+
 ## 构建 PostgreSQL 镜像
 
 ```bash
