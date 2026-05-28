@@ -18,11 +18,11 @@ pub fn router_list() -> Router {
         .route("/api/health", get(health::health))
         .route("/api/auth/verify", post(auth::verify))
         .route("/api/auth/session", get(auth::session))
-        .route("/api/auth/init-token", get(auth::init_token_status))
-        .route(
-            "/api/auth/init-token/refresh",
-            post(auth::init_token_refresh),
-        )
+        .route("/api/auth/status", get(auth::auth_status))
+        .route("/api/auth/refresh", post(auth::auth_refresh))
+        .route("/api/auth/refresh/force", post(auth::auth_force_refresh))
+        .route("/api/auth/grant", post(auth::auth_grant))
+        .route("/api/auth/grant/consume", post(auth::auth_grant_consume))
         .route("/api/projects", get(projects::list))
         .route("/api/memories", get(memories::list))
         .route("/api/changes", get(changes::list))
