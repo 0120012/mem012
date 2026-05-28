@@ -254,8 +254,13 @@ impl Config {
 
 // Why：配置读取独立于数据库初始化，避免 IO 错误和数据库错误混在同一层。
 pub fn load_config(path: &str) -> Result<Config, Box<dyn std::error::Error>> {
-    // 1\ 读取文件 path
-    let text = std::fs::read_to_string(path)?;
+    // What：读取 MEM012_CONFIG 指向的配置；未设置时回退到调用方传入路径。
+    // Why：agent 通常不在项目目录执行，配置路径必须能由宿主环境固定注入。
+    let config_path = std::env::var_os("MEM012_CONFIG")
+        .filter(|value| !value.as_os_str().is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(path));
+    let text = std::fs::read_to_string(config_path)?;
 
     // 2、配置读取到struct config
     let config: Config = toml::from_str(&text)?;
