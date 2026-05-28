@@ -20,6 +20,9 @@ pub async fn run(
     // Why：create_memory 独立成文件，后续字段校验和写入 memory_changes 不污染工具路由层。
     let create_args = serde_json::from_value::<CreateMemoryArgs>(args.clone())?;
     validate_create_memory_args(&create_args, context.profile, context.category_index_list)?;
+    if is_init_create(&create_args, context.profile) {
+        consume_init_auth_grant(context.api_base_url).await?;
+    }
     let title_norm: String = sqlx::query_scalar("SELECT normalize_title($1)")
         .bind(&create_args.title)
         .fetch_one(context.profile_pool)
@@ -269,8 +272,7 @@ fn validate_create_memory_args(
 
     validate_create_category(args.category.as_deref(), profile, category_index_list)?;
 
-    let is_init = profile != "share" && args.category.as_deref().unwrap_or("core") == "init";
-    if (!is_init && args.keywords.is_empty())
+    if (!is_init_create(args, profile) && args.keywords.is_empty())
         || args.keywords.iter().any(|item| item.trim().is_empty())
     {
         return Err("keywords 必须是非空字符串数组".into());
@@ -337,17 +339,87 @@ fn validate_create_category(
         )
         .into());
     }
-    if category == "init" {
-        let home = std::env::var_os("HOME").ok_or_else(init_auth_file_help)?;
-        let token_path = std::path::PathBuf::from(home)
-            .join(".auth")
-            .join("auth_file.mem");
-        let token = std::fs::read_to_string(&token_path).map_err(|_| init_auth_file_help())?;
-        if token.trim().is_empty() {
-            return Err("auth file 为空；请向用户申请授权后重试".into());
+    Ok(())
+}
+
+fn is_init_create(args: &CreateMemoryArgs, profile: &str) -> bool {
+    profile != "share" && args.category.as_deref().unwrap_or("core") == "init"
+}
+
+fn init_auth_file_path() -> Result<std::path::PathBuf, String> {
+    crate::init_auth_file_path().map_err(|_| init_auth_file_help())
+}
+
+fn read_init_auth_file(
+    token_path: &std::path::Path,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let token = std::fs::read_to_string(token_path).map_err(|_| init_auth_file_help())?;
+    if token.trim().is_empty() {
+        return Err("auth file 为空；请向用户申请授权后重试".into());
+    }
+    serde_json::from_str(&token)
+        .map_err(|_| "auth file 不是合法 JSON；请向用户申请授权后重试".into())
+}
+
+async fn consume_init_auth_grant(api_base_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let token_path = init_auth_file_path()?;
+    consume_init_auth_grant_file(api_base_url, &token_path).await
+}
+
+async fn consume_init_auth_grant_file(
+    api_base_url: &str,
+    token_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let grant = match read_init_auth_file(token_path) {
+        Ok(grant) => grant,
+        Err(error) => {
+            super::auth::remove_init_auth_file(token_path)?;
+            return Err(error);
+        }
+    };
+    let consume_result = post_init_auth_grant_consume(api_base_url, &grant).await;
+    let remove_result = super::auth::remove_init_auth_file(token_path);
+    match (consume_result, remove_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(remove_error)) => {
+            Err(format!("已消费 init grant，但删除 auth file 失败: {remove_error}").into())
+        }
+        (Err(error), Err(remove_error)) => {
+            Err(format!("{error}; 同时删除 auth file 失败: {remove_error}").into())
         }
     }
+}
 
+async fn post_init_auth_grant_consume(
+    api_base_url: &str,
+    grant: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/auth/grant/consume",
+            api_base_url.trim_end_matches('/')
+        ))
+        .json(grant)
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.json::<serde_json::Value>().await?;
+    if !status.is_success() {
+        let message = body
+            .pointer("/error/message")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| status.to_string());
+        return Err(format!("消费 init grant 失败: {message}").into());
+    }
+    if body
+        .pointer("/data/consumed")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Err("消费 init grant 响应缺少 consumed=true".into());
+    }
     Ok(())
 }
 
@@ -357,7 +429,9 @@ fn init_auth_file_help() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CreateMemoryArgs, build_after_state, validate_create_category};
+    use super::{
+        CreateMemoryArgs, build_after_state, consume_init_auth_grant_file, validate_create_category,
+    };
 
     #[test]
     fn validate_create_category_rejects_unknown_category() {
@@ -372,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_create_category_requires_auth_file_for_init() {
+    fn validate_create_category_requires_configured_init_category() {
         let allowed = vec!["core".to_string(), "init".to_string()];
         let no_init = vec!["core".to_string()];
 
@@ -381,11 +455,7 @@ mod tests {
             .to_string();
         assert!(missing_category.contains("category_list: core"));
 
-        let missing_file = validate_create_category(Some("init"), "riko", &allowed)
-            .unwrap_err()
-            .to_string();
-        assert!(missing_file.contains("~/.auth/auth_file.mem"));
-        assert!(missing_file.contains("请向用户申请授权"));
+        assert!(validate_create_category(Some("init"), "riko", &allowed).is_ok());
     }
 
     #[test]
@@ -404,5 +474,25 @@ mod tests {
                 .iter()
                 .any(|keyword| keyword["keyword_norm"].as_str() == Some("init"))
         );
+    }
+
+    #[tokio::test]
+    async fn consume_init_auth_grant_file_removes_invalid_json_file() {
+        let root = std::env::temp_dir().join(format!(
+            "mem012_invalid_auth_file_test_{}",
+            std::process::id()
+        ));
+        let path = root.join("auth_file.mem");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&path, "not-json").unwrap();
+
+        let error = consume_init_auth_grant_file("http://127.0.0.1:37777", &path)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("auth file 不是合法 JSON"));
+        assert!(!path.exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
