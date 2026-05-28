@@ -14,7 +14,7 @@ profile 私库 + mem_share 共享库 + category 分类 + Memory Unit + 关键词
 - `delete_memory` 先软删除；用户确认 delete 后立即硬删除。
 - 运行时同时允许访问当前 profile 私库和 `mem_share` 共享库。
 - `category` 是记忆的大类，例如 `core / book / myhome / user`；普通写入必须来自 `[categories].index_list` TOML 白名单，Agent 不允许自造 category。
-- `init` 用于 Agent 初始化、工具引导和 skill 引导；`mem012 --profile <profile> init` 只读取当前 profile 库中 `category = init` 且 `status != trashed` 的内容，写入 `init` 必须通过 `--admin_auth`。
+- `init` 用于 Agent 初始化、工具引导和 skill 引导；`mem012 --profile <profile> init` 只读取当前 profile 库中 `category = init` 且 `status != trashed` 的内容，写入 `init` 必须通过 `~/.auth/auth_file.mem` grant 授权。
 - `share` 是 share profile 的专属 category；普通 profile 禁止使用。
 - URI 不再作为核心寻址方式，也不再有 `domain://path`。
 - `kind` 不做配置白名单，不做核心寻址维度；如果需要分类，交给 category 或关键词处理。

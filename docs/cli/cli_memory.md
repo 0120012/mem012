@@ -122,34 +122,30 @@ mem012 --profile riko --args {"tool":"create_memory","params":{}}
 }
 ```
 
-必填字段：
+字段要求：
 
-- `title`
-- `content`
-- `keywords`
-
-可选字段：
-
-- `category`
-- `summary`
-- `recall_when`
+- `title`、`content` 必填。
+- 非 `init` 记忆的 `keywords` 必填。
+- `category = init` 可省略 `keywords`；CLI 会自动确保最终包含 `init`。
+- `category`、`summary`、`recall_when` 可选。
 
 校验规则：
 
 - `category` 未提供时默认为 `core`。
 - `category` 必须来自 `[categories].index_list` 配置白名单，Agent 不能自造 category。
-- `category = init` 用于初始化内容，写入时必须在 CLI 参数中提供 `--admin_auth`。
-- 如果缺少 `--admin_auth`，Agent 必须向用户申请 auth token 后重试。
+- `category = init` 用于初始化内容，写入前必须已有 `~/.auth/auth_file.mem`。
+- 如果缺少 auth file，Agent 必须向用户申请授权；用户从 `/auth` 获取 token 后执行 `mem012 --auth <auth_token>`。
 - 写入 `init` 的命令示例：
 
 ```bash
-mem012 --profile riko --admin_auth <auth_token> --args '{"tool":"create_memory","params":{"category":"init","title":"标题","content":"正文","keywords":["init"]}}'
+mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init","title":"标题","content":"正文","keywords":["init"]}}'
 ```
 
 - `category = share` 只能在 `--profile share` 中使用。
 - `title`、`content` 不能为空字符串。
 - `summary` 如果省略或为空字符串，后端保存为 `null`。
-- `keywords` 必须是非空字符串数组。
+- 非 `init` 记忆的 `keywords` 必须是非空字符串数组。
+- `category = init` 可省略 `keywords` 或传空数组；如果提供元素，元素不能为空。
 - `keywords` 规范化后不能重复。
 - `recall_when` 如果提供，不能是空字符串。
 - `args` 内禁止出现 `profile`、`memory_uuid`、`title_norm`、`uri`。
