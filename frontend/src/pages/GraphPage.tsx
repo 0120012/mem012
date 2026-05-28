@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { api, type GraphStatus, type GraphOverviewRelation, type NeighborMemory, type NeighborRelation, type SuggestedRelation, RELATION_TYPES } from "@/api/client"
-import { useAuth } from "@/auth/AuthProvider"
+import { useAuth } from "@/auth/AuthContext"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"

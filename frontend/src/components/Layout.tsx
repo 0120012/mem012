@@ -1,12 +1,12 @@
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom"
-import { useAuth } from "@/auth/AuthProvider"
+import { useAuth } from "@/auth/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { FileText, Clock, LogOut, Menu, X, Search, Monitor, Moon, Sun, ChevronDown, GitBranch } from "lucide-react"
+import { FileText, Clock, LogOut, Menu, X, Search, Monitor, Moon, Sun, ChevronDown, GitBranch, ShieldCheck } from "lucide-react"
 import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import type { ProjectInfo } from "@/api/client"
@@ -15,6 +15,7 @@ const navItems = [
   { to: "/memories", icon: FileText, label: "记忆" },
   { to: "/changes", icon: Clock, label: "待确认" },
   { to: "/graph", icon: GitBranch, label: "图谱" },
+  { to: "/auth", icon: ShieldCheck, label: "授权" },
 ]
 
 type Theme = "system" | "light" | "dark"
@@ -61,7 +62,7 @@ export function Layout() {
     navigate("/login")
   }
 
-  const pageTitle = location.pathname === "/memories" ? "Projects" : location.pathname === "/changes" ? "待确认" : location.pathname === "/graph" ? "图谱" : "Mem"
+  const pageTitle = location.pathname === "/memories" ? "Projects" : location.pathname === "/changes" ? "待确认" : location.pathname === "/graph" ? "图谱" : location.pathname === "/auth" ? "授权" : "Mem"
   // 当前主题图标组件
   const ThemeIcon = theme === "system" ? Monitor : theme === "dark" ? Moon : Sun
 

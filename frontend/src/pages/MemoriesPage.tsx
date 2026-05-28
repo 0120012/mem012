@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Link } from "react-router-dom"
 import { api, type MemoryItem } from "@/api/client"
-import { useAuth } from "@/auth/AuthProvider"
+import { useAuth } from "@/auth/AuthContext"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
@@ -34,7 +34,12 @@ export function MemoriesPage() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { fetchMemories() }, [activeProject, fetchMemories])
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchMemories()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeProject, fetchMemories])
 
   const toggleRow = (uuid: string) => {
     setExpandedUuid(expandedUuid === uuid ? null : uuid)

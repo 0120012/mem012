@@ -1,20 +1,6 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
+import { useState, useEffect, useCallback, type ReactNode } from "react"
 import { api, setProjectHeader, ApiError, type ProjectInfo } from "@/api/client"
-
-interface AuthState {
-  isLoggedIn: boolean
-  isLoading: boolean
-  projects: ProjectInfo[]
-  activeProject: ProjectInfo | null
-}
-
-interface AuthActions {
-  login: (key: string) => Promise<{ success: boolean; error?: string }>
-  logout: () => void
-  selectProject: (project: ProjectInfo) => void
-}
-
-const AuthContext = createContext<(AuthState & AuthActions) | null>(null)
+import { AuthContext, type AuthState } from "@/auth/AuthContext"
 
 const ACTIVE_PROJECT_KEY = "mem_active_project"
 
@@ -40,9 +26,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // 初始化：session 失效时只关 loading，保持未登录态
   useEffect(() => {
-    checkSession().catch(() => {
-      setState(s => ({ ...s, isLoading: false }))
-    })
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      checkSession().catch(() => {
+        if (!cancelled) setState(s => ({ ...s, isLoading: false }))
+      })
+    }, 0)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
   }, [checkSession])
 
   const login = async (key: string) => {
@@ -73,10 +66,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   )
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider")
-  return ctx
 }

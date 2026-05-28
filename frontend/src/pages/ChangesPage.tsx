@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { api, type ChangeItem } from "@/api/client"
-import { useAuth } from "@/auth/AuthProvider"
+import { useAuth } from "@/auth/AuthContext"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
@@ -66,7 +66,12 @@ export function ChangesPage() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { fetchChanges() }, [activeProject, fetchChanges])
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchChanges()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeProject, fetchChanges])
 
   const toggleCard = async (uuid: string) => {
     if (expandedUuid === uuid) {

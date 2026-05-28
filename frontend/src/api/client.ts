@@ -54,6 +54,17 @@ export interface GraphStatus {
   relation_count: number
 }
 
+export interface AuthTokenStatus {
+  valid: boolean
+  expires_at: number | null
+  turnstile_site_key: string | null
+}
+
+export interface AuthRefreshResult {
+  auth_token: string
+  expires_at: number
+}
+
 export interface NeighborMemory {
   memory_uuid: string
   category: string
@@ -152,6 +163,17 @@ export const api = {
         body: JSON.stringify({ key }),
       }),
     session: () => request<void>("/auth/session"),
+    status: () => request<AuthTokenStatus>("/auth/status"),
+    refresh: (turnstileToken: string) =>
+      request<AuthRefreshResult>("/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ turnstile_token: turnstileToken }),
+      }),
+    forceRefresh: () =>
+      request<AuthRefreshResult>("/auth/refresh/force", {
+        method: "POST",
+      }),
   },
   projects: {
     list: () => request<ProjectInfo[]>("/projects"),
