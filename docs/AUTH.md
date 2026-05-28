@@ -95,7 +95,7 @@ POST https://challenges.cloudflare.com/turnstile/v0/siteverify
 - CLI 在 `create_memory category=init` 时调用。
 - 请求：auth file 中的完整 grant JSON。
 - 行为：验签、检查 `scope`、检查过期时间、检查服务端 grant 状态，并一次性消费。
-- 无论成功、失败、过期或拒绝，都废弃该 grant，并让前端 token 状态失效。
+- 请求无法解析或未通过当前服务签名校验时不改变服务端授权状态；已通过验签但过期、状态不匹配、重复消费或消费成功时，废弃该 grant，并让前端 token 状态失效。
 
 ## grant 格式
 
@@ -137,7 +137,7 @@ grant 是 Ed25519 签名票据，签名覆盖 `payload` 的稳定 JSON 字节：
 - `payload.scope` 必须是 `init:create`。
 - `payload.exp` 必须是签发后 300s。
 - 文件存在不代表授权有效，必须通过后端 API 验证 grant。
-- grant 只能使用一次，验证成功、验证失败、过期、API 拒绝、刷新 token 或签发新 grant 后都必须废弃。
+- grant 只能使用一次；已通过当前服务签名校验后的成功、过期、状态拒绝、刷新 token 或签发新 grant 后都必须废弃。
 
 ## 授权流程
 
@@ -174,7 +174,7 @@ mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init
 2. `~/.auth/auth_file.mem` 必须存在且非空。
 3. 创建 init 记忆时，程序内部必须自动确保 keywords 包含 `init`；用户已传 `init` 时不重复追加，不需要向用户额外提示。
 4. auth file 内 grant 必须通过后端 API 验签、查状态并消费。
-5. 后端完成 grant 验证后，无论通过或失败，都立即废弃 grant，并让前端 token 状态失效。
+5. 后端确认请求携带当前服务签发的 grant 后，无论消费通过、过期或状态拒绝，都立即废弃 grant，并让前端 token 状态失效；无法解析或未验签的请求不影响现有授权状态。
 6. CLI 无论验证通过或失败，都立即删除 auth file。
 7. 只有 grant 验证通过后，才执行正常写入流程。
 
