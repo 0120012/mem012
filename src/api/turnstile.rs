@@ -62,3 +62,64 @@ fn turnstile_error(message: impl Into<String>) -> ApiError {
         message: message.into(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    use super::verify_token;
+
+    async fn siteverify_url(response_body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0_u8; 4096];
+            let _ = stream.read(&mut buffer).await.unwrap();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn verify_token_accepts_successful_siteverify_response() {
+        let settings = crate::config::TurnstileSettings {
+            site_key: "site".to_string(),
+            secret_key: "secret".to_string(),
+            verify_url: siteverify_url(r#"{"success":true}"#).await,
+        };
+
+        assert!(
+            verify_token(&settings, "challenge-token", None)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_token_reports_siteverify_error_codes() {
+        let settings = crate::config::TurnstileSettings {
+            site_key: "site".to_string(),
+            secret_key: "secret".to_string(),
+            verify_url: siteverify_url(
+                r#"{"success":false,"error-codes":["invalid-input-response"]}"#,
+            )
+            .await,
+        };
+
+        let error = verify_token(&settings, "challenge-token", None)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "TURNSTILE_VERIFY_FAILED");
+        assert!(error.message.contains("invalid-input-response"));
+    }
+}
