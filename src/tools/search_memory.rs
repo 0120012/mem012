@@ -8,7 +8,7 @@ type ToolResult<T> = Result<T, Box<dyn std::error::Error>>;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SearchRequest {
-    query: String,
+    query: Option<String>,
     limit: Option<i32>,
     terms: Option<SearchTerms>,
     filters: Option<Vec<String>>,
@@ -18,14 +18,14 @@ struct SearchRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SearchTerms {
-    all: Option<Vec<String>>,
-    none: Option<Vec<String>>,
-    any: Option<Vec<String>>,
+    include: Vec<String>,
+    exclude: Vec<String>,
 }
 
 #[allow(dead_code)]
 struct SearchPlan {
     query: String,
+    semantic_query: String,
     effective_limit: i32,
     fields: Vec<String>,
     terms: SearchTermsPlan,
@@ -60,14 +60,15 @@ pub async fn run(context: &super::ToolContext<'_>, args: &serde_json::Value) -> 
     // Why：先固定执行骨架，避免后续实现时把输入校验、查询和输出格式混在一起。
     let request = parse_search_request(args)?;
     let plan = build_search_plan(context, request)?;
+    let has_semantic_query = !plan.semantic_query.is_empty();
     // 字面召回是第一阶段；只有 0 命中时才进入 embedding 保底。
     let mut outcome = search_literal_candidates(context, &plan).await?;
 
     // 保底召回只在字面搜索完全无结果时触发，不能扩大已有候选集合。
-    if outcome.results.is_empty() {
+    if has_semantic_query && outcome.results.is_empty() {
         outcome = search_embedding_fallback(context, &plan).await?;
     }
-    if outcome.results.len() > 1 {
+    if has_semantic_query && outcome.results.len() > 1 {
         outcome = rerank_candidates(context, &plan, outcome).await?;
     }
 
@@ -78,11 +79,8 @@ fn parse_search_request(args: &serde_json::Value) -> ToolResult<SearchRequest> {
     // 1. 按 SearchRequest schema 解析 params；类型不匹配或包含未知字段会被 serde 拒绝。
     let mut request = serde_json::from_value::<SearchRequest>(args.clone())?;
 
-    // 2. 规范化 query 的首尾空白；搜索入口不能接受空查询。
-    request.query = request.query.trim().to_string();
-    if request.query.is_empty() {
-        return Err("query 不能为空".into());
-    }
+    // 2. 规范化 query 的首尾空白。
+    request.query = request.query.map(|query| query.trim().to_string());
 
     // 3. 校验 limit 下界；超过默认值的截断留给 build_search_plan 使用 context 处理。
     if matches!(request.limit, Some(limit) if limit < 1) {
@@ -92,13 +90,19 @@ fn parse_search_request(args: &serde_json::Value) -> ToolResult<SearchRequest> {
     // 4. 只要 terms 或 filters 任一出现，就进入高级搜索参数规则。
     let advanced = request.terms.is_some() || request.filters.is_some();
 
-    // 5. 高级搜索要求 terms 和 filters 成对出现；允许 terms={} 和 filters=[]。
+    // 5. 高级搜索要求 terms 和 filters 成对出现；terms 内 include/exclude 必须都出现。
     if request.terms.is_some() != request.filters.is_some() {
         return Err("terms 和 filters 必须同时传入".into());
     }
+    if advanced && request.query.is_some() {
+        return Err("高级搜索不能传 query".into());
+    }
+    if !advanced && request.query.as_deref().unwrap_or_default().is_empty() {
+        return Err("query 不能为空".into());
+    }
 
-    // 6. query 只承载自然语言意图；高级搜索的布尔逻辑必须写入 terms。
-    validate_query_logic(&request.query, advanced)?;
+    // 6. 基础搜索 query 只承载自然语言意图；高级搜索的布尔逻辑必须写入 terms。
+    validate_query_logic(request.query.as_deref().unwrap_or_default(), advanced)?;
 
     // 7. filters 只能来自文档定义的可搜索字段白名单。
     if let Some(filters) = &request.filters {
@@ -141,20 +145,30 @@ fn validate_filters(filters: &[String]) -> ToolResult<()> {
 fn validate_terms(terms: &SearchTerms) -> ToolResult<()> {
     let mut has_term = false;
     for (field, values) in [
-        ("terms.all", terms.all.as_ref()),
-        ("terms.none", terms.none.as_ref()),
-        ("terms.any", terms.any.as_ref()),
+        ("terms.include", &terms.include),
+        ("terms.exclude", &terms.exclude),
     ] {
-        if let Some(values) = values {
-            if values.iter().any(|value| value.trim().is_empty()) {
-                return Err(format!("{field} 不能为空").into());
-            }
-            has_term |= !values.is_empty();
+        if values.iter().any(|value| value.trim().is_empty()) {
+            return Err(format!("{field} 不能为空").into());
         }
+        has_term |= !values.is_empty();
     }
     has_term
         .then_some(())
-        .ok_or_else(|| "terms.all、terms.none、terms.any 至少一个必须非空".into())
+        .ok_or_else(|| "terms.include、terms.exclude 至少一个必须非空".into())
+}
+
+fn build_semantic_query(query: &str, terms: &SearchTermsPlan) -> String {
+    if !query.is_empty() {
+        return query.to_string();
+    }
+    terms
+        .all
+        .iter()
+        .chain(&terms.any)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn build_search_plan(
@@ -174,35 +188,32 @@ fn build_search_plan(
         fields
     };
     let terms = request.terms.unwrap_or(SearchTerms {
-        all: None,
-        none: None,
-        any: None,
+        include: Vec::new(),
+        exclude: Vec::new(),
     });
 
+    let query = request.query.unwrap_or_default();
+    let terms = SearchTermsPlan {
+        all: Vec::new(),
+        none: terms
+            .exclude
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .collect(),
+        any: terms
+            .include
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .collect(),
+    };
+    let semantic_query = build_semantic_query(&query, &terms);
+
     Ok(SearchPlan {
-        query: request.query,
+        query,
+        semantic_query,
         effective_limit: request.limit.unwrap_or(default_limit).min(default_limit),
         fields,
-        terms: SearchTermsPlan {
-            all: terms
-                .all
-                .unwrap_or_default()
-                .into_iter()
-                .map(|value| value.trim().to_string())
-                .collect(),
-            none: terms
-                .none
-                .unwrap_or_default()
-                .into_iter()
-                .map(|value| value.trim().to_string())
-                .collect(),
-            any: terms
-                .any
-                .unwrap_or_default()
-                .into_iter()
-                .map(|value| value.trim().to_string())
-                .collect(),
-        },
+        terms,
     })
 }
 
@@ -228,16 +239,16 @@ async fn search_literal_candidates(
             WHERE status <> 'trashed'
         )
         SELECT memory_uuid::text, title_text, status, summary_text,
-            CASE WHEN $5 AND (content_text % $1 OR strpos(lower(content_text), lower($1)) > 0
+            CASE WHEN $11 AND $5 AND (content_text % $1 OR strpos(lower(content_text), lower($1)) > 0
                     OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(content_text), lower(term)) > 0))
                 THEN left(content_text, 120)
             END AS content_preview,
             ARRAY_REMOVE(ARRAY[
-                CASE WHEN $2 AND (title_text % $1 OR strpos(lower(title_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(title_text), lower(term)) > 0)) THEN 'title' END,
-                CASE WHEN $3 AND (summary_text % $1 OR strpos(lower(summary_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(summary_text), lower(term)) > 0)) THEN 'summary' END,
-                CASE WHEN $4 AND (keywords_text % $1 OR strpos(lower(keywords_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(keywords_text), lower(term)) > 0)) THEN 'keywords' END,
-                CASE WHEN $5 AND (content_text % $1 OR strpos(lower(content_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(content_text), lower(term)) > 0)) THEN 'content' END,
-                CASE WHEN $6 AND (recall_when_text % $1 OR strpos(lower(recall_when_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(recall_when_text), lower(term)) > 0)) THEN 'recall_when' END
+                CASE WHEN $11 AND $2 AND (title_text % $1 OR strpos(lower(title_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(title_text), lower(term)) > 0)) THEN 'title' END,
+                CASE WHEN $11 AND $3 AND (summary_text % $1 OR strpos(lower(summary_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(summary_text), lower(term)) > 0)) THEN 'summary' END,
+                CASE WHEN $11 AND $4 AND (keywords_text % $1 OR strpos(lower(keywords_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(keywords_text), lower(term)) > 0)) THEN 'keywords' END,
+                CASE WHEN $11 AND $5 AND (content_text % $1 OR strpos(lower(content_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(content_text), lower(term)) > 0)) THEN 'content' END,
+                CASE WHEN $11 AND $6 AND (recall_when_text % $1 OR strpos(lower(recall_when_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(recall_when_text), lower(term)) > 0)) THEN 'recall_when' END
             ]::text[], NULL) AS matched_fields,
             (
                 SELECT count(DISTINCT lower(term))::real
@@ -251,13 +262,13 @@ async fn search_literal_candidates(
                 CASE WHEN $6 THEN similarity(recall_when_text, $1) ELSE 0 END
             ) AS score
         FROM scoped
-        WHERE (
+        WHERE (NOT $11 OR (
                 ($2 AND (title_text % $1 OR strpos(lower(title_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(title_text), lower(term)) > 0)))
                 OR ($3 AND (summary_text % $1 OR strpos(lower(summary_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(summary_text), lower(term)) > 0)))
                 OR ($4 AND (keywords_text % $1 OR strpos(lower(keywords_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(keywords_text), lower(term)) > 0)))
                 OR ($5 AND (content_text % $1 OR strpos(lower(content_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(content_text), lower(term)) > 0)))
                 OR ($6 AND (recall_when_text % $1 OR strpos(lower(recall_when_text), lower($1)) > 0 OR EXISTS (SELECT 1 FROM regexp_split_to_table($1, '\s+') AS query_terms(term) WHERE strpos(lower(recall_when_text), lower(term)) > 0)))
-            )
+            ))
             AND NOT EXISTS (SELECT 1 FROM unnest($7::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) = 0)
             AND NOT EXISTS (SELECT 1 FROM unnest($8::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) > 0)
             AND (cardinality($9::text[]) = 0 OR EXISTS (SELECT 1 FROM unnest($9::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) > 0))
@@ -275,6 +286,7 @@ async fn search_literal_candidates(
     .bind(&plan.terms.none)
     .bind(&plan.terms.any)
     .bind(plan.effective_limit)
+    .bind(!plan.query.is_empty())
     .fetch_all(context.profile_pool)
     .await?;
     Ok(SearchOutcome {
@@ -311,7 +323,7 @@ async fn search_embedding_fallback(
     context: &super::ToolContext<'_>,
     plan: &SearchPlan,
 ) -> ToolResult<SearchOutcome> {
-    // What：在字面召回为 0 时，用 query embedding 从已生成的向量索引召回候选。
+    // What：在字面召回为 0 时，用语义输入 embedding 从已生成的向量索引召回候选。
     // Why：embedding 只是保底路径，仍必须复用 memory_search_index 执行状态、字段和 terms 边界。
     let Some(settings) = context.embedding_settings else {
         return Ok(SearchOutcome {
@@ -320,7 +332,8 @@ async fn search_embedding_fallback(
             rerank: false,
         });
     };
-    let Ok(embedding) = crate::provider::embedding::request_embedding(settings, &plan.query).await
+    let Ok(embedding) =
+        crate::provider::embedding::request_embedding(settings, &plan.semantic_query).await
     else {
         return Ok(SearchOutcome {
             results: vec![],
@@ -430,7 +443,8 @@ async fn rerank_candidates(
         })
         .collect::<Vec<_>>();
     let Ok(ranked) =
-        crate::provider::rerank::rerank_text_documents(settings, &plan.query, &documents).await
+        crate::provider::rerank::rerank_text_documents(settings, &plan.semantic_query, &documents)
+            .await
     else {
         return Ok(outcome);
     };
@@ -461,7 +475,7 @@ fn print_search_response(
     outcome: SearchOutcome,
 ) -> ToolResult<()> {
     // What：输出 search_memory 的成功 JSON 响应。
-    // Why：当前切片只接通字面召回的可观察结果，策略标记先保持未启用状态。
+    // Why：统一在输出边界决定可见字段，避免召回和重排阶段拼装响应。
     let embedding_fallback = outcome.embedding_fallback;
     let rerank = outcome.rerank;
     let results = outcome
@@ -504,20 +518,20 @@ fn print_search_response(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_search_request;
+    use super::{SearchTermsPlan, build_semantic_query, parse_search_request};
 
     #[test]
     fn parse_search_request_accepts_supported_shapes() {
         let basic = serde_json::json!({"query": "  尼采深渊  ", "limit": 8});
         let request = parse_search_request(&basic).unwrap();
-        assert_eq!(request.query, "尼采深渊");
+        assert_eq!(request.query.as_deref(), Some("尼采深渊"));
 
         let advanced = serde_json::json!({
-            "query": "微信读书导出",
-            "terms": {"all": ["导出"], "none": [], "any": []},
+            "terms": {"include": ["导出"], "exclude": []},
             "filters": []
         });
-        assert!(parse_search_request(&advanced).is_ok());
+        let request = parse_search_request(&advanced).unwrap();
+        assert_eq!(request.query, None);
     }
 
     // Why：参数错误必须在搜索计划前拒绝，避免后续 SQL/provider 阶段承担输入边界。
@@ -525,14 +539,18 @@ mod tests {
     fn parse_search_request_rejects_invalid_inputs() {
         let cases = [
             serde_json::json!({"query": ""}),
+            serde_json::json!({}),
             serde_json::json!({"query": "a AND b OR c"}),
+            serde_json::json!({"query": "", "terms": {"include": ["a"], "exclude": []}, "filters": []}),
+            serde_json::json!({"query": "a", "terms": {"include": ["a"], "exclude": []}, "filters": []}),
             serde_json::json!({"query": "a OR b", "terms": {}, "filters": []}),
             serde_json::json!({"query": "a", "terms": {}}),
             serde_json::json!({"query": "a", "filters": []}),
             serde_json::json!({"query": "a", "terms": {}, "filters": ["status"]}),
             serde_json::json!({"query": "a", "terms": {}, "filters": []}),
-            serde_json::json!({"query": "a", "terms": {"all": []}, "filters": []}),
-            serde_json::json!({"query": "a", "terms": {"any": [""]}, "filters": []}),
+            serde_json::json!({"terms": {"all": [], "none": [], "any": ["a"]}, "filters": []}),
+            serde_json::json!({"query": "a", "terms": {"include": [], "exclude": []}, "filters": []}),
+            serde_json::json!({"query": "a", "terms": {"include": [""], "exclude": []}, "filters": []}),
             serde_json::json!({"query": "a", "limit": 0}),
             serde_json::json!({"query": "a", "mode": "semantic"}),
         ];
@@ -540,5 +558,17 @@ mod tests {
         for args in cases {
             assert!(parse_search_request(&args).is_err(), "{args}");
         }
+    }
+
+    #[test]
+    fn build_semantic_query_uses_terms_when_query_is_absent() {
+        let terms = SearchTermsPlan {
+            all: vec!["饮酒".to_string()],
+            none: vec!["送别".to_string()],
+            any: vec!["月亮".to_string()],
+        };
+
+        assert_eq!(build_semantic_query("", &terms), "饮酒 月亮");
+        assert_eq!(build_semantic_query("自然语言", &terms), "自然语言");
     }
 }
