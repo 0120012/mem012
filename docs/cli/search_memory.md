@@ -20,7 +20,7 @@ delete_memory    = 删除前仍依赖明确 memory_uuid
 
 基础搜索类似 GitHub 的默认搜索：只给 `query`，系统在全部可搜索内容里做模糊召回。
 
-高级搜索类似 GitHub 左侧筛选面板：先用 `query` 找候选，再用 `filters` 收窄结果。
+高级搜索类似 GitHub 左侧筛选面板：用 `terms` 表达硬性关键词条件，再用 `filters` 收窄字段范围。
 
 可用筛选：
 
@@ -78,20 +78,18 @@ category    = memory_units.category
 
 ## 5. 高级搜索
 
-高级搜索用于表达明确的字面约束和搜索范围。`query` 仍然必填，表示本次搜索的自然语言意图；`terms` 表示硬性关键词条件；`filters` 表示搜索字段范围。
+高级搜索用于表达明确的字面约束和搜索范围。高级搜索不接受 `query`；`terms` 表示硬性关键词条件；`filters` 表示搜索字段范围。
 
-高级搜索的 `query` 只能是自然语言文本，不能包含 `AND` 或 `OR`。关键词逻辑必须写入 `terms`。
+关键词逻辑必须写入 `terms`。
 
 ```json
 {
   "tool": "search_memory",
   "params": {
-    "query": "微信读书导出笔记",
     "limit": 8,
     "terms": {
-      "all": ["导出"],
-      "none": ["失败", "报错"],
-      "any": ["微信读书", "skill"]
+      "include": ["微信读书", "skill"],
+      "exclude": ["失败", "报错"]
     },
     "filters": ["title", "content"]
   }
@@ -101,8 +99,7 @@ category    = memory_units.category
 参数：
 
 ```text
-query             = 搜索文本，必填
-terms             = 硬性关键词条件；高级搜索必填，可以为空对象
+terms             = 硬性关键词条件；高级搜索必填
 limit             = 返回条数；不传或超过 [search].default_limit 时使用 [search].default_limit
 filters           = 搜索字段数组；高级搜索必填，可以为空数组
 ```
@@ -112,7 +109,8 @@ filters           = 搜索字段数组；高级搜索必填，可以为空数组
 ```text
 传 terms       = 必须同时传 filters
 传 filters     = 必须同时传 terms
-terms = {}     = 允许，表示没有硬性关键词条件
+terms 双数组    = include、exclude 必须同时出现
+terms 全空      = 拒绝；include、exclude 至少一个数组必须非空
 filters = []   = 允许，表示不限制搜索字段
 ```
 
@@ -125,38 +123,36 @@ title / summary / keywords / content / recall_when
 可用 `terms`：
 
 ```text
-all      = 必须包含 all
-none     = 必须全部不包含
-any      = 至少包含 any 之一
+include  = 至少包含 include 中的一个关键词
+exclude  = 必须全部不包含 exclude 中的关键词
 ```
 
 筛选语义：
 
 ```text
-terms.all = ["导出"]
-表示必须包含 all 中的全部关键词。
+terms.include = ["微信读书", "skill"]
+表示至少包含 include 中的一个关键词。
 
-terms.none = ["失败", "报错"]
-表示必须全部不包含 none 中的关键词。
-
-terms.any = ["微信读书", "skill"]
-表示至少包含 any 中的一个关键词。
+terms.exclude = ["失败", "报错"]
+表示必须全部不包含 exclude 中的关键词。
 
 filters = ["title", "content"]
-表示 query 和 terms 只在 title 或 content 中匹配。
+表示 terms 只在 title 或 content 中匹配。
 
 filters = []
-表示不限制字段，query 和 terms 在 title、summary、keywords、content、recall_when 中匹配。
+表示不限制字段，terms 在 title、summary、keywords、content、recall_when 中匹配。
 
-terms = {}
-表示没有硬性关键词条件，只使用 query 和 filters 搜索。
+terms.include = [] 且 terms.exclude = []
+不允许；两组里至少一个数组必须非空。
 
-terms.all、terms.none、terms.any 同时出现时使用 AND。
-terms.any 数组内多个值使用 OR。
+terms.include 数组内多个值使用 OR。
+terms.exclude 数组内多个值使用 AND NOT。
 filters 数组内多个值使用 OR。
 ```
 
-`terms` 不能替代 `query`。`query` 仍用于自然语言搜索、preview、embedding fallback 和 rerank。
+高级搜索不接受 `query`。需要语义输入时，系统用 `terms.include` 拼接生成；`terms.exclude` 只做排除条件，不参与 embedding 或 rerank 输入。
+
+高级搜索不支持 all、exact phrase、hashtag、date 等条件。
 
 `filters` 不能包含 `status`、`category`、`embedding` 或 `rerank`。CLI 搜索不开放状态和分类筛选，仍然固定排除 `trashed`。
 
@@ -167,6 +163,7 @@ embedding 只做保底召回。
 使用时机：
 
 ```text
+基础搜索 query 非空，或高级搜索 terms.include 非空
 字面搜索结果为 0
 ```
 
@@ -190,6 +187,7 @@ embeddings_key = ""
 - embedding 命中不能返回 `trashed`。
 - embedding 命中不能直接触发 read/update/delete。
 - 字面搜索有结果时不混入 embedding 候选。
+- 高级搜索使用 `terms.include` 派生语义输入，仍必须遵守 `terms.exclude` 和 `trashed` 边界。
 
 ## 7. Rerank 重排
 
@@ -215,9 +213,9 @@ rerank_key = ""
 执行流程：
 
 ```text
-1. search_memory 先按 query 搜索
+1. 基础搜索使用 query；高级搜索使用 terms.include 派生语义输入
 2. 最多取 effective_limit 条；effective_limit = min(limit, [search].default_limit)
-3. 如果 [rerank].enabled = true 且候选数 > 1
+3. 如果语义输入非空、[rerank].enabled = true 且候选数 > 1
    就把这 effective_limit 条发给 rerank API 排序
 4. 返回排序后的同一批候选
 ```
@@ -229,6 +227,7 @@ rerank_key = ""
 - rerank 只排序最终要返回的 `effective_limit` 条。
 - rerank 失败时返回原排序。
 - rerank 只影响顺序，不改变候选可操作边界。
+- 高级搜索使用 `terms.include` 派生语义输入后可以 rerank。
 
 模型候选：
 
@@ -246,12 +245,12 @@ BAAI/bge-reranker-v2-m3    = 开源权重备选，输入倍率 5x，补全倍率
 
 ```text
 1. 从 memory_search_index 读取候选搜索文本。
-2. 使用 pg_trgm 对 query 和 terms 做字面召回。
+2. 基础搜索使用 pg_trgm 对 query 做字面召回；高级搜索只使用 terms 做字面筛选。
 3. status 固定排除 trashed，pending 和 active 都可返回。
-4. filters 控制 query 和 terms 参与匹配的字段范围。
-5. terms.all / terms.none / terms.any 作为硬过滤。
-6. 字面召回结果为 0 时，才允许 embedding fallback。
-7. embedding fallback 仍必须遵守 status、filters、terms 硬过滤。
+4. filters 控制 terms 参与匹配的字段范围。
+5. terms.include / terms.exclude 作为硬过滤。
+6. 语义输入非空且字面召回结果为 0 时，才允许 embedding fallback。
+7. embedding fallback 仍必须遵守 status、filters、terms 硬过滤；高级搜索的语义输入来自 terms.include。
 8. rerank 只重排最终候选，不扩大召回。
 ```
 
@@ -261,7 +260,7 @@ SQL 约束：
 用户输入的 query 和 terms 必须参数化绑定。
 filters 只能从字段白名单映射到 memory_search_index 字段。
 禁止把用户关键词直接拼进 SQL 字符串。
-禁止让 embedding 绕过 terms.none、terms.all 或 trashed 边界。
+禁止让 embedding 绕过 terms.exclude 或 trashed 边界。
 ```
 
 索引方向：
@@ -370,9 +369,9 @@ embedding 保底结果必须回读确认
 ## 12. 失败场景
 
 ```text
-query 为空              = 拒绝
+基础搜索 query 为空       = 拒绝
+高级搜索包含 query       = 拒绝
 基础搜索 query 混用 AND 和 OR = 拒绝
-高级搜索 query 包含 AND 或 OR = 拒绝
 包含 mode              = 拒绝
 包含 terms 但省略 filters = 拒绝
 包含 filters 但省略 terms = 拒绝
@@ -383,12 +382,10 @@ filters 包含 rerank     = 拒绝
 filters 包含 status     = 拒绝
 filters 包含 category   = 拒绝
 terms 不是对象          = 拒绝
-terms.all 不是数组      = 拒绝
-terms.none 不是数组     = 拒绝
-terms.any 不是数组      = 拒绝
-terms.all 数组为空      = 拒绝
-terms.none 数组为空     = 拒绝
-terms.any 数组为空      = 拒绝
+terms.include 不是数组   = 拒绝
+terms.exclude 不是数组   = 拒绝
+terms 省略 include/exclude = 拒绝
+terms 双数组全空         = 拒绝
 terms 包含空关键词      = 拒绝
 limit 小于 1           = 拒绝
 limit 超过默认值        = 按 [search].default_limit 截断
