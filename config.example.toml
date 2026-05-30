@@ -1,10 +1,10 @@
 [database]
 riko = "postgresql://riko:zxz456123@127.0.0.1:5632/mem_riko"
-herm = "postgresql://herm:zxz456123@127.0.0.1:5632/mem_herm"
+nous = "postgresql://nous:zxz456123@127.0.0.1:5632/mem_nous"
+claw = "postgresql://claw:zxz456123@127.0.0.1:5632/mem_claw"
 doge = "postgresql://doge:zxz456123@127.0.0.1:5632/mem_doge"
 share = "postgresql://share:zxz456123@127.0.0.1:5632/mem_share"
-hakimi = "postgresql://hakimi:zxz456123@127.0.0.1:5632/mem_hakimi"
-claw = "postgresql://claw:zxz456123@127.0.0.1:5632/mem_claw"
+codex = "postgresql://codex:zxz456123@127.0.0.1:5632/mem_codex"
 
 [categories]
 index_list = ["core", "book", "myhome", "user", "init"]

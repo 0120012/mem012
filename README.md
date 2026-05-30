@@ -37,7 +37,7 @@ docker run -d \
   mem012-postgres:pg18
 ```
 
-首次初始化会自动创建 `postgres` 管理库和 `mem_riko / mem_herm / mem_doge / mem_claw / mem_hakimi / mem_share`；profile 库会启用 `vector / pg_trgm / age`。
+首次初始化会自动创建 `postgres` 管理库和 `mem_riko / mem_nous / mem_claw / mem_doge / mem_share / mem_codex`；profile 库会启用 `vector / pg_trgm / age`。
 
 ## 验证：
 
