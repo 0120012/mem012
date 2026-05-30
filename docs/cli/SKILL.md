@@ -5,6 +5,18 @@ description: Use when creating, searching, deleting, reading hashes, authorizing
 
 # Mem012 CLI
 
+## 执行门禁
+- `mem012 init` 是初始化命令，直接读取输出内容；`mem012 --args` 工具调用必须按 JSON 判断结果。
+- 工具调用成功条件：命令退出码为 0，且 JSON 中 `state == "success"`、`error == null`。否则一律视为失败。
+- 任一步失败，立即停止并报告用户；禁止继续执行后续写操作，禁止伪造成功结果。
+- 写操作必须单步执行；一次命令只能包含一个 `create_memory`、`delete_memory` 或 `update_memory_*` 工具。
+- `delete_memory` 前必须先 `read_memory`，确认目标 `memory_uuid` 和内容正确。
+- `update_memory_*` 前必须先 `read_memory_hash`，并把对应字段 hash 作为 `expected_*_hash` 传入。
+- `search_memory` 只返回候选；不能直接把第一条当最终目标，必须再用 `read_memory` 核对。
+- `create_memory` 成功以 `data.memory_uuid` 为准，`data.result == "pending"` 表示等待后续处理。
+- `update_memory_*` 成功通常返回 `data.result == "pending_review"`，不表示已经确认通过。
+- `delete_memory` 成功返回 `data.result == "trashed"`。
+
 ## init -- 初始化 -- 找回自己
 
 ```bash
@@ -108,6 +120,8 @@ mem012 --profile {profile} --args '{"tool":"update_memory_append","params":{"mem
 ```
 
 ### 更新 `summary`。
+
+只能用 `update_memory_replace` 整段替换；不能追加、插入或局部 patch。
 
 ```bash
 mem012 --profile {profile} --args '{"tool":"update_memory_replace","params":{"memory_uuid":"{memory_uuid}","expected_summary_hash":"{summary_hash}","new_summary":"新的摘要"}}'
