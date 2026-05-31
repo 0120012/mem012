@@ -5,6 +5,7 @@ claw = "postgresql://claw:zxz456123@127.0.0.1:5632/mem_claw"
 doge = "postgresql://doge:zxz456123@127.0.0.1:5632/mem_doge"
 share = "postgresql://share:zxz456123@127.0.0.1:5632/mem_share"
 codex = "postgresql://codex:zxz456123@127.0.0.1:5632/mem_codex"
+claude = "postgresql://claude:zxz456123@127.0.0.1:5632/mem_claude"
 
 [categories]
 index_list = ["core", "book", "myhome", "user", "init"]

@@ -22,7 +22,7 @@ DO $$
 DECLARE
   role_name text;
 BEGIN
-  FOREACH role_name IN ARRAY ARRAY['riko', 'nous', 'claw', 'doge', 'share', 'codex'] LOOP
+  FOREACH role_name IN ARRAY ARRAY['riko', 'nous', 'claw', 'doge', 'share', 'codex', 'claude'] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
       EXECUTE format(
         'CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD %L',
@@ -43,7 +43,7 @@ SELECT format('REVOKE ALL PRIVILEGES ON DATABASE %I FROM PUBLIC', datname)
 FROM pg_database
 WHERE datallowconn AND NOT datistemplate\gexec
 
-SELECT format('REVOKE ALL PRIVILEGES ON DATABASE %I FROM riko, nous, claw, doge, "share", codex', datname)
+SELECT format('REVOKE ALL PRIVILEGES ON DATABASE %I FROM riko, nous, claw, doge, "share", codex, claude', datname)
 FROM pg_database
 WHERE datallowconn AND NOT datistemplate\gexec
 
@@ -54,7 +54,8 @@ FROM (VALUES
   ('mem_claw', 'claw'),
   ('mem_doge', 'doge'),
   ('mem_share', 'share'),
-  ('mem_codex', 'codex')
+  ('mem_codex', 'codex'),
+  ('mem_claude', 'claude')
 ) AS wanted(db_name, role_name)\gexec
 
 \connect mem_riko
@@ -63,16 +64,16 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL ON SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex, claude;
 GRANT USAGE, CREATE ON SCHEMA public TO riko;
 GRANT USAGE ON SCHEMA ag_catalog TO riko;
 GRANT USAGE ON TYPE ag_catalog.agtype TO riko;
@@ -88,16 +89,16 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL ON SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex, claude;
 GRANT USAGE, CREATE ON SCHEMA public TO nous;
 GRANT USAGE ON SCHEMA ag_catalog TO nous;
 GRANT USAGE ON TYPE ag_catalog.agtype TO nous;
@@ -113,16 +114,16 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL ON SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex, claude;
 GRANT USAGE, CREATE ON SCHEMA public TO claw;
 GRANT USAGE ON SCHEMA ag_catalog TO claw;
 GRANT USAGE ON TYPE ag_catalog.agtype TO claw;
@@ -138,16 +139,16 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL ON SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex, claude;
 GRANT USAGE, CREATE ON SCHEMA public TO doge;
 GRANT USAGE ON SCHEMA ag_catalog TO doge;
 GRANT USAGE ON TYPE ag_catalog.agtype TO doge;
@@ -163,16 +164,16 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL ON SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex, claude;
 GRANT USAGE, CREATE ON SCHEMA public TO "share";
 GRANT USAGE ON SCHEMA ag_catalog TO "share";
 GRANT USAGE ON TYPE ag_catalog.agtype TO "share";
@@ -188,16 +189,16 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL ON SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM PUBLIC;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex;
-ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex, claude;
 GRANT USAGE, CREATE ON SCHEMA public TO codex;
 GRANT USAGE ON SCHEMA ag_catalog TO codex;
 GRANT USAGE ON TYPE ag_catalog.agtype TO codex;
@@ -206,3 +207,28 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO codex;
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO codex;
 ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO codex;
 ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO codex;
+
+\connect mem_claude
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS age;
+ALTER SCHEMA public OWNER TO uutest;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL ON SCHEMA ag_catalog FROM PUBLIC;
+REVOKE ALL ON SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON TABLES FROM riko, nous, claw, doge, "share", codex, claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public REVOKE ALL ON SEQUENCES FROM riko, nous, claw, doge, "share", codex, claude;
+GRANT USAGE, CREATE ON SCHEMA public TO claude;
+GRANT USAGE ON SCHEMA ag_catalog TO claude;
+GRANT USAGE ON TYPE ag_catalog.agtype TO claude;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ag_catalog TO claude;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO claude;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO claude;
+ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO claude;
