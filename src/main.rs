@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // ==== 2. check for init_db()
+    // ==== 2. initialize database schema for CLI commands
     let profile = cli_args.profile.ok_or("缺少参数: --profile")?;
     let database_url = config
         .database_url(profile.as_str())
@@ -46,11 +46,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let profile_pool = sqlx::postgres::PgPoolOptions::new()
         .connect(database_url)
         .await?;
-    if cli_args.command.as_deref() == Some("init") {
-        tools::dispatch_init_command(&profile_pool).await?;
-        return Ok(());
-    }
-
     let share_database_url = config
         .database_url("share")
         .ok_or("未找到 profile: share")?;
@@ -58,6 +53,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(share_database_url)
         .await?;
     psql::init_db(&profile_pool, &share_pool, config.reset_db()).await?;
+    if cli_args.command.as_deref() == Some("init") {
+        tools::dispatch_init_command(&profile_pool).await?;
+        return Ok(());
+    }
 
     // ==== 3. CLI: parse args json
     let args_json = cli_args.args_json.ok_or("缺少参数: --args")?;
