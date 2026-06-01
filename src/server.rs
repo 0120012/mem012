@@ -31,7 +31,18 @@ async fn sweep_expired_trash_once() {
                 println!("trash cleanup: {profile} deleted {deleted} expired memories")
             }
             Ok(_) => {}
+            Err(error) if is_uninitialized_profile_error(error.as_ref()) => {
+                eprintln!("trash cleanup skipped for {profile}: database schema is not initialized")
+            }
             Err(error) => eprintln!("trash cleanup failed for {profile}: {error}"),
         }
     }
+}
+
+fn is_uninitialized_profile_error(error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+    matches!(
+        error.downcast_ref::<sqlx::Error>(),
+        Some(sqlx::Error::Database(database_error))
+            if database_error.code().as_deref() == Some("42P01")
+    )
 }
