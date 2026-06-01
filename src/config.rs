@@ -18,6 +18,8 @@ pub struct Config {
     auth: AuthConfig,
     #[serde(default)]
     debug: DebugConfig,
+    #[allow(dead_code)]
+    cleanup: CleanupConfig,
     server: ServerConfig,
 }
 
@@ -108,6 +110,13 @@ struct DebugConfig {
     reset_db: bool,
 }
 
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct CleanupConfig {
+    trash_retention_minutes: u64,
+    sweep_interval_minutes: u64,
+}
+
 #[derive(Deserialize)]
 struct ServerConfig {
     addr: String,
@@ -139,6 +148,18 @@ impl Config {
     pub fn reset_db(&self) -> bool {
         // Why：调试清库是破坏性动作，必须由配置显式打开，缺省永远关闭。
         self.debug.reset_db
+    }
+
+    #[allow(dead_code)]
+    pub fn trash_retention_minutes(&self) -> u64 {
+        // Why：cleanup 必须显式配置；这里只避免零值导致立即硬删。
+        self.cleanup.trash_retention_minutes.max(1)
+    }
+
+    #[allow(dead_code)]
+    pub fn cleanup_sweep_interval_minutes(&self) -> u64 {
+        // Why：后台扫描间隔必须有下限，避免错误配置导致 tight loop 压垮数据库。
+        self.cleanup.sweep_interval_minutes.max(1)
     }
 
     pub fn search_default_limit(&self) -> i32 {
@@ -262,8 +283,80 @@ pub fn load_config(path: &str) -> Result<Config, Box<dyn std::error::Error>> {
         .unwrap_or_else(|| std::path::PathBuf::from(path));
     let text = std::fs::read_to_string(config_path)?;
 
+    parse_config_text(&text)
+}
+
+fn parse_config_text(text: &str) -> Result<Config, Box<dyn std::error::Error>> {
+    let raw_config: toml::Value = toml::from_str(text)?;
+    let cleanup = raw_config
+        .get("cleanup")
+        .and_then(toml::Value::as_table)
+        .ok_or("配置缺少 [cleanup] 段")?;
+    if !cleanup.contains_key("trash_retention_minutes") {
+        return Err("配置缺少 [cleanup].trash_retention_minutes".into());
+    }
+    if !cleanup.contains_key("sweep_interval_minutes") {
+        return Err("配置缺少 [cleanup].sweep_interval_minutes".into());
+    }
+
     // 2、配置读取到struct config
-    let config: Config = toml::from_str(&text)?;
+    let config: Config = toml::from_str(text)?;
 
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_config_text;
+
+    #[test]
+    fn parse_config_text_rejects_missing_cleanup_section() {
+        let result = parse_config_text(
+            r#"
+[database]
+riko = "postgres://localhost/riko"
+
+[search]
+default_limit = 5
+graph_expand_depth = 1
+keyword = 1
+fulltext = 1
+semantic = 1
+graph = 1
+stale_penalty = 1
+
+[embeddings]
+embeddings_api = "local"
+
+[server]
+addr = "127.0.0.1:3012"
+"#,
+        );
+        let error = match result {
+            Ok(_) => panic!("expected missing cleanup error"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("配置缺少 [cleanup] 段"));
+    }
+
+    #[test]
+    fn database_entries_include_share_and_all_profiles() {
+        let config = parse_config_text(
+            r#"
+database = { riko = "postgres://localhost/riko", claude = "postgres://localhost/claude", share = "postgres://localhost/share" }
+search = { default_limit = 5, graph_expand_depth = 1, keyword = 1, fulltext = 1, semantic = 1, graph = 1, stale_penalty = 1 }
+embeddings = { embeddings_api = "local", embeddings_key = "" }
+cleanup = { trash_retention_minutes = 10080, sweep_interval_minutes = 5 }
+server = { addr = "127.0.0.1:3012" }
+"#,
+        )
+        .unwrap();
+
+        let entries: Vec<_> = config.database_entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert!(entries.contains(&("riko", "postgres://localhost/riko")));
+        assert!(entries.contains(&("claude", "postgres://localhost/claude")));
+        assert!(entries.contains(&("share", "postgres://localhost/share")));
+    }
 }

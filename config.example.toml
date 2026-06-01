@@ -50,6 +50,10 @@ verify_url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 # true 会在 CLI 启动时清空 profile/share 记忆表并重新建表，只能在本地调试打开。
 reset_db = false
 
+[cleanup]
+trash_retention_minutes = 10080 # 进入回收站后保留 7 天，超时由 server 后台任务永久删除。
+sweep_interval_minutes = 5 # server 后台扫描到期回收站项目的间隔。
+
 [server]
 addr = "0.0.0.0:37777"
 api_token = "xxx"
