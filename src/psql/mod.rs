@@ -13,7 +13,9 @@ pub use changes::{
 };
 pub use graph_meta::{get_memory_graph_status, mark_memory_graph_dirty};
 pub use init_db::init_db;
-pub use memories::list_memories;
+pub use memories::{
+    MemoryUpdateInput, list_memories, list_memory_category_keywords, update_memory,
+};
 pub(crate) use relations::memory_state;
 pub use relations::{
     RelationCreate, RelationUpdate, add_memory_relation, delete_memory_relation,

@@ -26,6 +26,11 @@ pub fn router_list() -> Router {
         .route("/api/auth/grant/consume", post(auth::auth_grant_consume))
         .route("/api/projects", get(projects::list))
         .route("/api/memories", get(memories::list))
+        .route("/api/memories/{memory_uuid}", patch(memories::update))
+        .route(
+            "/api/memories/categories/{category}/keywords",
+            get(memories::category_keywords),
+        )
         .route("/api/trash", get(trash::list))
         .route("/api/trash/{memory_uuid}", get(trash::detail))
         .route("/api/trash/{memory_uuid}/delete", post(trash::delete))
