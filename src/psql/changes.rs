@@ -15,6 +15,7 @@ SELECT COALESCE(
 )::text
 FROM memory_changes c
 LEFT JOIN memory_units u ON u.uuid = c.memory_uuid
+WHERE c.action <> 'delete' OR u.status IS DISTINCT FROM 'trashed'
 "#;
 
 const CHANGE_DETAIL_SQL: &str = r#"
@@ -31,6 +32,92 @@ SELECT jsonb_build_object(
 FROM memory_changes c
 LEFT JOIN memory_units u ON u.uuid = c.memory_uuid
 WHERE c.memory_uuid = $1::uuid
+    AND (c.action <> 'delete' OR u.status IS DISTINCT FROM 'trashed')
+"#;
+
+const LIST_TRASH_SQL: &str = r#"
+SELECT COALESCE(
+    jsonb_agg(
+        jsonb_build_object(
+            'memory_uuid', c.memory_uuid::text,
+            'action', c.action,
+            'title_norm', COALESCE(u.title_norm, c.after_state #>> '{memory,title_norm}'),
+            'summary', COALESCE(u.summary, c.after_state #>> '{memory,summary}'),
+            'trashed_at', u.trashed_at::text,
+            'expires_at', (u.trashed_at + ($1::bigint * interval '1 minute'))::text,
+            'created_at', c.created_at::text,
+            'updated_at', c.updated_at::text
+        )
+        ORDER BY u.trashed_at DESC
+    ),
+    '[]'::jsonb
+)::text
+FROM memory_changes c
+JOIN memory_units u ON u.uuid = c.memory_uuid
+WHERE c.action = 'delete' AND u.status = 'trashed' AND u.trashed_at IS NOT NULL
+"#;
+
+const TRASH_DETAIL_SQL: &str = r#"
+SELECT jsonb_build_object(
+    'memory_uuid', c.memory_uuid::text,
+    'action', c.action,
+    'title_norm', COALESCE(u.title_norm, c.after_state #>> '{memory,title_norm}'),
+    'summary', COALESCE(u.summary, c.after_state #>> '{memory,summary}'),
+    'before_state', c.before_state,
+    'after_state', c.after_state,
+    'trashed_at', u.trashed_at::text,
+    'expires_at', (u.trashed_at + ($2::bigint * interval '1 minute'))::text,
+    'created_at', c.created_at::text,
+    'updated_at', c.updated_at::text
+)::text
+FROM memory_changes c
+JOIN memory_units u ON u.uuid = c.memory_uuid
+WHERE c.memory_uuid = $1::uuid
+    AND c.action = 'delete'
+    AND u.status = 'trashed'
+    AND u.trashed_at IS NOT NULL
+"#;
+
+const LOCK_TRASH_MEMORY_SQL: &str = r#"
+SELECT uuid::text
+FROM memory_units
+WHERE uuid = $1::uuid AND status = 'trashed'
+FOR UPDATE
+"#;
+
+const RESTORE_TRASH_CHANGE_SQL: &str = r#"
+SELECT before_state::text
+FROM memory_changes
+WHERE memory_uuid = $1::uuid AND action = 'delete'
+FOR UPDATE
+"#;
+
+const RESTORE_PENDING_CREATE_SQL: &str = r#"
+UPDATE memory_changes
+SET action = 'create', before_state = NULL, after_state = $2::jsonb, updated_at = now()
+WHERE memory_uuid = $1::uuid
+"#;
+
+const DELETE_EXPIRED_TRASH_SQL: &str = r#"
+WITH expired AS (
+    SELECT u.uuid
+    FROM memory_units u
+    JOIN memory_changes c ON c.memory_uuid = u.uuid
+    WHERE u.status = 'trashed'
+        AND c.action = 'delete'
+        AND u.trashed_at IS NOT NULL
+        AND u.trashed_at + ($1::bigint * interval '1 minute') <= now()
+    FOR UPDATE OF u, c
+),
+deleted_changes AS (
+    DELETE FROM memory_changes c
+    USING expired e
+    WHERE c.memory_uuid = e.uuid
+    RETURNING c.memory_uuid
+)
+DELETE FROM memory_units u
+USING deleted_changes d
+WHERE u.uuid = d.memory_uuid
 "#;
 
 pub struct ApprovedEmbedding {
@@ -52,6 +139,160 @@ pub async fn list_changes(
         .fetch_one(&pool)
         .await?;
     Ok(serde_json::from_str(&rows)?)
+}
+
+// What：列出当前项目回收站里的待删除记忆，并计算自动硬删时间。
+// Why：expires_at 是配置派生值，不应落库，否则配置变更后页面会显示过期数据。
+pub async fn list_trash(
+    database_url: &str,
+    retention_minutes: i64,
+) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    let rows: String = sqlx::query_scalar(LIST_TRASH_SQL)
+        .bind(retention_minutes)
+        .fetch_one(&pool)
+        .await?;
+    Ok(serde_json::from_str(&rows)?)
+}
+
+// Why：详情接口必须在 SQL 层限定 delete + trashed，避免 HTTP 层误把普通 change 当回收站项。
+pub async fn get_trash(
+    database_url: &str,
+    memory_uuid: &str,
+    retention_minutes: i64,
+) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    let row = sqlx::query_scalar::<_, String>(TRASH_DETAIL_SQL)
+        .bind(memory_uuid)
+        .bind(retention_minutes)
+        .fetch_optional(&pool)
+        .await?;
+    row.map(|value| Ok(serde_json::from_str(&value)?))
+        .transpose()
+}
+
+// What：永久删除一个已进入回收站且等待 delete 审批的记忆。
+// Why：硬删入口必须自带状态约束，避免 API 或定时任务误删普通待审批项。
+pub async fn delete_trash(
+    database_url: &str,
+    memory_uuid: &str,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    let mut tx = pool.begin().await?;
+    let Some(locked_uuid) = sqlx::query_scalar::<_, String>(LOCK_TRASH_MEMORY_SQL)
+        .bind(memory_uuid)
+        .fetch_optional(&mut *tx)
+        .await?
+    else {
+        tx.rollback().await?;
+        return Ok(false);
+    };
+    let delete_change = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT memory_uuid::text
+        FROM memory_changes
+        WHERE memory_uuid = $1::uuid AND action = 'delete'
+        FOR UPDATE
+        "#,
+    )
+    .bind(&locked_uuid)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if delete_change.is_none() {
+        return Err(std::io::Error::other("TRASH_STATE_INVALID: delete change is missing").into());
+    }
+    super::mark_memory_graph_dirty(&mut tx).await?;
+    sqlx::query("DELETE FROM memory_changes WHERE memory_uuid = $1::uuid")
+        .bind(&locked_uuid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM memory_units WHERE uuid = $1::uuid")
+        .bind(&locked_uuid)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+// What：从回收站恢复一条等待 delete 审批的记忆。
+// Why：pending create 的删除恢复后仍必须保留 create 审批，不能复用 reject_change 删除 change。
+pub async fn restore_trash(
+    database_url: &str,
+    memory_uuid: &str,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    let mut tx = pool.begin().await?;
+    let Some(locked_uuid) = sqlx::query_scalar::<_, String>(LOCK_TRASH_MEMORY_SQL)
+        .bind(memory_uuid)
+        .fetch_optional(&mut *tx)
+        .await?
+    else {
+        tx.rollback().await?;
+        return Ok(false);
+    };
+    let before_state = sqlx::query_scalar::<_, String>(RESTORE_TRASH_CHANGE_SQL)
+        .bind(&locked_uuid)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| {
+            std::io::Error::other("DELETE_CHANGE_NOT_FOUND: delete change is missing")
+        })?;
+    let state = serde_json::from_str::<serde_json::Value>(&before_state)?;
+    match state
+        .pointer("/memory/status")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("active") => restore_before_state(&mut tx, &locked_uuid, Some(&before_state)).await?,
+        Some("pending") => {
+            restore_memory_unit(&mut tx, &locked_uuid, &before_state).await?;
+            replace_keywords(&mut tx, &locked_uuid, &before_state).await?;
+            replace_relations(&mut tx, &locked_uuid, &before_state).await?;
+            super::search_index::refresh_memory_search_index(&mut tx, &locked_uuid).await?;
+            sqlx::query(RESTORE_PENDING_CREATE_SQL)
+                .bind(&locked_uuid)
+                .bind(&before_state)
+                .execute(&mut *tx)
+                .await?;
+        }
+        _ => return Err(std::io::Error::other("unsupported trash restore state").into()),
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
+// What：永久删除单个数据库里已超过保留期的回收站记忆。
+// Why：后台 worker 会逐 profile 调用这里；SQL 自带 trash 条件，避免跨入口误删普通变更。
+pub async fn delete_expired_trash(
+    database_url: &str,
+    retention_minutes: i64,
+) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    let mut tx = pool.begin().await?;
+    let deleted = sqlx::query(DELETE_EXPIRED_TRASH_SQL)
+        .bind(retention_minutes)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if deleted > 0 {
+        super::mark_memory_graph_dirty(&mut tx).await?;
+    }
+    tx.commit().await?;
+    Ok(deleted)
 }
 
 // Why：详情接口必须返回完整状态快照，前端才能展示 create/update/delete 的差异。
@@ -136,9 +377,11 @@ async fn lock_change(
     sqlx::query_as(
         r#"
         SELECT action, memory_uuid::text, before_state::text
-        FROM memory_changes
-        WHERE memory_uuid = $1::uuid
-        FOR UPDATE
+        FROM memory_changes c
+        JOIN memory_units u ON u.uuid = c.memory_uuid
+        WHERE c.memory_uuid = $1::uuid
+            AND (c.action <> 'delete' OR u.status IS DISTINCT FROM 'trashed')
+        FOR UPDATE OF c
         "#,
     )
     .bind(memory_uuid)
@@ -357,4 +600,40 @@ async fn replace_relations(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CHANGE_DETAIL_SQL, DELETE_EXPIRED_TRASH_SQL, LIST_CHANGES_SQL, LOCK_TRASH_MEMORY_SQL,
+        RESTORE_TRASH_CHANGE_SQL,
+    };
+
+    #[test]
+    fn review_change_sql_excludes_trashed_delete_items() {
+        let filter = "c.action <> 'delete' OR u.status IS DISTINCT FROM 'trashed'";
+
+        assert!(LIST_CHANGES_SQL.contains(filter));
+        assert!(CHANGE_DETAIL_SQL.contains(filter));
+    }
+
+    #[test]
+    fn restore_trash_sql_locks_memory_before_delete_change_lookup() {
+        assert!(LOCK_TRASH_MEMORY_SQL.contains("status = 'trashed'"));
+        assert!(!LOCK_TRASH_MEMORY_SQL.contains("memory_changes"));
+        assert!(RESTORE_TRASH_CHANGE_SQL.contains("action = 'delete'"));
+    }
+
+    #[test]
+    fn delete_expired_trash_sql_keeps_expiry_filter_and_delete_order() {
+        let sql = DELETE_EXPIRED_TRASH_SQL;
+        assert!(sql.contains("WHERE u.status = 'trashed'"));
+        assert!(sql.contains("AND c.action = 'delete'"));
+        assert!(sql.contains("AND u.trashed_at IS NOT NULL"));
+        assert!(sql.contains("AND u.trashed_at + ($1::bigint * interval '1 minute') <= now()"));
+
+        let change_delete = sql.find("DELETE FROM memory_changes").unwrap();
+        let unit_delete = sql.find("DELETE FROM memory_units").unwrap();
+        assert!(change_delete < unit_delete);
+    }
 }

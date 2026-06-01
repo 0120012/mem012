@@ -4,6 +4,7 @@ mod graph;
 mod health;
 mod memories;
 mod projects;
+mod trash;
 mod turnstile;
 mod utils;
 
@@ -25,6 +26,10 @@ pub fn router_list() -> Router {
         .route("/api/auth/grant/consume", post(auth::auth_grant_consume))
         .route("/api/projects", get(projects::list))
         .route("/api/memories", get(memories::list))
+        .route("/api/trash", get(trash::list))
+        .route("/api/trash/{memory_uuid}", get(trash::detail))
+        .route("/api/trash/{memory_uuid}/delete", post(trash::delete))
+        .route("/api/trash/{memory_uuid}/restore", post(trash::restore))
         .route("/api/changes", get(changes::list))
         .route("/api/changes/{memory_uuid}", get(changes::detail))
         .route("/api/changes/{memory_uuid}/approve", post(changes::approve))
@@ -66,5 +71,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn trash_routes_are_mounted() {
+        for (method, uri) in [
+            ("GET", "/api/trash"),
+            ("GET", "/api/trash/00000000-0000-0000-0000-000000000001"),
+            (
+                "POST",
+                "/api/trash/00000000-0000-0000-0000-000000000001/delete",
+            ),
+            (
+                "POST",
+                "/api/trash/00000000-0000-0000-0000-000000000001/restore",
+            ),
+        ] {
+            let response = router_list()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_ne!(response.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+        }
     }
 }
