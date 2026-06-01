@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { FileText, Clock, LogOut, Menu, X, Search, Monitor, Moon, Sun, ChevronDown, GitBranch, ShieldCheck } from "lucide-react"
+import { FileText, Clock, LogOut, Menu, X, Search, Monitor, Moon, Sun, ChevronDown, GitBranch, ShieldCheck, Trash2 } from "lucide-react"
 import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import type { ProjectInfo } from "@/api/client"
@@ -14,6 +14,7 @@ import type { ProjectInfo } from "@/api/client"
 const navItems = [
   { to: "/memories", icon: FileText, label: "记忆" },
   { to: "/changes", icon: Clock, label: "待确认" },
+  { to: "/changes?filter=trash", icon: Trash2, label: "回收站" },
   { to: "/graph", icon: GitBranch, label: "图谱" },
   { to: "/auth", icon: ShieldCheck, label: "授权" },
 ]
@@ -62,7 +63,8 @@ export function Layout() {
     navigate("/login")
   }
 
-  const pageTitle = location.pathname === "/memories" ? "Projects" : location.pathname === "/changes" ? "待确认" : location.pathname === "/graph" ? "图谱" : location.pathname === "/auth" ? "授权" : "Mem"
+  const currentPath = `${location.pathname}${location.search}`
+  const pageTitle = currentPath === "/memories" ? "Projects" : currentPath === "/changes?filter=trash" ? "回收站" : currentPath === "/changes" ? "待确认" : currentPath === "/graph" ? "图谱" : currentPath === "/auth" ? "授权" : "Mem"
   // 当前主题图标组件
   const ThemeIcon = theme === "system" ? Monitor : theme === "dark" ? Moon : Sun
 
@@ -92,7 +94,7 @@ export function Layout() {
         </div>
         <nav className="flex-1 px-2 py-3 space-y-1">
           {navItems.map((item) => {
-            const active = location.pathname === item.to
+            const active = currentPath === item.to
             return (
               <Link key={item.to} to={item.to} className={cn(
                 "flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
@@ -123,7 +125,7 @@ export function Layout() {
         </div>
         <nav className="flex-1 px-2 py-3 space-y-1">
           {navItems.map((item) => {
-            const active = location.pathname === item.to
+            const active = currentPath === item.to
             return (
               <Link key={item.to} to={item.to} onClick={() => setSidebarOpen(false)} className={cn(
                 "flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",

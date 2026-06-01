@@ -45,6 +45,16 @@ export interface ChangeDetail {
   updated_at: string
 }
 
+export interface TrashItem extends ChangeItem {
+  trashed_at: string
+  expires_at: string
+}
+
+export interface TrashDetail extends ChangeDetail {
+  trashed_at: string
+  expires_at: string
+}
+
 // Graph API 类型
 export interface GraphStatus {
   graph_name: string
@@ -186,6 +196,12 @@ export const api = {
     detail: (uuid: string) => request<ChangeDetail>(`/changes/${uuid}`),
     approve: (uuid: string) => request<void>(`/changes/${uuid}/approve`, { method: "POST" }),
     reject: (uuid: string) => request<void>(`/changes/${uuid}/reject`, { method: "POST" }),
+  },
+  trash: {
+    list: () => request<TrashItem[]>("/trash"),
+    detail: (uuid: string) => request<TrashDetail>(`/trash/${uuid}`),
+    delete: (uuid: string) => request<void>(`/trash/${uuid}/delete`, { method: "POST" }),
+    restore: (uuid: string) => request<void>(`/trash/${uuid}/restore`, { method: "POST" }),
   },
   graph: {
     status: () => request<GraphStatus>("/graph/status"),
