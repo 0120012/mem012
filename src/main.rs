@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Why：server 是常驻 HTTP 模式，不应继续要求 profile 和 --args 这些单次 CLI 参数。
     if cli_args.command.as_deref() == Some("server") {
         let address = config.server_addr();
-        server::app_run(address).await;
+        server::app_run(address, config.cleanup_sweep_interval_minutes()).await;
         return Ok(());
     }
     if let Some(auth_token) = cli_args.auth_token {
