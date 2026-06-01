@@ -18,11 +18,22 @@ export interface MemoryItem {
   category: string
   title_norm: string
   summary: string | null
+  content?: string | null
+  recall_when?: string | null
   status: string
+  keywords?: string[]
   has_open_change: boolean
   change_action: string | null
   created_at: string
   updated_at: string
+}
+
+export interface MemoryUpdateInput {
+  title_norm: string
+  summary: string | null
+  recall_when: string | null
+  content: string
+  keywords: string[]
 }
 
 export interface ChangeItem {
@@ -190,6 +201,13 @@ export const api = {
   },
   memories: {
     list: () => request<MemoryItem[]>("/memories"),
+    categoryKeywords: (category: string) => request<string[]>(`/memories/categories/${encodeURIComponent(category)}/keywords`),
+    update: (uuid: string, body: MemoryUpdateInput) =>
+      request<void>(`/memories/${encodeURIComponent(uuid)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
   },
   changes: {
     list: () => request<ChangeItem[]>("/changes"),
