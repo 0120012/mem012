@@ -62,6 +62,8 @@ FROM (VALUES
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
+LOAD 'age';
+SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
 ALTER SCHEMA public OWNER TO uutest;
@@ -98,6 +100,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA memory_graph GRANT USAGE, SEL
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
+LOAD 'age';
+SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
 ALTER SCHEMA public OWNER TO uutest;
@@ -134,6 +138,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA memory_graph GRANT USAGE, SEL
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
+LOAD 'age';
+SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
 ALTER SCHEMA public OWNER TO uutest;
@@ -170,6 +176,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA memory_graph GRANT USAGE, SEL
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
+LOAD 'age';
+SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
 ALTER SCHEMA public OWNER TO uutest;
@@ -206,6 +214,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA memory_graph GRANT USAGE, SEL
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
+LOAD 'age';
+SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
 ALTER SCHEMA public OWNER TO uutest;
@@ -242,6 +252,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA memory_graph GRANT USAGE, SEL
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
+LOAD 'age';
+SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
 ALTER SCHEMA public OWNER TO uutest;
@@ -278,6 +290,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE uutest IN SCHEMA memory_graph GRANT USAGE, SEL
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS age;
+LOAD 'age';
+SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
 ALTER SCHEMA public OWNER TO uutest;
