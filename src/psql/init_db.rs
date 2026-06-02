@@ -1,25 +1,24 @@
 use sqlx::{Pool, Postgres};
 
-// Why：初始化入口必须独立于服务启动，避免运行态自动修改 profile 私库或共享库。
+// Why：初始化入口必须独立于服务启动，避免运行态自动修改非当前 profile 库。
 pub async fn init_db(
     pool: &Pool<Postgres>,
-    share_pool: &Pool<Postgres>,
+    profile: &str,
     reset_db: bool,
 ) -> Result<bool, sqlx::Error> {
+    let db_label = if profile == "share" { "share" } else { "profile" };
     if reset_db {
-        // Why：调试重建必须同时清空 profile 和 share，否则双库 schema 会出现新旧不一致。
-        reset_memory_tables(pool, "profile").await?;
-        reset_memory_tables(share_pool, "share").await?;
+        // Why：init_db 只收敛当前 profile 对应库，避免隐式创建或清理其他 profile 库表结构。
+        reset_memory_tables(pool, db_label).await?;
     }
 
-    migrate_memory_tables(pool, "profile").await?;
-    migrate_memory_tables(share_pool, "share").await?;
+    migrate_memory_tables(pool, db_label).await?;
 
     Ok(true)
 }
 
 async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
-    // Why：调试阶段两个库都要回到空 schema，否则 share 库会被旧表状态误判为已初始化。
+    // Why：调试重建只清理当前目标库，避免影响未由 init_db 管理的数据库。
     let tables = [
         "memory_embeddings",
         "memory_keywords",

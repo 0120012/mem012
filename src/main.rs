@@ -46,13 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let profile_pool = sqlx::postgres::PgPoolOptions::new()
         .connect(database_url)
         .await?;
-    let share_database_url = config
-        .database_url("share")
-        .ok_or("未找到 profile: share")?;
-    let share_pool = sqlx::postgres::PgPoolOptions::new()
-        .connect(share_database_url)
-        .await?;
-    psql::init_db(&profile_pool, &share_pool, config.reset_db()).await?;
+    psql::init_db(&profile_pool, profile.as_str(), config.reset_db()).await?;
     if cli_args.command.as_deref() == Some("init") {
         tools::dispatch_init_command(&profile_pool).await?;
         return Ok(());
