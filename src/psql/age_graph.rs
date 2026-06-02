@@ -6,10 +6,10 @@ DECLARE
     memory_row record;
     relation_row record;
 BEGIN
-    IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph') THEN
-        PERFORM ag_catalog.drop_graph('memory_graph', true);
-    END IF;
-    PERFORM ag_catalog.create_graph('memory_graph');
+    EXECUTE $sql$SELECT * FROM ag_catalog.cypher('memory_graph', $cypher$
+        MATCH (v)
+        DETACH DELETE v
+    $cypher$) AS (v agtype)$sql$;
 
     FOR memory_row IN SELECT uuid::text uuid, category, title_norm, status, summary FROM memory_units WHERE status = 'active'
     LOOP
