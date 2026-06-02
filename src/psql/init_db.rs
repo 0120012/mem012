@@ -48,6 +48,7 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
         ensure_memory_status_constraint(pool).await?;
         ensure_memory_change_identity(pool).await?;
         cr_memory_indexes(pool, db_label).await?;
+        ensure_memory_graph(pool).await?;
         return Ok(());
     }
 
@@ -64,6 +65,40 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     ensure_memory_change_identity(pool).await?;
     cr_memory_graph_meta_table(pool).await?;
     cr_memory_indexes(pool, db_label).await?;
+    ensure_memory_graph(pool).await?;
+    Ok(())
+}
+
+async fn ensure_memory_graph(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    // What：创建 AGE graph 运行所需的 memory_graph 结构。
+    // Why：init_db 是 schema 收敛入口，不能让 rebuild 承担首次建 graph 的职责。
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS age")
+        .execute(pool)
+        .await?;
+    let create_graph = sqlx::query(
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph') THEN
+                PERFORM ag_catalog.create_graph('memory_graph');
+            END IF;
+        END $$;
+        "#,
+    )
+    .execute(pool)
+    .await;
+    if let Err(error) = create_graph {
+        let missing_database_create = error.as_database_error().is_some_and(|db_error| {
+            db_error.code().as_deref() == Some("42501")
+                && db_error.message().contains("permission denied for database")
+        });
+        if missing_database_create {
+            // Why：AGE 是可重建派生层，不能因为 graph schema 权限缺失阻塞记忆主数据写入。
+            eprintln!("memory_graph 创建被数据库权限拒绝，跳过 AGE 派生图初始化: {error}");
+            return Ok(());
+        }
+        return Err(error);
+    }
     Ok(())
 }
 
