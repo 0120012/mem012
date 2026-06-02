@@ -660,8 +660,10 @@ fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .to_str()
         .ok()?
         .split(';')
-        .find_map(|part| part.trim().split_once('='))
-        .and_then(|(key, value)| (key == name).then_some(value))
+        .find_map(|part| {
+            let (key, value) = part.trim().split_once('=')?;
+            (key == name).then_some(value)
+        })
 }
 
 #[cfg(test)]
