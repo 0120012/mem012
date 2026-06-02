@@ -88,10 +88,9 @@ export function Layout() {
       .catch(() => setMemoryCategories([]))
   }
 
-  const handleCategoryToggle = (category: string) => {
+  const handleCategoryKeywordToggle = (category: string) => {
     const nextOpen = openCategory !== category
-    setOpenCategory(category)
-    navigate(`/memories?category=${encodeURIComponent(category)}`)
+    setOpenCategory(nextOpen ? category : "")
     if (!nextOpen || categoryKeywords[category]) return
     void api.memories.categoryKeywords(category)
       .then((keywords) => setCategoryKeywords((current) => ({ ...current, [category]: keywords || [] })))
@@ -147,14 +146,18 @@ export function Layout() {
             <div className="ml-5 border-l pl-2">
               {memoryCategories.map((category) => (
                 <div key={category}>
-                  <button type="button" onClick={() => handleCategoryToggle(category)} className={cn(
+                  <div className={cn(
                     "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
                     categoryFilter === category ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
                   )}>
-                    <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate text-left">{category}</span>
-                    <ChevronDown className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", openCategory === category && "rotate-180")} />
-                  </button>
+                    <Link to={`/memories?category=${encodeURIComponent(category)}`} className="flex min-w-0 flex-1 items-center gap-2">
+                      <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate text-left">{category}</span>
+                    </Link>
+                    <button type="button" aria-label={openCategory === category ? "收起关键词" : "展开关键词"} onClick={() => handleCategoryKeywordToggle(category)} className="shrink-0 rounded-sm p-1 hover:bg-accent">
+                      <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", openCategory === category && "rotate-180")} />
+                    </button>
+                  </div>
                   {openCategory === category && (categoryKeywords[category] || []).map((keyword) => (
                     <Link key={keyword} to={`/memories?category=${encodeURIComponent(category)}&keyword=${encodeURIComponent(keyword)}`} className={cn(
                       "ml-4 block truncate rounded-md px-3 py-1 text-xs transition-colors",
