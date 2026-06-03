@@ -59,7 +59,6 @@ struct SignedInitGrant {
 
 struct VerifiedInitGrant {
     grant_id: String,
-    expires_at: u64,
 }
 
 #[derive(Deserialize)]
@@ -524,10 +523,7 @@ fn verify_init_grant(
     if expires_at.saturating_sub(issued_at) != INIT_GRANT_TTL.as_secs() {
         return Err(invalid());
     }
-    Ok(VerifiedInitGrant {
-        grant_id,
-        expires_at,
-    })
+    Ok(VerifiedInitGrant { grant_id })
 }
 
 fn init_auth_store() -> &'static Mutex<InitAuthStore> {
@@ -777,7 +773,6 @@ mod tests {
         };
 
         assert_eq!(verified.grant_id, signed.grant_id);
-        assert_eq!(verified.expires_at, signed.expires_at);
     }
 
     #[test]
