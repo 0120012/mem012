@@ -15,7 +15,7 @@ struct CliArgs {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli_args = parse::parse_cli_args()?;
+    let help_requested = std::env::args().skip(1).any(|arg| arg == "--help");
 
     // ==== 1. load config
     let config = match config::load_config("config.toml") {
@@ -25,6 +25,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(error);
         }
     };
+    if help_requested {
+        print_agent_help(&config)?;
+        return Ok(());
+    }
+
+    let cli_args = parse::parse_cli_args()?;
 
     // Why：server 是常驻 HTTP 模式，不应继续要求 profile 和 --args 这些单次 CLI 参数。
     if cli_args.command.as_deref() == Some("server") {
@@ -71,6 +77,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==== 4. 选择工具, 开始
     tools::dispatch_tool_request(&tool_context, request_args).await?;
 
+    Ok(())
+}
+
+fn print_agent_help(config: &config::Config) -> Result<(), Box<dyn std::error::Error>> {
+    // What：输出给 Agent 读取的 CLI 能力入口元数据。
+    // Why：category 白名单来自运行时配置，避免 help 和实际写入校验出现两套来源。
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "state": "success",
+            "tool": "help",
+            "data": {
+                "skill": {
+                    "name": "mem012-memory-skill"
+                },
+                "categories": {
+                    "index_list": config.category_index_list()
+                }
+            },
+            "error": null
+        }))?
+    );
     Ok(())
 }
 
