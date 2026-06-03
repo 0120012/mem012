@@ -66,6 +66,9 @@ LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
+SELECT format('ALTER SCHEMA memory_graph OWNER TO %I', 'riko')\gexec
+SELECT format('ALTER TABLE memory_graph.%I OWNER TO %I', c.relname, 'riko') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'r'\gexec
+SELECT format('ALTER SEQUENCE memory_graph.%I OWNER TO %I', c.relname, 'riko') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'S'\gexec
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
@@ -104,6 +107,9 @@ LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
+SELECT format('ALTER SCHEMA memory_graph OWNER TO %I', 'nous')\gexec
+SELECT format('ALTER TABLE memory_graph.%I OWNER TO %I', c.relname, 'nous') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'r'\gexec
+SELECT format('ALTER SEQUENCE memory_graph.%I OWNER TO %I', c.relname, 'nous') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'S'\gexec
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
@@ -142,6 +148,9 @@ LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
+SELECT format('ALTER SCHEMA memory_graph OWNER TO %I', 'claw')\gexec
+SELECT format('ALTER TABLE memory_graph.%I OWNER TO %I', c.relname, 'claw') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'r'\gexec
+SELECT format('ALTER SEQUENCE memory_graph.%I OWNER TO %I', c.relname, 'claw') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'S'\gexec
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
@@ -180,6 +189,9 @@ LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
+SELECT format('ALTER SCHEMA memory_graph OWNER TO %I', 'doge')\gexec
+SELECT format('ALTER TABLE memory_graph.%I OWNER TO %I', c.relname, 'doge') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'r'\gexec
+SELECT format('ALTER SEQUENCE memory_graph.%I OWNER TO %I', c.relname, 'doge') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'S'\gexec
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
@@ -218,6 +230,9 @@ LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
+SELECT format('ALTER SCHEMA memory_graph OWNER TO %I', 'share')\gexec
+SELECT format('ALTER TABLE memory_graph.%I OWNER TO %I', c.relname, 'share') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'r'\gexec
+SELECT format('ALTER SEQUENCE memory_graph.%I OWNER TO %I', c.relname, 'share') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'S'\gexec
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
@@ -256,6 +271,9 @@ LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
+SELECT format('ALTER SCHEMA memory_graph OWNER TO %I', 'codex')\gexec
+SELECT format('ALTER TABLE memory_graph.%I OWNER TO %I', c.relname, 'codex') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'r'\gexec
+SELECT format('ALTER SEQUENCE memory_graph.%I OWNER TO %I', c.relname, 'codex') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'S'\gexec
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;
@@ -294,6 +312,9 @@ LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 SELECT ag_catalog.create_graph('memory_graph')
 WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'memory_graph');
+SELECT format('ALTER SCHEMA memory_graph OWNER TO %I', 'claude')\gexec
+SELECT format('ALTER TABLE memory_graph.%I OWNER TO %I', c.relname, 'claude') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'r'\gexec
+SELECT format('ALTER SEQUENCE memory_graph.%I OWNER TO %I', c.relname, 'claude') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'memory_graph' AND c.relkind = 'S'\gexec
 ALTER SCHEMA public OWNER TO uutest;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM riko, nous, claw, doge, "share", codex, claude;

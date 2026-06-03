@@ -45,4 +45,5 @@ COPY --from=builder /usr/lib/postgresql/${PG_MAJOR}/lib/vector.so /usr/lib/postg
 COPY --from=builder /usr/share/postgresql/${PG_MAJOR}/extension/vector* /usr/share/postgresql/${PG_MAJOR}/extension/
 COPY --from=builder /usr/lib/postgresql/${PG_MAJOR}/lib/age.so /usr/lib/postgresql/${PG_MAJOR}/lib/
 COPY --from=builder /usr/share/postgresql/${PG_MAJOR}/extension/age* /usr/share/postgresql/${PG_MAJOR}/extension/
+RUN echo "shared_preload_libraries = 'age'" >> /usr/share/postgresql/${PG_MAJOR}/postgresql.conf.sample
 COPY init/ /docker-entrypoint-initdb.d/
