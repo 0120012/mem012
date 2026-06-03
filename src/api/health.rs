@@ -8,11 +8,3 @@ pub async fn health() -> Json<Value> {
         "database": "unconfigured"
     }))
 }
-
-// Why：先让前端 profile 接口可访问，后面再接真实配置源。
-pub async fn health_profiles() -> Json<Value> {
-    Json(json!({
-        "profiles": [],
-        "default_profile": null
-    }))
-}
