@@ -7,7 +7,6 @@ pub struct Config {
     database: BTreeMap<String, String>,
     #[serde(default)]
     categories: CategoriesConfig,
-    search: SearchConfig,
     #[serde(default)]
     rerank: RerankConfig,
     embeddings: EmbeddingsConfig,
@@ -21,17 +20,6 @@ pub struct Config {
     #[allow(dead_code)]
     cleanup: CleanupConfig,
     server: ServerConfig,
-}
-
-#[derive(Deserialize)]
-struct SearchConfig {
-    default_limit: i32,
-    graph_expand_depth: i32,
-    keyword: i32,
-    fulltext: i32,
-    semantic: i32,
-    graph: i32,
-    stale_penalty: i32,
 }
 
 #[derive(Default, Deserialize)]
@@ -163,8 +151,8 @@ impl Config {
     }
 
     pub fn search_default_limit(&self) -> i32 {
-        // Why：搜索入口必须统一遵守配置上限，避免各工具各自解释 limit。
-        self.search.default_limit.max(1)
+        // Why：搜索默认条数已收回为后端固定策略，避免 TOML 暴露未使用调参入口。
+        8
     }
 
     pub fn category_index_list(&self) -> &[String] {

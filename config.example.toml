@@ -10,17 +10,6 @@ claude = "postgresql://claude:zxz456123@127.0.0.1:5632/mem_claude"
 [categories]
 index_list = ["core", "book", "myhome", "user", "init"]
 
-[search]
-# 搜索运行参数：先保留开关用于早期调试；关键词和全文后续可能固定为后端基础能力。
-default_limit = 8 # 默认返回条数。
-graph_expand_depth = 1 # 图扩展深度；第一版只允许一跳，避免召回发散。
-# 临时调参区：先保留给早期搜索实验，召回策略稳定后可以收回到后端代码里固定。
-keyword = 40 # 关键词精确命中加分，负责专名、术语、别名。
-fulltext = 25 # title/summary/content/keywords 的全文检索加分。
-semantic = 20 # 语义向量相似度加分，负责非字面但语义接近的召回。
-graph = 12 # 关系图一跳扩展加分，负责补充强关联记忆。
-stale_penalty = 10 # 过期或需要复审的记忆扣分。
-
 [rerank]
 enabled = false # 是否启用 rerank 模型重排；关闭时只按基础召回分排序。
 rerank_api = "local" # local 表示本地 rerank；否则填写 rerank API base URL 或完整 endpoint。
@@ -52,7 +41,7 @@ reset_db = false
 
 [cleanup]
 trash_retention_minutes = 10080 # 进入回收站后保留 7 天，超时由 server 后台任务永久删除。
-sweep_interval_minutes = 5 # server 后台扫描到期回收站项目的间隔。
+sweep_interval_minutes = 30 # server 后台扫描到期回收站项目的间隔。
 
 [server]
 addr = "0.0.0.0:37777"
