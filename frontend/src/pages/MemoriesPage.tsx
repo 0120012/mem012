@@ -148,10 +148,6 @@ export function MemoriesPage() {
       setKeywordError("关键词不能为空")
       return
     }
-    if (/\p{P}/u.test(keyword)) {
-      setKeywordError("关键词不能包含标点符号")
-      return
-    }
     if (editorKeywords.includes(keyword)) {
       setKeywordError("关键词已存在")
       return

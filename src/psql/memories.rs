@@ -213,11 +213,7 @@ fn normalize_keywords(
             .collect::<Vec<_>>()
             .join(" ")
             .to_lowercase();
-        if keyword.is_empty()
-            || keyword
-                .chars()
-                .any(|c| !c.is_alphanumeric() && !c.is_whitespace())
-        {
+        if keyword.is_empty() {
             return Err("MEMORY_UPDATE_INVALID: keyword is invalid".into());
         }
         if keywords.iter().any(|existing| existing == &keyword) {
