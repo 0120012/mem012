@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Link, useSearchParams } from "react-router-dom"
-import { api, type MemoryItem } from "@/api/client"
+import { ApiError, api, type MemoryItem } from "@/api/client"
 import { useAuth } from "@/auth/AuthContext"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -187,6 +187,7 @@ export function MemoriesPage() {
     const recallWhen = recallWhenInputRef.current?.value.trim() || ""
     try {
       await api.memories.update(selectedMemory.memory_uuid, {
+        expected_revision: selectedMemory.revision,
         title_norm: title,
         summary: summary || null,
         recall_when: recallWhen || null,
@@ -196,6 +197,10 @@ export function MemoriesPage() {
       await fetchMemories()
       setIsEditing(false)
     } catch (error) {
+      if (error instanceof ApiError && error.code === "MEMORY_UPDATE_CONFLICT") {
+        setKeywordError("记忆已被更新，请刷新后重试")
+        return
+      }
       setKeywordError(error instanceof Error ? error.message : "保存失败")
     }
   }

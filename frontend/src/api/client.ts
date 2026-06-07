@@ -15,6 +15,7 @@ export interface ProjectInfo {
 
 export interface MemoryItem {
   memory_uuid: string
+  revision: number
   category: string
   title_norm: string
   summary: string | null
@@ -29,6 +30,7 @@ export interface MemoryItem {
 }
 
 export interface MemoryUpdateInput {
+  expected_revision: number
   title_norm: string
   summary: string | null
   recall_when: string | null
