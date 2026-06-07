@@ -248,32 +248,13 @@ pub async fn auth_refresh(
     )
 }
 
-// What：基于现有未过期授权状态轮换 auth_token，不重新触发 Turnstile。
-// Why：用户已完成一次验证码后，需要能主动废弃旧 grant 并生成新 token，而不是反复做人机验证。
-pub async fn auth_force_refresh(headers: HeaderMap) -> (StatusCode, Json<Value>) {
-    if let Err(error) =
-        has_valid_session(&headers).and_then(|ok| ok.then_some(()).ok_or_else(unauthorized_error))
-    {
-        return (
-            StatusCode::UNAUTHORIZED,
-            api_response(None, Some(error), None),
-        );
-    }
-    let _transition_guard = init_authorization_transition_lock().lock().unwrap();
-    match refresh_existing_init_authorization(now_epoch()) {
-        Some(token) => (
-            StatusCode::OK,
-            api_response(
-                Some(json!({ "auth_token": token.token, "expires_at": token.expires_at })),
-                None,
-                None,
-            ),
-        ),
-        None => (
-            StatusCode::UNAUTHORIZED,
-            api_response(None, Some(unauthorized_error()), None),
-        ),
-    }
+// What：保留 force 路由兼容旧入口，但签发 auth_token 前仍复用 Turnstile refresh 校验。
+// Why：cookie 只能证明已登录，不能成为绕过真人验证刷新 init 授权 token 的充分条件。
+pub async fn auth_force_refresh(
+    headers: HeaderMap,
+    payload: Result<Json<InitTokenRefreshRequest>, JsonRejection>,
+) -> (StatusCode, Json<Value>) {
+    auth_refresh(headers, payload).await
 }
 
 // What：用 300s auth_token 换取 300s Ed25519 init grant。
@@ -546,24 +527,6 @@ fn clear_init_authorization_state() {
     init_grant_store().lock().unwrap().clear_grant();
 }
 
-fn refresh_existing_init_authorization(now: u64) -> Option<InitAuthToken> {
-    let has_token = init_auth_store()
-        .lock()
-        .unwrap()
-        .token_status(now)
-        .is_some();
-    let has_grant = init_grant_store().lock().unwrap().has_active_grant(now);
-    if !has_token && !has_grant {
-        return None;
-    }
-    let token = init_auth_store()
-        .lock()
-        .unwrap()
-        .refresh_token(now, INIT_AUTH_TOKEN_TTL);
-    init_grant_store().lock().unwrap().clear_grant();
-    Some(token)
-}
-
 fn now_epoch() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -630,12 +593,6 @@ impl InitGrantStore {
             .is_some_and(|grant| grant.grant_id == grant_id && grant.scope == scope)
     }
 
-    fn has_active_grant(&self, now: u64) -> bool {
-        self.grant
-            .as_ref()
-            .is_some_and(|grant| !grant.consumed && grant.expires_at > now)
-    }
-
     fn consume_grant(&mut self, grant_id: &str, scope: &str, now: u64) -> bool {
         let Some(grant) = self.grant.as_ref() else {
             return false;
@@ -677,7 +634,7 @@ mod tests {
         INIT_GRANT_SCOPE, InitAuthStore, InitGrantRequest, InitGrantStore, URL_SAFE_NO_PAD,
         auth_grant, auth_grant_consume, clear_init_authorization_state, init_auth_store,
         init_grant_signing_key, init_grant_store, now_epoch, random_base64_token,
-        refresh_existing_init_authorization, signed_init_grant, verify_init_grant,
+        signed_init_grant, verify_init_grant,
     };
 
     fn auth_handler_test_lock() -> &'static TestMutex<()> {
@@ -878,27 +835,6 @@ mod tests {
         let second = init_grant_store() as *const _;
 
         assert_eq!(first, second);
-    }
-
-    #[test]
-    fn refresh_existing_init_authorization_rotates_from_active_grant() {
-        let _guard = auth_handler_test_lock().lock().unwrap();
-        clear_init_authorization_state();
-        init_grant_store().lock().unwrap().replace_grant(
-            "current-grant".to_string(),
-            INIT_GRANT_SCOPE.to_string(),
-            400,
-        );
-
-        let token = refresh_existing_init_authorization(100).unwrap();
-
-        assert_eq!(token.expires_at, 400);
-        assert_eq!(
-            init_auth_store().lock().unwrap().token_status(101),
-            Some(400)
-        );
-        assert!(init_grant_store().lock().unwrap().grant.is_none());
-        clear_init_authorization_state();
     }
 
     #[tokio::test(flavor = "current_thread")]
