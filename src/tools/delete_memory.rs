@@ -4,6 +4,7 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 struct DeleteMemoryArgs {
     memory_uuid: String,
+    expected_revision: i64,
 }
 
 enum DeleteMemoryCase {
@@ -18,24 +19,33 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：先固定 delete_memory 的 CLI 边界，具体事务分支后续按 case 逐步实现。
     let delete_args = serde_json::from_value::<DeleteMemoryArgs>(args.clone())?;
-    let memory_uuid = validate_memory_uuid(&delete_args)?;
+    let (memory_uuid, expected_revision) = validate_delete_args(&delete_args)?;
     let delete_case = classify_delete_case(context, memory_uuid).await?;
     match delete_case {
-        DeleteMemoryCase::PendingCreate => mark_pending_create_delete(context, memory_uuid).await,
-        DeleteMemoryCase::ActiveWithoutOpenChange => {
-            mark_pending_delete(context, memory_uuid).await
+        DeleteMemoryCase::PendingCreate => {
+            mark_pending_create_delete(context, memory_uuid, expected_revision).await
         }
-        DeleteMemoryCase::HasOtherOpenChange => mark_open_change_delete(context, memory_uuid).await,
+        DeleteMemoryCase::ActiveWithoutOpenChange => {
+            mark_pending_delete(context, memory_uuid, expected_revision).await
+        }
+        DeleteMemoryCase::HasOtherOpenChange => {
+            mark_open_change_delete(context, memory_uuid, expected_revision).await
+        }
     }
 }
 
-fn validate_memory_uuid(args: &DeleteMemoryArgs) -> Result<&str, Box<dyn std::error::Error>> {
+fn validate_delete_args(
+    args: &DeleteMemoryArgs,
+) -> Result<(&str, i64), Box<dyn std::error::Error>> {
     // Why：删除是破坏性操作，只允许强身份 memory_uuid，避免标题等弱定位带来歧义。
     let memory_uuid = args.memory_uuid.trim();
     if memory_uuid.is_empty() {
         return Err("memory_uuid 不能为空".into());
     }
-    Ok(memory_uuid)
+    if args.expected_revision < 1 {
+        return Err("expected_revision 必须大于 0".into());
+    }
+    Ok((memory_uuid, args.expected_revision))
 }
 
 async fn classify_delete_case(
@@ -68,12 +78,13 @@ async fn classify_delete_case(
 async fn mark_pending_create_delete(
     context: &super::ToolContext<'_>,
     memory_uuid: &str,
+    expected_revision: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：pending create 删除也必须二次确认，不能绕过用户批准直接硬删。
     let mut tx = context.profile_pool.begin().await?;
-    let change_exists: Option<String> = sqlx::query_scalar(
+    let locked_revision: Option<i64> = sqlx::query_scalar(
         r#"
-        SELECT c.memory_uuid::text
+        SELECT u.revision
         FROM memory_units u
         JOIN memory_changes c ON c.memory_uuid = u.uuid
         WHERE u.uuid = $1::uuid AND u.status = 'pending' AND c.action = 'create'
@@ -83,9 +94,13 @@ async fn mark_pending_create_delete(
     .bind(memory_uuid)
     .fetch_optional(&mut *tx)
     .await?;
-    if change_exists.is_none() {
+    let Some(locked_revision) = locked_revision else {
         tx.rollback().await?;
         return Err("delete_memory 只能软删除 pending create".into());
+    };
+    if locked_revision != expected_revision {
+        tx.rollback().await?;
+        return Err("revision 不匹配".into());
     }
     let before_state = crate::psql::memory_state(&mut tx, memory_uuid)
         .await
@@ -125,10 +140,11 @@ async fn mark_pending_create_delete(
 async fn mark_pending_delete(
     context: &super::ToolContext<'_>,
     memory_uuid: &str,
+    expected_revision: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：case2 表示正式记忆软删除，后续要写 before_state 和 delete change。
-    // 1. 开启事务，锁定 memory_units 中这条 active memory。
-    // 2. 确认 memory_changes 中不存在同一 memory_uuid 的 open change。
+    // 1. 校验 expected_revision，开启事务，锁定 memory_units 中这条 active memory。
+    // 2. 校验锁定后的 revision，再确认 memory_changes 中不存在同一 memory_uuid 的 open change。
     // 3. 读取删除前完整工作态，生成 before_state。
     // 4. 更新 memory_units.status = 'trashed'，并写入 trashed_at = now()。
     // 5. 读取删除后完整工作态，生成 after_state。
@@ -138,15 +154,19 @@ async fn mark_pending_delete(
     // 9. 提交事务。
     // 10. 返回 trashed，表示已软删除并等待用户二次确认硬删除。
     let mut tx = context.profile_pool.begin().await?;
-    let locked_memory: Option<String> = sqlx::query_scalar(
-        "SELECT uuid::text FROM memory_units WHERE uuid = $1::uuid AND status = 'active' FOR UPDATE",
+    let locked_revision: Option<i64> = sqlx::query_scalar(
+        "SELECT revision FROM memory_units WHERE uuid = $1::uuid AND status = 'active' FOR UPDATE",
     )
     .bind(memory_uuid)
     .fetch_optional(&mut *tx)
     .await?;
-    if locked_memory.is_none() {
+    let Some(locked_revision) = locked_revision else {
         tx.rollback().await?;
         return Err("delete_memory 只能删除 active memory".into());
+    };
+    if locked_revision != expected_revision {
+        tx.rollback().await?;
+        return Err("revision 不匹配".into());
     }
 
     let has_open_change: bool = sqlx::query_scalar(
@@ -201,10 +221,11 @@ async fn mark_pending_delete(
 async fn mark_open_change_delete(
     context: &super::ToolContext<'_>,
     memory_uuid: &str,
+    expected_revision: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：delete_memory 可以覆盖未确认 update/restore，但不能重复覆盖已经进入 delete 的状态。
-    // 1. 开启事务，锁定 memory_units 和 memory_changes 中这条 memory_uuid。
-    // 2. 如果当前已经是 status = 'trashed' 且 action = 'delete'，直接返回 trashed。
+    // 1. 校验 expected_revision，开启事务，锁定 memory_units 和 memory_changes 中这条 memory_uuid。
+    // 2. 校验锁定后的 revision，再处理已进入 delete 的幂等返回。
     // 3. 保留已有 before_state，作为唯一可靠回滚基线。
     // 4. 更新 memory_units.status = 'trashed'，trashed_at = COALESCE(trashed_at, now())。
     // 5. 读取删除后完整工作态，生成新的 after_state。
@@ -213,9 +234,9 @@ async fn mark_open_change_delete(
     // 8. 如果删除前是 active，标记 memory_graph_meta.dirty。
     // 9. 提交事务并返回 trashed。
     let mut tx = context.profile_pool.begin().await?;
-    let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+    let row: Option<(String, String, Option<String>, i64)> = sqlx::query_as(
         r#"
-        SELECT u.status, c.action, c.before_state::text
+        SELECT u.status, c.action, c.before_state::text, u.revision
         FROM memory_units u
         JOIN memory_changes c ON c.memory_uuid = u.uuid
         WHERE u.uuid = $1::uuid
@@ -225,10 +246,14 @@ async fn mark_open_change_delete(
     .bind(memory_uuid)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((status, action, before_state)) = row else {
+    let Some((status, action, before_state, locked_revision)) = row else {
         tx.rollback().await?;
         return Err("memory has no pending change".into());
     };
+    if locked_revision != expected_revision {
+        tx.rollback().await?;
+        return Err("revision 不匹配".into());
+    }
     if status == "trashed" && action == "delete" {
         tx.commit().await?;
     } else {

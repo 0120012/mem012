@@ -203,6 +203,8 @@ async fn update_memory_data(
             ApiError {
                 code: if message.starts_with("MEMORY_UPDATE_INVALID:") {
                     "BAD_REQUEST"
+                } else if message.starts_with("MEMORY_UPDATE_CONFLICT:") {
+                    "MEMORY_UPDATE_CONFLICT"
                 } else {
                     "MEMORY_UPDATE_FAILED"
                 },
@@ -216,6 +218,7 @@ fn memory_error_status(code: &str) -> StatusCode {
         "UNAUTHORIZED" => StatusCode::UNAUTHORIZED,
         "PROJECT_REQUIRED" | "BAD_REQUEST" => StatusCode::BAD_REQUEST,
         "PROJECT_NOT_FOUND" => StatusCode::NOT_FOUND,
+        "MEMORY_UPDATE_CONFLICT" => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

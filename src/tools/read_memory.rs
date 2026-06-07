@@ -63,6 +63,10 @@ async fn read_memory_hash(
         "data": {
             "memory_uuid": memory_uuid,
             "title_norm": read_memory_text(memory, "title_norm")?,
+            "revision": memory
+                .get("revision")
+                .and_then(serde_json::Value::as_i64)
+                .ok_or("memory state 字段缺失或不是整数: revision")?,
             "hash": build_memory_hashes(&state)?,
         },
         "error": null,

@@ -1,5 +1,6 @@
 #[derive(serde::Deserialize)]
 pub struct MemoryUpdateInput {
+    pub expected_revision: i64,
     pub title_norm: String,
     pub summary: Option<String>,
     pub recall_when: Option<String>,
@@ -14,6 +15,7 @@ SELECT COALESCE(
             'memory_uuid', u.uuid::text,
             'category', u.category,
             'title_norm', u.title_norm,
+            'revision', u.revision,
             'summary', u.summary,
             'content', u.content,
             'recall_when', u.recall_when,
@@ -95,6 +97,9 @@ pub async fn update_memory(
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     // What：把前端编辑后的完整记忆快照写回当前工作态。
     // Why：人工编辑也需要可恢复，必须保留最早 before_state，只覆盖当前 after_state。
+    if input.expected_revision < 1 {
+        return Err("MEMORY_UPDATE_INVALID: expected_revision is invalid".into());
+    }
     let title = required_text("title_norm", input.title_norm)?;
     let content = required_nonempty_text("content", input.content)?;
     let summary = input
@@ -111,15 +116,19 @@ pub async fn update_memory(
         .connect(database_url)
         .await?;
     let mut tx = pool.begin().await?;
-    let locked: Option<i32> = sqlx::query_scalar(
-        "SELECT 1 FROM memory_units WHERE uuid = $1::uuid AND status = 'active' FOR UPDATE",
+    let locked_revision: Option<i64> = sqlx::query_scalar(
+        "SELECT revision FROM memory_units WHERE uuid = $1::uuid AND status = 'active' FOR UPDATE",
     )
     .bind(memory_uuid)
     .fetch_optional(&mut *tx)
     .await?;
-    if locked.is_none() {
+    let Some(locked_revision) = locked_revision else {
         tx.rollback().await?;
         return Ok(false);
+    };
+    if locked_revision != input.expected_revision {
+        tx.rollback().await?;
+        return Err("MEMORY_UPDATE_CONFLICT: revision mismatch".into());
     }
     let before_state: Option<String> = sqlx::query_scalar(
         "SELECT before_state::text FROM memory_changes WHERE memory_uuid = $1::uuid FOR UPDATE",

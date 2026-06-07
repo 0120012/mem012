@@ -1,4 +1,4 @@
-use sqlx::{Pool, Postgres};
+use sqlx::{Acquire, Pool, Postgres};
 
 // Why：初始化入口必须独立于服务启动，避免运行态自动修改非当前 profile 库。
 pub async fn init_db(
@@ -6,7 +6,11 @@ pub async fn init_db(
     profile: &str,
     reset_db: bool,
 ) -> Result<bool, sqlx::Error> {
-    let db_label = if profile == "share" { "share" } else { "profile" };
+    let db_label = if profile == "share" {
+        "share"
+    } else {
+        "profile"
+    };
     if reset_db {
         // Why：init_db 只收敛当前 profile 对应库，避免隐式创建或清理其他 profile 库表结构。
         reset_memory_tables(pool, db_label).await?;
@@ -72,8 +76,23 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
 async fn ensure_memory_graph(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
     // What：创建 AGE graph 运行所需的 memory_graph 结构。
     // Why：init_db 是 schema 收敛入口，不能让 rebuild 承担首次建 graph 的职责。
+    let mut conn = pool.acquire().await?;
     sqlx::query("CREATE EXTENSION IF NOT EXISTS age")
-        .execute(pool)
+        .execute(&mut *conn)
+        .await?;
+    match sqlx::query("LOAD 'age'").execute(&mut *conn).await {
+        Ok(_) => {}
+        Err(error)
+            if error.as_database_error().is_some_and(|db_error| {
+                db_error
+                    .message()
+                    .contains("access to library \"age\" is not allowed")
+            }) => {}
+        Err(error) => return Err(error),
+    }
+    let mut tx = conn.begin().await?;
+    sqlx::query(r#"SET LOCAL search_path = ag_catalog, "$user", public"#)
+        .execute(&mut *tx)
         .await?;
     let create_graph = sqlx::query(
         r#"
@@ -85,13 +104,16 @@ async fn ensure_memory_graph(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
         END $$;
         "#,
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await;
     if let Err(error) = create_graph {
         let missing_database_create = error.as_database_error().is_some_and(|db_error| {
             db_error.code().as_deref() == Some("42501")
-                && db_error.message().contains("permission denied for database")
+                && db_error
+                    .message()
+                    .contains("permission denied for database")
         });
+        tx.rollback().await?;
         if missing_database_create {
             // Why：AGE 是可重建派生层，不能因为 graph schema 权限缺失阻塞记忆主数据写入。
             eprintln!("memory_graph 创建被数据库权限拒绝，跳过 AGE 派生图初始化: {error}");
@@ -99,6 +121,7 @@ async fn ensure_memory_graph(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
         }
         return Err(error);
     }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -477,6 +500,7 @@ async fn cr_memory_units_table(
             title_norm TEXT NOT NULL,
             content TEXT NOT NULL,
             summary TEXT,
+            revision BIGINT NOT NULL DEFAULT 1,
             status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'trashed')),
             recall_when TEXT,
             trashed_at TIMESTAMPTZ,
@@ -496,6 +520,31 @@ async fn cr_memory_units_table(
 
     match cr_memory_units {
         Ok(_) => {
+            sqlx::query(
+                r#"
+                CREATE OR REPLACE FUNCTION bump_memory_units_revision()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    NEW.revision := OLD.revision + 1;
+                    RETURN NEW;
+                END;
+                $$;
+                "#,
+            )
+            .execute(_pool)
+            .await?;
+            sqlx::query(
+                r#"
+                CREATE TRIGGER memory_units_revision_bump
+                BEFORE UPDATE ON memory_units
+                FOR EACH ROW
+                EXECUTE FUNCTION bump_memory_units_revision();
+                "#,
+            )
+            .execute(_pool)
+            .await?;
             println!("memory_units 表创建成功");
             Ok(())
         }

@@ -23,6 +23,8 @@ pub async fn add_memory_relation(
     ensure_active_endpoints(&mut tx, &input.from_memory_uuid, &input.to_memory_uuid).await?;
     let before_state = memory_state(&mut tx, &input.from_memory_uuid).await?;
     let relation = insert_relation(&mut tx, &input).await?;
+    touch_relation_endpoints_revision(&mut tx, &input.from_memory_uuid, &input.to_memory_uuid)
+        .await?;
     let after_state = memory_state(&mut tx, &input.from_memory_uuid).await?;
     upsert_relation_change(
         &mut tx,
@@ -48,12 +50,14 @@ pub async fn update_memory_relation(
     validate_relation_patch(&patch)?;
     validate_weight(patch.weight)?;
     let mut tx = pool.begin().await?;
-    let Some(memory_uuid) = relation_owner(&mut tx, relation_uuid).await? else {
+    let Some((memory_uuid, other_memory_uuid)) = relation_owner(&mut tx, relation_uuid).await?
+    else {
         tx.rollback().await?;
         return Ok(None);
     };
     let before_state = memory_state(&mut tx, &memory_uuid).await?;
     let relation = update_relation(&mut tx, relation_uuid, &patch).await?;
+    touch_relation_endpoints_revision(&mut tx, &memory_uuid, &other_memory_uuid).await?;
     let after_state = memory_state(&mut tx, &memory_uuid).await?;
     upsert_relation_change(&mut tx, &memory_uuid, &before_state, &after_state).await?;
     super::mark_memory_graph_dirty(&mut tx).await?;
@@ -67,7 +71,8 @@ pub async fn delete_memory_relation(
     relation_uuid: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let mut tx = pool.begin().await?;
-    let Some(memory_uuid) = relation_owner(&mut tx, relation_uuid).await? else {
+    let Some((memory_uuid, other_memory_uuid)) = relation_owner(&mut tx, relation_uuid).await?
+    else {
         tx.rollback().await?;
         return Ok(false);
     };
@@ -76,6 +81,7 @@ pub async fn delete_memory_relation(
         .bind(relation_uuid)
         .execute(&mut *tx)
         .await?;
+    touch_relation_endpoints_revision(&mut tx, &memory_uuid, &other_memory_uuid).await?;
     let after_state = memory_state(&mut tx, &memory_uuid).await?;
     upsert_relation_change(&mut tx, &memory_uuid, &before_state, &after_state).await?;
     super::mark_memory_graph_dirty(&mut tx).await?;
@@ -137,6 +143,7 @@ SELECT jsonb_build_object(
         'title_norm', u.title_norm,
         'content', u.content,
         'summary', u.summary,
+        'revision', u.revision,
         'status', u.status,
         'recall_when', u.recall_when,
         'trashed_at', u.trashed_at
@@ -343,6 +350,21 @@ async fn ensure_active_endpoints(
     Ok(())
 }
 
+async fn touch_relation_endpoints_revision(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    from_memory_uuid: &str,
+    to_memory_uuid: &str,
+) -> Result<(), sqlx::Error> {
+    // What：触碰 relation 两端 memory_units，让 revision trigger 推进工作态版本。
+    // Why：relations 属于 memory_state，子表写入成功后两端记忆的快照都已经变化。
+    sqlx::query("UPDATE memory_units SET updated_at = now() WHERE uuid IN ($1::uuid, $2::uuid)")
+        .bind(from_memory_uuid)
+        .bind(to_memory_uuid)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 async fn insert_relation(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     input: &RelationCreate,
@@ -409,10 +431,10 @@ async fn update_relation(
 async fn relation_owner(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     relation_uuid: &str,
-) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(
+) -> Result<Option<(String, String)>, sqlx::Error> {
+    sqlx::query_as(
         r#"
-        SELECT from_memory_uuid::text
+        SELECT from_memory_uuid::text, to_memory_uuid::text
         FROM memory_relations
         WHERE uuid = $1::uuid
         FOR UPDATE

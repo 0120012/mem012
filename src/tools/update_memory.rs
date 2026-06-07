@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 #[serde(deny_unknown_fields)]
 struct UpdateMemoryReplaceArgs {
     memory_uuid: String,
+    expected_revision: i64,
     expected_title_hash: Option<String>,
     expected_summary_hash: Option<String>,
     expected_recall_when_hash: Option<String>,
@@ -24,6 +25,7 @@ struct UpdateMemoryReplaceArgs {
 #[serde(deny_unknown_fields)]
 struct UpdateMemoryPatchContentArgs {
     memory_uuid: String,
+    expected_revision: i64,
     expected_content_hash: String,
     match_content: String,
     replace_content: String,
@@ -34,6 +36,7 @@ struct UpdateMemoryPatchContentArgs {
 #[serde(deny_unknown_fields)]
 struct UpdateMemoryAppendArgs {
     memory_uuid: String,
+    expected_revision: i64,
     expected_content_hash: Option<String>,
     expected_recall_when_hash: Option<String>,
     append_content: Option<String>,
@@ -43,8 +46,19 @@ struct UpdateMemoryAppendArgs {
 #[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct UpdateMemoryAddKeywordsArgs {
+    memory_uuid: String,
+    expected_revision: i64,
+    expected_keywords_hash: String,
+    keywords: Vec<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UpdateMemoryKeywordsArgs {
     memory_uuid: String,
+    expected_revision: i64,
     expected_keywords_hash: String,
     keywords: Vec<String>,
 }
@@ -113,6 +127,9 @@ fn validate_required_text<'a>(
 fn validate_replace_args(args: &UpdateMemoryReplaceArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Why：replace 接受多字段组合，入口需要先挡住缺 hash 的不可信写入请求。
     validate_required_text("memory_uuid", &args.memory_uuid)?;
+    if args.expected_revision < 1 {
+        return Err("expected_revision 必须大于 0".into());
+    }
     let updates = [
         validate_required_replace_field(
             "title",
@@ -191,6 +208,9 @@ fn validate_patch_content_args(
 ) -> Result<&str, Box<dyn std::error::Error>> {
     // Why：片段替换依赖精确文本，校验只能挡空值，不能改写用户传入的空格和换行。
     let memory_uuid = validate_required_text("memory_uuid", &args.memory_uuid)?;
+    if args.expected_revision < 1 {
+        return Err("expected_revision 必须大于 0".into());
+    }
     validate_required_text("expected_content_hash", &args.expected_content_hash)?;
     if args.match_content.trim().is_empty() {
         return Err("match_content 不能为空".into());
@@ -210,6 +230,9 @@ fn validate_append_args(
     // What：校验 append 请求只选择 content 或 recall_when 其中一个目标。
     // Why：字段追加依赖对应字段 hash 做版本锁，入口必须先拒绝歧义写入。
     let memory_uuid = validate_required_text("memory_uuid", &args.memory_uuid)?;
+    if args.expected_revision < 1 {
+        return Err("expected_revision 必须大于 0".into());
+    }
     match (
         args.append_content.as_deref(),
         args.append_recall_when.as_deref(),
@@ -248,11 +271,14 @@ fn normalize_keyword_text(value: &str) -> String {
 }
 
 fn validate_add_keywords_args(
-    args: &UpdateMemoryKeywordsArgs,
+    args: &UpdateMemoryAddKeywordsArgs,
 ) -> Result<(&str, &str, Vec<String>), Box<dyn std::error::Error>> {
     // What：校验 add_keywords 的 memory_uuid、keywords_hash 和待新增关键词集合。
     // Why：关键词写入有唯一约束，入口先拒绝空值和请求内部重复，避免进入事务后才报库错误。
     let memory_uuid = validate_required_text("memory_uuid", &args.memory_uuid)?;
+    if args.expected_revision < 1 {
+        return Err("expected_revision 必须大于 0".into());
+    }
     let expected_hash =
         validate_required_text("expected_keywords_hash", &args.expected_keywords_hash)?;
     if args.keywords.is_empty() {
@@ -278,6 +304,9 @@ fn validate_remove_keywords_args(
     // What：校验 remove_keywords 的 memory_uuid、keywords_hash 和待删除关键词集合。
     // Why：删除请求也必须先规范化并拒绝空值或内部重复，后续才能可靠判断关键词是否存在。
     let memory_uuid = validate_required_text("memory_uuid", &args.memory_uuid)?;
+    if args.expected_revision < 1 {
+        return Err("expected_revision 必须大于 0".into());
+    }
     let expected_hash =
         validate_required_text("expected_keywords_hash", &args.expected_keywords_hash)?;
     if args.keywords.is_empty() {
@@ -320,6 +349,23 @@ async fn lock_update_target(
         return Err("update_memory 不支持已删除记忆".into());
     }
     Ok((status, action))
+}
+
+fn assert_revision(
+    expected_revision: i64,
+    state: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：校验锁定后 memory state 的 revision。
+    // Why：revision 是整行并发锁，必须先于字段 hash 校验拒绝过期写入。
+    let actual = state
+        .get("memory")
+        .and_then(|memory| memory.get("revision"))
+        .and_then(serde_json::Value::as_i64)
+        .ok_or("memory state 字段缺失或不是整数: revision")?;
+    if actual != expected_revision {
+        return Err("revision 不匹配".into());
+    }
+    Ok(())
 }
 
 fn assert_replace_hashes(
@@ -623,6 +669,19 @@ async fn write_memory_unit_from_state(
     Ok(())
 }
 
+async fn bump_memory_unit_revision(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+) -> Result<(), sqlx::Error> {
+    // What：触碰 memory_units 父行，让数据库 trigger 推进 revision。
+    // Why：关键词写在子表，单独插入 memory_keywords 不会触发父行版本递增。
+    sqlx::query("UPDATE memory_units SET updated_at = now() WHERE uuid = $1::uuid")
+        .bind(memory_uuid)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 async fn insert_added_keywords(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
@@ -744,6 +803,7 @@ async fn update_memory_replace(
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_revision(replace_args.expected_revision, &state)?;
     assert_replace_hashes(&replace_args, &state)?;
 
     // Why：title_norm 必须由数据库函数生成，避免 Rust 和 PostgreSQL 的规范化规则分叉。
@@ -823,6 +883,7 @@ async fn update_memory_patch_content(
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_revision(patch_args.expected_revision, &state)?;
     assert_content_hash(&patch_args.expected_content_hash, &state)?;
     let next_state = build_patch_content_next_state(
         &state,
@@ -888,6 +949,7 @@ async fn update_memory_append(
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_revision(append_args.expected_revision, &state)?;
     assert_append_hash(field, expected_hash, &state)?;
     let next_state = build_append_next_state(&state, field, append_text)?;
     reject_replace_duplicates(&mut tx, memory_uuid, &next_state).await?;
@@ -933,16 +995,16 @@ async fn update_memory_add_keywords(
     args: &serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：关键词增加独立成工具，避免同一请求同时表达 add/remove/set 多种意图。
-    // 1. 解析并校验 memory_uuid、expected_keywords_hash、keywords。
+    // 1. 解析并校验 memory_uuid、expected_revision、expected_keywords_hash、keywords。
     // 2. 规范化传入 keywords，并拒绝空值或内部重复。
     // 3. 开启统一 update 事务并锁定目标 memory。
-    // 4. 重新计算当前 keywords_hash，和 expected_keywords_hash 不一致时拒绝。
+    // 4. 校验 revision，再重新计算当前 keywords_hash，不一致时拒绝。
     // 5. 检查新增关键词不能和已有关键词重复。
-    // 6. 写入 memory_keywords，并构建更新后的 next_state。
+    // 6. 写入 memory_keywords，触碰主表 revision，并构建更新后的 next_state。
     // 7. 写入或覆盖 memory_changes。
     // 8. 如果 active 记忆发生变化，标记 graph dirty。
     // 9. 输出 updated_fields = ["keywords"] 和 pending_review 结果。
-    let keyword_args = serde_json::from_value::<UpdateMemoryKeywordsArgs>(args.clone())?;
+    let keyword_args = serde_json::from_value::<UpdateMemoryAddKeywordsArgs>(args.clone())?;
     let (memory_uuid, expected_hash, keywords) = validate_add_keywords_args(&keyword_args)?;
     let mut tx = context.profile_pool.begin().await?;
     let (status, action) = lock_update_target(&mut tx, memory_uuid).await?;
@@ -950,9 +1012,11 @@ async fn update_memory_add_keywords(
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_revision(keyword_args.expected_revision, &state)?;
     assert_keywords_hash(expected_hash, &state)?;
     reject_existing_keywords(&state, &keywords)?;
     insert_added_keywords(&mut tx, memory_uuid, &keywords).await?;
+    bump_memory_unit_revision(&mut tx, memory_uuid).await?;
     crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     let after_state_text = crate::psql::memory_state(&mut tx, memory_uuid)
         .await
@@ -994,12 +1058,12 @@ async fn update_memory_remove_keywords(
     args: &serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Why：关键词删除独立成工具，后续可以单独校验最终 keywords 不能被删空。
-    // 1. 解析并校验 memory_uuid、expected_keywords_hash、keywords。
+    // 1. 解析并校验 memory_uuid、expected_revision、expected_keywords_hash、keywords。
     // 2. 规范化传入 keywords，并拒绝空值或内部重复。
     // 3. 开启统一 update 事务并锁定目标 memory。
-    // 4. 重新计算当前 keywords_hash，和 expected_keywords_hash 不一致时拒绝。
+    // 4. 校验 revision，再重新计算当前 keywords_hash，不一致时拒绝。
     // 5. 检查要删除的关键词必须全部存在。
-    // 6. 删除 memory_keywords，并确认最终关键词列表非空。
+    // 6. 删除 memory_keywords，触碰主表 revision，并确认最终关键词列表非空。
     // 7. 构建更新后的 next_state，并写入或覆盖 memory_changes。
     // 8. 如果 active 记忆发生变化，标记 graph dirty。
     // 9. 输出 updated_fields = ["keywords"] 和 pending_review 结果。
@@ -1011,9 +1075,11 @@ async fn update_memory_remove_keywords(
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let state = serde_json::from_str::<serde_json::Value>(&state_text)?;
+    assert_revision(keyword_args.expected_revision, &state)?;
     assert_keywords_hash(expected_hash, &state)?;
     assert_removable_keywords(&state, &keywords)?;
     delete_removed_keywords(&mut tx, memory_uuid, &keywords).await?;
+    bump_memory_unit_revision(&mut tx, memory_uuid).await?;
     crate::psql::search_index::refresh_memory_search_index(&mut tx, memory_uuid).await?;
     let action =
         upsert_removed_keywords_change(&mut tx, memory_uuid, &status, action.as_deref(), &state)
@@ -1042,7 +1108,7 @@ async fn update_memory_remove_keywords(
 
 #[cfg(test)]
 mod tests {
-    use super::build_patch_content_next_state;
+    use super::{assert_revision, build_patch_content_next_state};
 
     fn sample_state(content: &str) -> serde_json::Value {
         // Why：patch_content 的核心风险在内存快照构造，测试用最小 state 就能覆盖。
@@ -1073,5 +1139,17 @@ mod tests {
     fn patch_content_rejects_duplicate_fragment() {
         let state = sample_state("old before old after");
         assert!(build_patch_content_next_state(&state, "old", "new").is_err());
+    }
+
+    #[test]
+    fn assert_revision_rejects_stale_value() {
+        let state = serde_json::json!({
+            "memory": {
+                "revision": 2
+            }
+        });
+
+        assert!(assert_revision(1, &state).is_err());
+        assert!(assert_revision(2, &state).is_ok());
     }
 }
