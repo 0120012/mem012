@@ -1,6 +1,6 @@
 ---
 name: mem012-memory-skill
-description: Use when creating, searching, deleting, reading hashes, authorizing init writes, or updating mem012 memories through the CLI. This skill gives exact mem012 commands and JSON request shapes for create_memory, search_memory, delete_memory, read_memory_hash, and update_memory_* tools.
+description: Use when creating, searching, deleting, reading hashes, or updating mem012 memories through the CLI. This skill gives exact mem012 commands and JSON request shapes for create_memory, search_memory, delete_memory, read_memory_hash, and update_memory_* tools.
 ---
 
 # Mem012 CLI
@@ -48,7 +48,7 @@ mem012 --profile {profile} --args '{"tool":"create_memory","params":{"category":
 只传 `query` 和可选 `limit`。
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"search_memory","params":{"query":"关键词","limit": n}}'
+mem012 --profile {profile} --args '{"tool":"search_memory","params":{"query":"关键词","limit":10}}'
 ```
 
 ### 高级搜索
@@ -56,7 +56,7 @@ mem012 --profile {profile} --args '{"tool":"search_memory","params":{"query":"�
 必须同时传 `terms` 和 `filters`，不传 `query`。高级搜索先做 `terms` + `filters` 字面筛选，再用 `terms.include` 作为语义输入执行 embedding fallback 或 rerank。
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"search_memory","params":{"limit":n,"terms":{"include":["word1","word2"],"exclude":["word3"]},"filters":["summary","keywords","content","recall_when"]}}'
+mem012 --profile {profile} --args '{"tool":"search_memory","params":{"limit":10,"terms":{"include":["word1","word2"],"exclude":["word3"]},"filters":["summary","keywords","content","recall_when"]}}'
 ```
 
 - 可用 `filters` 只有 `title`、`summary`、`keywords`、`content`、`recall_when`。
