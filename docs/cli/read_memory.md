@@ -8,8 +8,8 @@
 
 ```text
 read_memory = 只读完整工作态
-read_memory_hash = 只读字段 hash
-update_memory_* = 依赖 hash 执行写入
+read_memory_hash = 只读 revision 和字段 hash
+update_memory_* = 依赖 revision + hash 执行写入
 ```
 
 读取范围：
@@ -92,18 +92,18 @@ relations = 相关关系列表
 7. data.relations 返回当前关系列表
 ```
 
-如果需要确认后续更新版本锁，不能用 `read_memory` 结果自行生成 hash，必须再调用 `read_memory_hash`。
+如果需要确认后续更新版本锁，不能用 `read_memory` 结果自行生成 revision 或 hash，必须再调用 `read_memory_hash`。
 
 ## 5. 和 read_memory_hash 的关系
 
-`read_memory` 用于查看内容，`read_memory_hash` 用于更新前拿字段 hash。
+`read_memory` 用于查看内容，`read_memory_hash` 用于更新前拿 `revision` 和字段 hash。
 
 更新记忆前必须执行：
 
 ```text
 1. read_memory 确认当前内容
-2. read_memory_hash 获取字段 hash
-3. update_memory_* 携带 expected_*_hash 执行更新
+2. read_memory_hash 获取 revision 和字段 hash
+3. update_memory_* 携带 expected_revision 和 expected_*_hash 执行更新
 ```
 
 ## 6. 失败场景
@@ -123,4 +123,4 @@ memory 状态为 trashed   = 拒绝
 - 删除记忆
 - approve / reject
 - 生成或刷新 embedding
-- 计算 `expected_*_hash`
+- 计算 `expected_revision` 或 `expected_*_hash`

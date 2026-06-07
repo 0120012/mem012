@@ -7,7 +7,7 @@
 当前状态：`read_memory_hash`、`update_memory_replace`、`update_memory_patch_content`、`update_memory_append`、`update_memory_add_keywords` 和 `update_memory_remove_keywords` 已接入 Rust CLI。
 
 ```text
-read_memory_hash        = 更新前读取目标身份和字段 hash
+read_memory_hash        = 更新前读取目标身份、revision 和字段 hash
 update_memory_replace   = 替换整个字段
 update_memory_patch_content = 替换 content 中唯一匹配片段
 update_memory_append    = 追加 content / recall_when
@@ -39,11 +39,11 @@ apply_memory_update
 3. 用户确认具体目标
 4. 调用 read_memory_hash
 5. 展示返回的 title_norm 做最后确认
-6. 拿到字段 hash
+6. 拿到 revision 和字段 hash
 7. 调用更新工具
 ```
 
-如果用户直接提供 `memory_uuid`，仍然要先调用 `read_memory_hash` 并拿到字段 hash。
+如果用户直接提供 `memory_uuid`，仍然要先调用 `read_memory_hash` 并拿到 revision 和字段 hash。
 
 ## 3. read_memory_hash
 
@@ -69,6 +69,7 @@ apply_memory_update
   "data": {
     "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
     "title_norm": "profile 隔离规则",
+    "revision": 2,
     "hash": {
       "state_hash": "0x...",
       "title_hash": "0x...",
@@ -87,6 +88,7 @@ apply_memory_update
 规则：
 
 - 所有 hash 都由后端计算。
+- `revision` 是 `memory_units` 当前工作态行版本。
 - `hash.state_hash` 基于完整 state。
 - 字段 hash 只用于对应字段更新前校验。
 - `read_memory_hash` 不返回完整 `content`。
@@ -95,11 +97,12 @@ apply_memory_update
 
 ## 4. 通用参数
 
-每个更新工具都必须带 `memory_uuid` 和本次修改字段对应的 `expected_*_hash`：
+每个更新工具都必须带 `memory_uuid`、`expected_revision` 和本次修改字段对应的 `expected_*_hash`：
 
 ```json
 {
   "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
+  "expected_revision": 2,
   "expected_title_hash": "read_memory_hash 返回的 hash.title_hash"
 }
 ```
@@ -107,8 +110,10 @@ apply_memory_update
 规则：
 
 - `memory_uuid` 必须来自用户确认后的精确读取结果。
+- `expected_revision` 必须来自同一次 `read_memory_hash`。
 - `expected_*_hash` 必须来自同一次 `read_memory_hash`。
 - 更新哪个字段，就必须带哪个字段的 `expected_*_hash`。
+- 后端先校验当前 revision，不一致时拒绝更新。
 - 后端重新计算当前字段 hash，不一致时拒绝更新。
 - `memory_units.status = trashed` 时拒绝更新。
 - 不能从 search/list 结果里直接拿 uuid 更新。
@@ -125,6 +130,7 @@ apply_memory_update
   "tool": "update_memory_replace",
   "params": {
     "memory_uuid": "xxx",
+    "expected_revision": 2,
     "expected_title_hash": "0x...",
     "new_title": "新标题"
   }
@@ -155,6 +161,7 @@ new_content
   "tool": "update_memory_replace",
   "params": {
     "memory_uuid": "xxx",
+    "expected_revision": 2,
     "expected_content_hash": "0x...",
     "new_content": "新的完整正文"
   }
@@ -170,6 +177,7 @@ new_content
   "tool": "update_memory_patch_content",
   "params": {
     "memory_uuid": "xxx",
+    "expected_revision": 2,
     "expected_content_hash": "0x...",
     "match_content": "旧文本",
     "replace_content": "新文本"
@@ -197,6 +205,7 @@ new_content
   "tool": "update_memory_append",
   "params": {
     "memory_uuid": "xxx",
+    "expected_revision": 2,
     "expected_content_hash": "0x...",
     "append_content": "\n\n补充内容"
   }
@@ -210,6 +219,7 @@ new_content
   "tool": "update_memory_append",
   "params": {
     "memory_uuid": "xxx",
+    "expected_revision": 2,
     "expected_recall_when_hash": "0x...",
     "append_recall_when": "；当讨论更新记忆时召回"
   }
@@ -232,6 +242,7 @@ new_content
   "tool": "update_memory_add_keywords",
   "params": {
     "memory_uuid": "xxx",
+    "expected_revision": 2,
     "expected_keywords_hash": "0x...",
     "keywords": ["新关键词"]
   }
@@ -252,6 +263,7 @@ new_content
   "tool": "update_memory_remove_keywords",
   "params": {
     "memory_uuid": "xxx",
+    "expected_revision": 2,
     "expected_keywords_hash": "0x...",
     "keywords": ["旧关键词"]
   }
@@ -273,15 +285,16 @@ new_content
 1. 开启事务
 2. 锁定 memory_units
 3. 读取当前完整 state
-4. 校验 expected_*_hash
-5. 分类 pending / active / existing change
-6. 应用工具动作，生成 next_state
-7. 校验 next_state
-8. 写回 memory_units / memory_keywords
-9. 回读 after_state
-10. 写入或覆盖 memory_changes
-11. active 记忆标记 graph dirty
-12. 提交事务
+4. 校验 expected_revision
+5. 校验 expected_*_hash
+6. 分类 pending / active / existing change
+7. 应用工具动作，生成 next_state
+8. 校验 next_state
+9. 写回 memory_units / memory_keywords
+10. 回读 after_state
+11. 写入或覆盖 memory_changes
+12. active 记忆标记 graph dirty
+13. 提交事务
 ```
 
 如果最终 state 没有变化，返回 `NO_CHANGE`，不写 `memory_changes`。
@@ -346,7 +359,9 @@ approve 后刷新 embedding 并覆盖旧 embedding
 不能按搜索排序自动选择第一条
 不能通过 title 直接执行更新
 必须先确认目标 memory_uuid
+必须带 expected_revision
 必须带 expected_*_hash
+expected_revision 和 expected_*_hash 必须来自同一次 read_memory_hash
 需要改摘要时使用 update_memory_replace
 ```
 

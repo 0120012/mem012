@@ -10,9 +10,9 @@
 mark_memory_used = 记录一次实际采用
 search_memory    = 找候选 memory_uuid
 read_memory      = 读取目标记忆完整内容
-read_memory_hash = 更新前读取字段 hash
-update_memory_*  = 带 expected_*_hash 写入变更
-delete_memory    = 删除前仍依赖明确 memory_uuid
+read_memory_hash = 更新前读取 revision 和字段 hash
+update_memory_*  = 带 expected_revision + expected_*_hash 写入变更
+delete_memory    = 删除前仍依赖明确 memory_uuid + expected_revision
 ```
 
 `mark_memory_used` 不写入 `memory_units`、`memory_keywords`、`memory_changes`，不刷新 embedding，也不标记 graph dirty。

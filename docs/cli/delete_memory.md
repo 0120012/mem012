@@ -26,7 +26,8 @@ trashed = 已软删除，等待用户批准 delete 或撤销
 {
   "tool": "delete_memory",
   "params": {
-    "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00"
+    "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
+    "expected_revision": 2
   }
 }
 ```
@@ -35,6 +36,9 @@ trashed = 已软删除，等待用户批准 delete 或撤销
 
 - 只允许通过 `memory_uuid` 删除。
 - `memory_uuid` 必填且不能为空。
+- `expected_revision` 必填，必须来自同一次 `read_memory_hash`。
+- `expected_revision <= 0` 时拒绝。
+- 当前 revision 与 `expected_revision` 不一致时拒绝。
 - 禁止传 `profile`、`title`、`uri`。
 
 ## 3. case 1: pending create

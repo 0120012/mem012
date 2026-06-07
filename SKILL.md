@@ -10,12 +10,13 @@ description: Use when creating, searching, deleting, reading hashes, authorizing
 - 工具调用成功条件：命令退出码为 0，且 JSON 中 `state == "success"`、`error == null`。否则一律视为失败。
 - 任一步失败，立即停止并报告用户；禁止继续执行后续写操作，禁止伪造成功结果。
 - 写操作必须单步执行；一次命令只能包含一个 `create_memory`、`delete_memory` 或 `update_memory_*` 工具。
-- `delete_memory` 前必须先 `read_memory`，确认目标 `memory_uuid` 和内容正确。
-- `update_memory_*` 前必须先 `read_memory_hash`，并把对应字段 hash 作为 `expected_*_hash` 传入。
+- `delete_memory` 前：`read_memory` 确认目标，`read_memory_hash` 取 `revision`。
+- `update_memory_*` 前：`read_memory_hash` 取同一次 `revision + hash`。
 - `search_memory` 只返回候选；不能直接把第一条当最终目标，必须再用 `read_memory` 核对。
 - `create_memory` 成功以 `data.memory_uuid` 为准，`data.result == "pending"` 表示等待后续处理。
 - `update_memory_*` 成功通常返回 `data.result == "pending_review"`，不表示已经确认通过。
 - `delete_memory` 成功返回 `data.result == "trashed"`。
+- revision/hash 失效时停止，重新 `read_memory_hash`。
 
 ## init -- 初始化 -- 找回自己
 
@@ -63,15 +64,15 @@ mem012 --profile {profile} --args '{"tool":"search_memory","params":{"limit":n,"
 
 ## delete_memory -- 删除记忆
 
-首先read_memory 记忆，确定是正确的uuid，然后执行删除。
+先 `read_memory` 确认目标，再 `read_memory_hash` 取 `revision`。
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"delete_memory","params":{"memory_uuid":"{memory_uuid}"}}'
+mem012 --profile {profile} --args '{"tool":"delete_memory","params":{"memory_uuid":"{memory_uuid}","expected_revision":{revision}}}'
 ```
 
 ## read_memory_hash
 
-更新记忆之前先调用 `read_memory_hash`，拿到对应字段 hash。
+返回 `data.revision` 和 `data.hash.*`。
 
 ```bash
 mem012 --profile {profile} --args '{"tool":"read_memory_hash","params":{"memory_uuid":"{memory_uuid}"}}'
@@ -84,19 +85,19 @@ mem012 --profile {profile} --args '{"tool":"read_memory_hash","params":{"memory_
 整段替换用 `update_memory_replace`：
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"update_memory_replace","params":{"memory_uuid":"{memory_uuid}","expected_content_hash":"{content_hash}","new_content":"新的完整正文"}}'
+mem012 --profile {profile} --args '{"tool":"update_memory_replace","params":{"memory_uuid":"{memory_uuid}","expected_revision":{revision},"expected_content_hash":"{content_hash}","new_content":"新的完整正文"}}'
 ```
 
 替换唯一片段或模拟中间插入用 `update_memory_patch_content`：
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"update_memory_patch_content","params":{"memory_uuid":"{memory_uuid}","expected_content_hash":"{content_hash}","match_content":"旧片段","replace_content":"新片段"}}'
+mem012 --profile {profile} --args '{"tool":"update_memory_patch_content","params":{"memory_uuid":"{memory_uuid}","expected_revision":{revision},"expected_content_hash":"{content_hash}","match_content":"旧片段","replace_content":"新片段"}}'
 ```
 
 末尾追加用 `update_memory_append`：
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"update_memory_append","params":{"memory_uuid":"{memory_uuid}","expected_content_hash":"{content_hash}","append_content":"追加正文"}}'
+mem012 --profile {profile} --args '{"tool":"update_memory_append","params":{"memory_uuid":"{memory_uuid}","expected_revision":{revision},"expected_content_hash":"{content_hash}","append_content":"追加正文"}}'
 ```
 
 ### 更新 `keywords`。
@@ -104,19 +105,19 @@ mem012 --profile {profile} --args '{"tool":"update_memory_append","params":{"mem
 增加关键词用 `update_memory_add_keywords`：
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"update_memory_add_keywords","params":{"memory_uuid":"{memory_uuid}","expected_keywords_hash":"{keywords_hash}","keywords":["新关键词"]}}'
+mem012 --profile {profile} --args '{"tool":"update_memory_add_keywords","params":{"memory_uuid":"{memory_uuid}","expected_revision":{revision},"expected_keywords_hash":"{keywords_hash}","keywords":["新关键词"]}}'
 ```
 
 删除关键词用 `update_memory_remove_keywords`：
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"update_memory_remove_keywords","params":{"memory_uuid":"{memory_uuid}","expected_keywords_hash":"{keywords_hash}","keywords":["旧关键词"]}}'
+mem012 --profile {profile} --args '{"tool":"update_memory_remove_keywords","params":{"memory_uuid":"{memory_uuid}","expected_revision":{revision},"expected_keywords_hash":"{keywords_hash}","keywords":["旧关键词"]}}'
 ```
 
 ### 更新 `recall_when`。
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"update_memory_append","params":{"memory_uuid":"{memory_uuid}","expected_recall_when_hash":"{recall_when_hash}","append_recall_when":"追加召回条件"}}'
+mem012 --profile {profile} --args '{"tool":"update_memory_append","params":{"memory_uuid":"{memory_uuid}","expected_revision":{revision},"expected_recall_when_hash":"{recall_when_hash}","append_recall_when":"追加召回条件"}}'
 ```
 
 ### 更新 `summary`。
@@ -124,5 +125,5 @@ mem012 --profile {profile} --args '{"tool":"update_memory_append","params":{"mem
 只能用 `update_memory_replace` 整段替换；不能追加、插入或局部 patch。
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"update_memory_replace","params":{"memory_uuid":"{memory_uuid}","expected_summary_hash":"{summary_hash}","new_summary":"新的摘要"}}'
+mem012 --profile {profile} --args '{"tool":"update_memory_replace","params":{"memory_uuid":"{memory_uuid}","expected_revision":{revision},"expected_summary_hash":"{summary_hash}","new_summary":"新的摘要"}}'
 ```

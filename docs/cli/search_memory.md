@@ -9,9 +9,9 @@
 ```text
 search_memory    = 找候选 memory_uuid
 read_memory      = 读取目标记忆完整内容
-read_memory_hash = 更新前读取字段 hash
-update_memory_*  = 带 expected_*_hash 写入变更
-delete_memory    = 删除前仍依赖明确 memory_uuid
+read_memory_hash = 更新前读取 revision 和字段 hash
+update_memory_*  = 带 expected_revision + expected_*_hash 写入变更
+delete_memory    = 删除前仍依赖明确 memory_uuid + expected_revision
 ```
 
 `search_memory` 不写入 `memory_units`、`memory_keywords`、`memory_changes`，不刷新 embedding，也不标记 graph dirty。
@@ -337,7 +337,7 @@ Agent 不能把搜索结果当作最终目标。
 必须展示候选 memory_uuid、title_norm、status
 embedding 保底结果必须回读确认
 用户确认后才能把 memory_uuid 交给 read/update/delete
-更新前必须再调用 read_memory_hash
+更新前必须再调用 read_memory_hash 获取 revision 和字段 hash
 ```
 
 推荐流程：
@@ -348,7 +348,7 @@ embedding 保底结果必须回读确认
 3. 等用户确认具体 memory_uuid
 4. 读取内容时调用 read_memory
 5. 更新内容时调用 read_memory_hash
-6. 携带 expected_*_hash 调用 update_memory_*
+6. 携带 expected_revision 和 expected_*_hash 调用 update_memory_*
 ```
 
 ## 11. 成功验证

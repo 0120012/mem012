@@ -194,7 +194,8 @@ mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init
 {
   "tool": "delete_memory",
   "params": {
-    "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00"
+    "memory_uuid": "8b31f4b0-2f87-4f72-bdb6-7a8c2b65aa00",
+    "expected_revision": 2
   }
 }
 ```
