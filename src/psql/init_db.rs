@@ -7,16 +7,16 @@ pub async fn init_db(
     reset_db: bool,
 ) -> Result<bool, sqlx::Error> {
     let db_label = if profile == "share" {
-        "share"
+        "share".to_string()
     } else {
-        "profile"
+        format!("profile {profile}")
     };
     if reset_db {
         // Why：init_db 只收敛当前 profile 对应库，避免隐式创建或清理其他 profile 库表结构。
-        reset_memory_tables(pool, db_label).await?;
+        reset_memory_tables(pool, db_label.as_str()).await?;
     }
 
-    migrate_memory_tables(pool, db_label).await?;
+    migrate_memory_tables(pool, db_label.as_str()).await?;
 
     Ok(true)
 }
