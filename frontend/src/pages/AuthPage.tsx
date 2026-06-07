@@ -13,11 +13,13 @@ declare global {
         options: {
           sitekey: string
           theme?: "auto" | "light" | "dark"
+          appearance?: "always" | "execute" | "interaction-only"
           callback?: (token: string) => void
           "error-callback"?: () => void
           "expired-callback"?: () => void
         },
       ) => string
+      execute: (widgetId: string) => void
       reset: (widgetId: string) => void
       remove?: (widgetId: string) => void
     }
@@ -62,21 +64,18 @@ export function AuthPage() {
     setExpiresAt(result.expires_at)
   }, [])
 
-  const forceRefreshToken = useCallback(async () => {
+  const forceRefreshToken = useCallback(() => {
+    const widgetId = widgetIdRef.current
+    if (!widgetId || !window.turnstile) {
+      setError("Turnstile 未就绪")
+      return
+    }
     setRefreshing(true)
     setError("")
     setCopied(false)
-    try {
-      const result = await api.auth.forceRefresh()
-      acceptAuthResult(result)
-    } catch (caught) {
-      clearToken()
-      setError(errorMessage(caught, "重新获取失败"))
-      resetTurnstile()
-    } finally {
-      setRefreshing(false)
-    }
-  }, [acceptAuthResult, clearToken, resetTurnstile])
+    window.turnstile.reset(widgetId)
+    window.turnstile.execute(widgetId)
+  }, [])
 
   const refreshToken = useCallback(
     async (turnstileToken: string) => {
@@ -125,13 +124,16 @@ export function AuthPage() {
       widgetIdRef.current = window.turnstile.render(widgetRef.current, {
         sitekey: turnstileSiteKey,
         theme: "auto",
+        appearance: "interaction-only",
         callback: refreshToken,
         "error-callback": () => {
           clearToken()
+          setRefreshing(false)
           setError("Turnstile 验证失败")
         },
         "expired-callback": () => {
           clearToken()
+          setRefreshing(false)
           setError("")
         },
       })

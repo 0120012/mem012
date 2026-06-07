@@ -193,10 +193,6 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ turnstile_token: turnstileToken }),
       }),
-    forceRefresh: () =>
-      request<AuthRefreshResult>("/auth/refresh/force", {
-        method: "POST",
-      }),
   },
   projects: {
     list: () => request<ProjectInfo[]>("/projects"),
