@@ -94,7 +94,7 @@ fn print_agent_help(config: &config::Config) -> Result<(), Box<dyn std::error::E
                     "name": "mem012-memory-skill"
                 },
                 "categories": {
-                    "index_list": config.category_index_list()
+                    "cateory_list": config.category_index_list()
                 },
                 "failure_instruction": "任一 mem012 命令失败后，禁止猜测或重复尝试其他 mem012/file/strings/grep 探测命令；立即停止，并向用户报告失败命令、退出码和错误输出。"
             },
