@@ -15,7 +15,8 @@ struct CliArgs {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let help_requested = std::env::args().skip(1).any(|arg| arg == "--help");
+    let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
+    let help_requested = agent_help_requested(&raw_args);
 
     // ==== 1. load config
     let config = match config::load_config("config.toml") {
@@ -94,12 +95,32 @@ fn print_agent_help(config: &config::Config) -> Result<(), Box<dyn std::error::E
                 },
                 "categories": {
                     "index_list": config.category_index_list()
-                }
+                },
+                "failure_instruction": "任一 mem012 命令失败后，禁止猜测或重复尝试其他 mem012/file/strings/grep 探测命令；立即停止，并向用户报告失败命令、退出码和错误输出。"
             },
             "error": null
         }))?
     );
     Ok(())
+}
+
+fn agent_help_requested(args: &[String]) -> bool {
+    // What：识别 Agent 常见的 help 误调用形态。
+    // Why：help 必须在严格 CLI 解析前短路，避免 Agent 失败后继续枚举命令探测二进制。
+    let mut skip_value = false;
+    for (index, arg) in args.iter().enumerate() {
+        if skip_value {
+            skip_value = false;
+            continue;
+        }
+        match arg.as_str() {
+            "--help" | "help" | "--tool=help" => return true,
+            "--tool" if args.get(index + 1).is_some_and(|value| value == "help") => return true,
+            "--profile" | "--args" | "--auth" => skip_value = true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn local_api_base_url(server_addr: &str) -> Result<String, Box<dyn std::error::Error>> {
