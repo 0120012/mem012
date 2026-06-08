@@ -21,6 +21,7 @@ const navItems = [
 ]
 
 type Theme = "system" | "light" | "dark"
+type MobileSidebarState = "closed" | "nav" | "projects"
 
 function getSystemTheme(): "light" | "dark" {
   if (typeof window === "undefined") return "dark"
@@ -33,7 +34,7 @@ export function Layout() {
   const { activeProject, projects, selectProject, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [mobileSidebarState, setMobileSidebarState] = useState<MobileSidebarState>("closed")
   const [memoryOpen, setMemoryOpen] = useState(true)
   const [memoryCategories, setMemoryCategories] = useState<string[]>([])
   const [openCategory, setOpenCategory] = useState("")
@@ -79,6 +80,23 @@ export function Layout() {
     navigate("/login")
   }
 
+  const openMobileSidebar = () => {
+    setMobileSidebarState("nav")
+  }
+
+  const closeMobileSidebar = () => {
+    setMobileSidebarState("closed")
+  }
+
+  const handleMobileProjectSelect = (project: ProjectInfo) => {
+    selectProject(project)
+    closeMobileSidebar()
+  }
+
+  const toggleMobileProjects = () => {
+    setMobileSidebarState((state) => state === "projects" ? "nav" : state === "nav" ? "projects" : "closed")
+  }
+
   const handleMemoryToggle = () => {
     const nextOpen = !memoryOpen
     setMemoryOpen(nextOpen)
@@ -104,6 +122,8 @@ export function Layout() {
   const pageTitle = memoriesActive ? (keywordFilter || categoryFilter || "Projects") : currentPath === "/changes?filter=trash" ? "回收站" : currentPath === "/changes" ? "待确认" : currentPath === "/graph" ? "图谱" : currentPath === "/auth" ? "授权" : "Mem"
   // 当前主题图标组件
   const ThemeIcon = theme === "system" ? Monitor : theme === "dark" ? Moon : Sun
+  const mobileSidebarOpen = mobileSidebarState !== "closed"
+  const mobileProjectOpen = mobileSidebarState === "projects"
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -191,20 +211,33 @@ export function Layout() {
       </aside>
 
       {/* 移动端侧栏 */}
-      {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/50 sm:hidden" onClick={() => setSidebarOpen(false)} />}
+      {mobileSidebarOpen && <div className="fixed inset-0 z-40 bg-black/50 sm:hidden" onClick={closeMobileSidebar} />}
       <aside className={cn(
         "fixed inset-y-0 left-0 z-50 w-56 bg-card border-r flex flex-col sm:hidden transition-transform duration-200",
-        sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="h-12 flex items-center justify-between px-4 border-b">
-          <span className="text-sm font-semibold text-foreground truncate">{activeProject?.display_name || "Mem"}</span>
-          <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)}><X className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="sm" aria-label="切换工作区" aria-expanded={mobileProjectOpen} onClick={toggleMobileProjects} className="h-9 min-w-0 flex-1 justify-start px-2 text-sm font-semibold">
+            <span className="truncate">{activeProject?.display_name || "选择项目"}</span>
+            <ChevronDown className={cn("h-3 w-3 text-muted-foreground ml-auto shrink-0 transition-transform", mobileProjectOpen && "rotate-180")} />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={closeMobileSidebar}><X className="h-4 w-4" /></Button>
         </div>
+        {mobileProjectOpen && (
+          <div className="border-b px-2 py-2">
+            {projects.map((p: ProjectInfo) => (
+              <button key={p.project_id} type="button" onClick={() => handleMobileProjectSelect(p)} className="flex w-full items-center rounded-md px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground">
+                <span className="min-w-0 flex-1 truncate">{p.display_name}</span>
+                {activeProject?.project_id === p.project_id && <span className="ml-2 shrink-0 text-xs">当前</span>}
+              </button>
+            ))}
+          </div>
+        )}
         <nav className="flex-1 px-2 py-3 space-y-1">
           {navItems.map((item) => {
             const active = currentPath === item.to
             return (
-              <Link key={item.to} to={item.to} onClick={() => setSidebarOpen(false)} className={cn(
+              <Link key={item.to} to={item.to} onClick={closeMobileSidebar} className={cn(
                 "flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
                 active ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               )}>
@@ -225,7 +258,7 @@ export function Layout() {
         {/* 顶栏 */}
         <header className="h-12 flex items-center px-4 border-b bg-card shrink-0 gap-3">
           {/* 移动汉堡 */}
-          <Button variant="ghost" size="icon" className="sm:hidden" onClick={() => setSidebarOpen(true)}>
+          <Button variant="ghost" size="icon" className="sm:hidden" onClick={openMobileSidebar}>
             <Menu className="h-4 w-4" />
           </Button>
 
