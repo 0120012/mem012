@@ -29,7 +29,7 @@ pub async fn dispatch_init_command(
     pool: &sqlx::Pool<sqlx::Postgres>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // What：读取当前 profile 中用于 CLI init 的记忆内容。
-    // Why：init 只服务 Agent 启动上下文，应固定输出精简上下文，不走普通 tool JSON 外壳。
+    // Why：init 空结果也必须显式标记成功，避免调用方把裸数组误判为异常响应。
     let rows = sqlx::query_as::<_, (String, String)>(
         r#"
         SELECT title_norm, content
@@ -44,7 +44,17 @@ pub async fn dispatch_init_command(
         .into_iter()
         .map(|(title_norm, content)| serde_json::json!({ "title_norm": title_norm, "content": content }))
         .collect::<Vec<_>>();
-    println!("{}", serde_json::to_string(&results)?);
+    println!(
+        "{}",
+        serde_json::json!({
+            "state": "success",
+            "tool": "init",
+            "data": {
+                "memories": results
+            },
+            "error": null
+        })
+    );
     Ok(())
 }
 
