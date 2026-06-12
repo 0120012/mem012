@@ -12,7 +12,12 @@ pub fn parse_cli_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
         match arg.as_str() {
             "server" | "init" => command = Some(arg),
             "--profile" => profile = args.next(),
-            "--args" => args_json = args.next(),
+            "--args" => {
+                if args_json.is_some() {
+                    return Err("--args 不能重复使用".into());
+                }
+                args_json = args.next();
+            }
             "--auth" => auth_token = args.next(),
             _ => return Err(format!("未知参数: {arg}").into()),
         }

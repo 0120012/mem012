@@ -1,6 +1,6 @@
 ---
 name: mem012-memory-skill
-description: Use when creating, searching, deleting, reading hashes, or updating mem012 memories through the CLI. This skill gives exact mem012 commands and JSON request shapes for create_memory, search_memory, delete_memory, read_memory_hash, and update_memory_* tools.
+description: Use when creating, backing up, importing, searching, deleting, reading hashes, or updating mem012 memories through the CLI. This skill gives exact mem012 commands and JSON request shapes for backup_memory, import_memory, create_memory, search_memory, delete_memory, read_memory_hash, and update_memory_* tools.
 ---
 
 # Mem012 CLI
@@ -9,11 +9,12 @@ description: Use when creating, searching, deleting, reading hashes, or updating
 - `mem012 init` 是初始化命令，直接读取输出内容；`mem012 --args` 工具调用必须按 JSON 判断结果。
 - 工具调用成功条件：命令退出码为 0，且 JSON 中 `state == "success"`、`error == null`。否则一律视为失败。
 - 任一步失败，立即停止并报告用户；禁止继续执行后续写操作，禁止伪造成功结果。
-- 写操作必须单步执行；一次命令只能包含一个 `create_memory`、`delete_memory` 或 `update_memory_*` 工具。
+- 写操作必须单步执行；一次命令只能包含一个 `create_memory`、`import_memory`、`delete_memory` 或 `update_memory_*` 工具。
 - `delete_memory` 前：`read_memory` 确认目标，`read_memory_hash` 取 `revision`。
 - `update_memory_*` 前：`read_memory_hash` 取同一次 `revision + hash`。
 - `search_memory` 只返回候选；不能直接把第一条当最终目标，必须再用 `read_memory` 核对。
 - `create_memory` 成功以 `data.memory_uuid` 为准，`data.result == "pending"` 表示等待后续处理。
+- `import_memory` 成功以 `data.memory_uuids` 和 `data.count` 为准，`data.result == "imported"` 表示已经写入 active memory。
 - `update_memory_*` 成功通常返回 `data.result == "pending_review"`，不表示已经确认通过。
 - `delete_memory` 成功返回 `data.result == "trashed"`。
 - revision/hash 失效时停止，重新 `read_memory_hash`。
@@ -126,4 +127,24 @@ mem012 --profile {profile} --args '{"tool":"update_memory_append","params":{"mem
 
 ```bash
 mem012 --profile {profile} --args '{"tool":"update_memory_replace","params":{"memory_uuid":"{memory_uuid}","expected_revision":{revision},"expected_summary_hash":"{summary_hash}","new_summary":"新的摘要"}}'
+```
+
+## backup_memory -- 备份记忆
+
+仅当用户明确要求备份时使用。
+
+只使用 `--args` 工具入口，并且必须传 `params.output_path`。`output_path` 可以是文件路径；如果是已存在目录，会写入该目录下的 `backup.json`。
+
+```bash
+mem012 --profile {profile} --args '{"tool":"backup_memory","params":{"output_path":"backup.json"}}'
+```
+
+## import_memory -- 导入记忆
+
+仅当用户明确要求导入时使用。
+
+只使用 `--args` 工具入口，并且必须传 `params.input_path`。支持导入 `backup_memory` 生成的完整备份 JSON；每条 memory 必须是 `active`。本工具会写入 memory 主体和 keywords，并刷新搜索索引；当前会读取但不恢复 relations，成功响应中 `data.relations_imported` 为 `0`。
+
+```bash
+mem012 --profile {profile} --args '{"tool":"import_memory","params":{"input_path":"backup.json"}}'
 ```

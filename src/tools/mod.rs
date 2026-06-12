@@ -1,6 +1,8 @@
 mod auth;
+mod backup_memory;
 mod create_memory;
 mod delete_memory;
+mod import_memory;
 mod read_memory;
 mod search_memory;
 mod update_memory;
@@ -83,8 +85,10 @@ pub async fn dispatch_tool_request(
         .ok_or("字段 params 缺失或不是 object")?;
 
     match tool {
+        "backup_memory" => backup_memory::run(context, args).await,
         "create_memory" => create_memory::run(context, args).await,
         "delete_memory" => delete_memory::run(context, args).await,
+        "import_memory" => import_memory::run(context, args).await,
         "read_memory" | "read_memory_hash" => read_memory::run(context, tool, args).await,
         "search_memory" => search_memory::run(context, args).await,
         "update_memory_replace"
