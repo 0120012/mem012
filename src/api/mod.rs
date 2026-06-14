@@ -5,7 +5,6 @@ mod health;
 mod memories;
 mod projects;
 mod trash;
-mod turnstile;
 mod utils;
 
 use axum::{

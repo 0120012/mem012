@@ -1,30 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Check, Copy, Loader2, RefreshCw, ShieldCheck } from "lucide-react"
 import { api, ApiError, type AuthRefreshResult } from "@/api/client"
 import { Button } from "@/components/ui/button"
-
-const TURNSTILE_SCRIPT_ID = "mem-turnstile-script"
-
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (
-        target: HTMLElement | string,
-        options: {
-          sitekey: string
-          theme?: "auto" | "light" | "dark"
-          appearance?: "always" | "execute" | "interaction-only"
-          callback?: (token: string) => void
-          "error-callback"?: () => void
-          "expired-callback"?: () => void
-        },
-      ) => string
-      execute: (widgetId: string) => void
-      reset: (widgetId: string) => void
-      remove?: (widgetId: string) => void
-    }
-  }
-}
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof ApiError ? error.message : fallback
@@ -37,16 +14,12 @@ function formatRemaining(seconds: number) {
 }
 
 export function AuthPage() {
-  const widgetRef = useRef<HTMLDivElement | null>(null)
-  const widgetIdRef = useRef<string | null>(null)
   const [authToken, setAuthToken] = useState("")
   const [expiresAt, setExpiresAt] = useState<number | null>(null)
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
-  const [widgetReady, setWidgetReady] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState("")
-  const [turnstileSiteKey, setTurnstileSiteKey] = useState("")
 
   const clearToken = useCallback(() => {
     setAuthToken("")
@@ -54,112 +27,31 @@ export function AuthPage() {
     setCopied(false)
   }, [])
 
-  const resetTurnstile = useCallback(() => {
-    const widgetId = widgetIdRef.current
-    if (widgetId) window.turnstile?.reset(widgetId)
-  }, [])
-
   const acceptAuthResult = useCallback((result: AuthRefreshResult) => {
     setAuthToken(result.auth_token)
     setExpiresAt(result.expires_at)
   }, [])
 
-  const forceRefreshToken = useCallback(() => {
-    const widgetId = widgetIdRef.current
-    if (!widgetId || !window.turnstile) {
-      setError("Turnstile 未就绪")
-      return
-    }
-    setRefreshing(true)
-    setError("")
-    setCopied(false)
-    window.turnstile.reset(widgetId)
-    window.turnstile.execute(widgetId)
-  }, [])
-
   const refreshToken = useCallback(
-    async (turnstileToken: string) => {
+    async () => {
       setRefreshing(true)
       setError("")
       clearToken()
       try {
-        const result = await api.auth.refresh(turnstileToken)
+        const result = await api.auth.refresh()
         acceptAuthResult(result)
       } catch (caught) {
         setError(errorMessage(caught, "授权失败"))
-        resetTurnstile()
       } finally {
         setRefreshing(false)
       }
     },
-    [acceptAuthResult, clearToken, resetTurnstile],
+    [acceptAuthResult, clearToken],
   )
 
-  useEffect(() => {
-    let cancelled = false
-    api.auth
-      .status()
-      .then((status) => {
-        if (cancelled) return
-        const siteKey = status.turnstile_site_key?.trim()
-        if (!siteKey) {
-          setError("Turnstile 未配置")
-          return
-        }
-        setTurnstileSiteKey(siteKey)
-      })
-      .catch((caught) => {
-        if (!cancelled) setError(errorMessage(caught, "授权状态读取失败"))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!turnstileSiteKey) return
-    let cancelled = false
-    const renderWidget = () => {
-      if (cancelled || widgetIdRef.current || !widgetRef.current || !window.turnstile) return
-      widgetIdRef.current = window.turnstile.render(widgetRef.current, {
-        sitekey: turnstileSiteKey,
-        theme: "auto",
-        appearance: "interaction-only",
-        callback: refreshToken,
-        "error-callback": () => {
-          clearToken()
-          setRefreshing(false)
-          setError("Turnstile 验证失败")
-        },
-        "expired-callback": () => {
-          clearToken()
-          setRefreshing(false)
-          setError("")
-        },
-      })
-      setWidgetReady(true)
-    }
-
-    let script = document.getElementById(TURNSTILE_SCRIPT_ID) as HTMLScriptElement | null
-    if (!script) {
-      script = document.createElement("script")
-      script.id = TURNSTILE_SCRIPT_ID
-      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
-      script.async = true
-      script.defer = true
-      script.onload = renderWidget
-      document.head.appendChild(script)
-    }
-    renderWidget()
-    const timer = window.setInterval(renderWidget, 100)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-      if (widgetIdRef.current) window.turnstile?.remove?.(widgetIdRef.current)
-      widgetIdRef.current = null
-    }
-  }, [clearToken, refreshToken, turnstileSiteKey])
+  const forceRefreshToken = useCallback(() => {
+    void refreshToken()
+  }, [refreshToken])
 
   useEffect(() => {
     if (!expiresAt) return
@@ -168,11 +60,10 @@ export function AuthPage() {
       setNow(currentTime)
       if (currentTime >= expiresAt) {
         clearToken()
-        resetTurnstile()
       }
     }, 1000)
     return () => window.clearInterval(timer)
-  }, [clearToken, expiresAt, resetTurnstile])
+  }, [clearToken, expiresAt])
 
   useEffect(() => {
     if (!authToken) return
@@ -181,15 +72,13 @@ export function AuthPage() {
         const status = await api.auth.status()
         if (!status.valid || status.expires_at !== expiresAt) {
           clearToken()
-          resetTurnstile()
         }
       } catch {
         clearToken()
-        resetTurnstile()
       }
     }, 4000)
     return () => window.clearInterval(timer)
-  }, [authToken, clearToken, expiresAt, resetTurnstile])
+  }, [authToken, clearToken, expiresAt])
 
   const copyToken = async () => {
     if (!authToken) return
@@ -212,19 +101,10 @@ export function AuthPage() {
       </div>
 
       <div className="rounded-md border bg-card p-4 sm:p-5">
-        <div ref={widgetRef} className="min-h-[70px]" />
-        {!widgetReady && !error && (
-          <div className="flex h-[70px] items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            加载中
-          </div>
-        )}
-        {refreshing && (
-          <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            签发中
-          </div>
-        )}
+        <Button type="button" onClick={forceRefreshToken} disabled={refreshing} className="gap-2">
+          {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          获取 auth_token
+        </Button>
         {error && <div className="mt-3 text-sm text-destructive">{error}</div>}
       </div>
 
@@ -245,7 +125,7 @@ export function AuthPage() {
               variant="outline"
               size="sm"
               onClick={forceRefreshToken}
-              disabled={!widgetReady || refreshing}
+              disabled={refreshing}
               className="gap-2"
             >
               <RefreshCw className="h-4 w-4" />

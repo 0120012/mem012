@@ -13,9 +13,6 @@ pub struct Config {
     #[serde(default)]
     network: NetworkConfig,
     #[serde(default)]
-    #[allow(dead_code)]
-    auth: AuthConfig,
-    #[serde(default)]
     debug: DebugConfig,
     #[allow(dead_code)]
     cleanup: CleanupConfig,
@@ -68,29 +65,6 @@ struct EmbeddingsConfig {
 struct NetworkConfig {
     enable_proxy: bool,
     proxy: Option<String>,
-}
-
-#[allow(dead_code)]
-#[derive(Default, Deserialize)]
-struct AuthConfig {
-    #[serde(default)]
-    turnstile: TurnstileConfig,
-}
-
-#[allow(dead_code)]
-#[derive(Default, Deserialize)]
-struct TurnstileConfig {
-    enabled: bool,
-    site_key: Option<String>,
-    secret_key: Option<String>,
-    verify_url: Option<String>,
-}
-
-#[allow(dead_code)]
-pub struct TurnstileSettings {
-    pub site_key: String,
-    pub secret_key: String,
-    pub verify_url: String,
 }
 
 #[derive(Default, Deserialize)]
@@ -158,30 +132,6 @@ impl Config {
     pub fn category_index_list(&self) -> &[String] {
         // Why：category 白名单只需要一组可写索引名，避免把展示描述和权限状态混进写入校验。
         &self.categories.index_list
-    }
-
-    #[allow(dead_code)]
-    pub fn turnstile_settings(&self) -> Option<TurnstileSettings> {
-        // Why：Turnstile 只保护 init 授权页；配置不完整时必须保持关闭，不能降级成无验证码。
-        if !self.auth.turnstile.enabled {
-            return None;
-        }
-        let site_key = self.auth.turnstile.site_key.as_deref()?.trim();
-        let secret_key = self.auth.turnstile.secret_key.as_deref()?.trim();
-        if site_key.is_empty() || secret_key.is_empty() {
-            return None;
-        }
-        Some(TurnstileSettings {
-            site_key: site_key.to_string(),
-            secret_key: secret_key.to_string(),
-            verify_url: self
-                .auth
-                .turnstile
-                .verify_url
-                .as_deref()
-                .unwrap_or("https://challenges.cloudflare.com/turnstile/v0/siteverify")
-                .to_string(),
-        })
     }
 
     #[allow(dead_code)]

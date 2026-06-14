@@ -67,11 +67,6 @@ pub struct VerifyRequest {
 }
 
 #[derive(Deserialize)]
-pub struct InitTokenRefreshRequest {
-    turnstile_token: String,
-}
-
-#[derive(Deserialize)]
 pub struct InitGrantRequest {
     auth_token: String,
 }
@@ -134,36 +129,28 @@ pub async fn session(headers: HeaderMap) -> (StatusCode, Json<Value>) {
 }
 
 // What：返回 init 授权 token 的当前状态，不生成新 token，也不返回 token 明文。
-// Why：/auth 页面轮询只能判断旧 token 是否仍有效，真正展示 token 必须先通过 Turnstile refresh。
+// Why：/auth 页面轮询只需要判断旧 token 是否仍有效，不能顺带暴露无用配置字段。
 pub async fn auth_status(headers: HeaderMap) -> (StatusCode, Json<Value>) {
     match has_valid_session(&headers) {
-        Ok(true) => {
-            let site_key = crate::config::load_config("config.toml")
-                .ok()
-                .and_then(|config| config.turnstile_settings())
-                .map(|settings| settings.site_key);
-            (
-                StatusCode::OK,
-                api_response(
-                    Some(
-                        match init_auth_store().lock().unwrap().token_status(now_epoch()) {
-                            Some(expires_at) => json!({
-                                "valid": true,
-                                "expires_at": expires_at,
-                                "turnstile_site_key": site_key,
-                            }),
-                            None => json!({
-                                "valid": false,
-                                "expires_at": Value::Null,
-                                "turnstile_site_key": site_key,
-                            }),
-                        },
-                    ),
-                    None,
-                    None,
+        Ok(true) => (
+            StatusCode::OK,
+            api_response(
+                Some(
+                    match init_auth_store().lock().unwrap().token_status(now_epoch()) {
+                        Some(expires_at) => json!({
+                            "valid": true,
+                            "expires_at": expires_at,
+                        }),
+                        None => json!({
+                            "valid": false,
+                            "expires_at": Value::Null,
+                        }),
+                    },
                 ),
-            )
-        }
+                None,
+                None,
+            ),
+        ),
         Ok(false) => (
             StatusCode::UNAUTHORIZED,
             api_response(None, Some(unauthorized_error()), None),
@@ -175,60 +162,14 @@ pub async fn auth_status(headers: HeaderMap) -> (StatusCode, Json<Value>) {
     }
 }
 
-// What：接收 /auth 页面提交的 Turnstile token，并按官方 siteverify 完成后端校验。
-// Why：init auth_token 只能在验证码通过后生成；这一层先锁住验证码边界，再接入 token 状态。
-pub async fn auth_refresh(
-    headers: HeaderMap,
-    payload: Result<Json<InitTokenRefreshRequest>, JsonRejection>,
-) -> (StatusCode, Json<Value>) {
+// What：为已登录 /auth 页面签发短期 init auth_token。
+// Why：登录 session 是签发边界，短期 token 只承担 CLI init 授权交换职责。
+pub async fn auth_refresh(headers: HeaderMap) -> (StatusCode, Json<Value>) {
     if let Err(error) =
         has_valid_session(&headers).and_then(|ok| ok.then_some(()).ok_or_else(unauthorized_error))
     {
         return (
             StatusCode::UNAUTHORIZED,
-            api_response(None, Some(error), None),
-        );
-    }
-    let Json(payload) = match payload {
-        Ok(payload) => payload,
-        Err(error) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                api_response(
-                    None,
-                    Some(ApiError {
-                        code: "BAD_REQUEST",
-                        message: error.to_string(),
-                    }),
-                    None,
-                ),
-            );
-        }
-    };
-    let settings = match crate::config::load_config("config.toml")
-        .ok()
-        .and_then(|config| config.turnstile_settings())
-    {
-        Some(settings) => settings,
-        None => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                api_response(
-                    None,
-                    Some(ApiError {
-                        code: "TURNSTILE_CONFIG_MISSING",
-                        message: "turnstile is not configured".to_string(),
-                    }),
-                    None,
-                ),
-            );
-        }
-    };
-    if let Err(error) =
-        super::turnstile::verify_token(&settings, &payload.turnstile_token, None).await
-    {
-        return (
-            StatusCode::BAD_REQUEST,
             api_response(None, Some(error), None),
         );
     }
@@ -248,13 +189,10 @@ pub async fn auth_refresh(
     )
 }
 
-// What：保留 force 路由兼容旧入口，但签发 auth_token 前仍复用 Turnstile refresh 校验。
-// Why：cookie 只能证明已登录，不能成为绕过真人验证刷新 init 授权 token 的充分条件。
-pub async fn auth_force_refresh(
-    headers: HeaderMap,
-    payload: Result<Json<InitTokenRefreshRequest>, JsonRejection>,
-) -> (StatusCode, Json<Value>) {
-    auth_refresh(headers, payload).await
+// What：保留 force 路由兼容旧入口，签发逻辑统一复用 auth_refresh。
+// Why：两个刷新入口必须共享同一套 session、token 轮换和 grant 清理语义。
+pub async fn auth_force_refresh(headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    auth_refresh(headers).await
 }
 
 // What：用 300s auth_token 换取 300s Ed25519 init grant。

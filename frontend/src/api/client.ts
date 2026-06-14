@@ -80,7 +80,6 @@ export interface GraphStatus {
 export interface AuthTokenStatus {
   valid: boolean
   expires_at: number | null
-  turnstile_site_key: string | null
 }
 
 export interface AuthRefreshResult {
@@ -187,11 +186,9 @@ export const api = {
       }),
     session: () => request<void>("/auth/session"),
     status: () => request<AuthTokenStatus>("/auth/status"),
-    refresh: (turnstileToken: string) =>
+    refresh: () =>
       request<AuthRefreshResult>("/auth/refresh", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ turnstile_token: turnstileToken }),
       }),
   },
   projects: {
