@@ -25,7 +25,7 @@ fi
 if [ -f "$PROFILE_FILE" ]; then
     TMP_PROFILE="${PROFILE_FILE}.mem012.tmp.$$"
     grep -Fv 'export MEM012_CONFIG=' "$PROFILE_FILE" > "$TMP_PROFILE" || true
-    printf '\n%s\n' "$EXPORT_LINE" >> "$TMP_PROFILE"
+    printf '\n%s' "$EXPORT_LINE" >> "$TMP_PROFILE"
     mv "$TMP_PROFILE" "$PROFILE_FILE"
 else
     printf '%s\n' "$EXPORT_LINE" > "$PROFILE_FILE"
