@@ -29,12 +29,6 @@ embeddings_key = "" # embeddings_api = local 时可为空。
 enable_proxy = false # true 时才使用下面的 proxy。
 proxy = "socks5://127.0.0.1:12828" # 可选；也支持 "http://127.0.0.1:12828"。
 
-[auth.turnstile]
-enabled = false # 只保护 /auth init 授权页；生产开启后必须配置 secret_key。
-site_key = "0x4AAAAAADXWPWveDjEIZ8XK"
-secret_key = "" # 真实 Turnstile secret 只写入本地 config.toml，不提交仓库。
-verify_url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
-
 [debug]
 # true 会在 CLI 启动时清空 profile/share 记忆表并重新建表，只能在本地调试打开。
 reset_db = false

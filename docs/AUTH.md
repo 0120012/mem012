@@ -8,37 +8,25 @@
 
 ## 角色
 
-- `/auth` 页面：只在登录 session 存在时可访问；通过 Turnstile 后展示短期 `auth_token`。
+- `/auth` 页面：只在登录 session 存在时可访问；用户点击后展示短期 `auth_token`。
 - 用户：从 `/auth` 页面复制 `auth_token`，手动授权本机 CLI。
 - CLI：执行 `mem012 --auth <auth_token>`，换取本机临时授权文件。
-- 后端 API：验证 Turnstile、签发 `auth_token`、签发 300s Ed25519 单活一次性 grant，并消费 grant。
+- 后端 API：验证登录 session、签发 `auth_token`、签发 300s Ed25519 单活一次性 grant，并消费 grant。
 - auth file：本机短期授权凭据，路径固定为 `~/.auth/auth_file.mem`。
 
 ## `/auth` 页面
 
-页面初始只显示 Cloudflare Turnstile，不展示 token 区域。
+页面初始只显示获取按钮，不展示 token 区域。
 
-Turnstile 使用官方 explicit rendering：
-
-```html
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
-```
-
-前端使用公开 site key：
-
-```text
-0x4AAAAAADXWPWveDjEIZ8XK
-```
-
-Turnstile 成功后，前端拿到 challenge token，并调用：
+用户点击获取按钮后，前端调用：
 
 ```http
 POST /api/auth/refresh
 ```
 
-只有后端返回 `auth_token` 后，页面才展示 token、倒计时和复制按钮。`auth_token` 有效期为 180s。
+只有后端确认登录 session 并返回 `auth_token` 后，页面才展示 token、倒计时和复制按钮。`auth_token` 有效期为 300s。
 
-如果用户已经获取过 `auth_token` 但没有复制，随后刷新页面并再次完成 Turnstile，第二次 refresh 会签发新的 `auth_token`。旧 `auth_token` 和旧 grant 会立即失效，即使它们还没过期。页面刷新本身不生成 token；只有 Turnstile 通过后的 refresh 成功才会轮换授权。
+如果用户已经获取过 `auth_token` 但没有复制，随后再次点击获取按钮，第二次 refresh 会签发新的 `auth_token`。旧 `auth_token` 和旧 grant 会立即失效，即使它们还没过期。页面刷新本身不生成 token；只有 refresh 成功才会轮换授权。
 
 页面每 3-5s 轮询：
 
@@ -46,35 +34,17 @@ POST /api/auth/refresh
 GET /api/auth/status
 ```
 
-轮询只用于确认当前 token 是否仍有效。轮询不能生成新 token，也不能返回 token 明文。token 过期、刷新失败、被 CLI 换 grant、grant 被 consume 或后端状态失效时，页面必须立即隐藏旧 token，并要求用户重新通过 Turnstile。
-
-## Turnstile 后端验证
-
-后端按 Cloudflare Siteverify 验证前端提交的 Turnstile token：
-
-```http
-POST https://challenges.cloudflare.com/turnstile/v0/siteverify
-```
-
-请求字段：
-
-- `secret`：Turnstile secret key，只能放在本地 `config.toml`
-- `response`：前端 Turnstile challenge token。
-- `remoteip`：可选。
-
-响应必须检查 `success`。失败时读取 `error-codes` 并拒绝签发 `auth_token`。
-
-仓库只允许提交占位配置和公开 site key，不提交真实 secret key。
+轮询只用于确认当前 token 是否仍有效。轮询不能生成新 token，也不能返回 token 明文。token 过期、刷新失败、被 CLI 换 grant、grant 被 consume 或后端状态失效时，页面必须立即隐藏旧 token，并要求用户重新获取。
 
 ## API 合同
 
 `POST /api/auth/refresh`
 
 - 需要登录 session。
-- 请求：`{ "turnstile_token": "..." }`
-- 行为：后端 Siteverify 通过后生成 256-bit `auth_token`，并废弃旧 token 和所有未消费 grant。
+- 请求：无请求体。
+- 行为：后端验证登录 session 后生成 256-bit `auth_token`，并废弃旧 token 和所有未消费 grant。
 - 响应：`{ "auth_token": "...", "expires_at": 1760000180 }`
-- TTL：180s。
+- TTL：300s。
 
 `GET /api/auth/status`
 
@@ -142,9 +112,9 @@ grant 是 Ed25519 签名票据，签名覆盖 `payload` 的稳定 JSON 字节：
 ## 授权流程
 
 1. 用户登录后访问 `/auth`。
-2. 页面显示 Turnstile，不展示 token。
-3. Turnstile 成功后，页面调用 `POST /api/auth/refresh`。
-4. 后端 Siteverify 通过后返回 180s `auth_token`。
+2. 页面显示获取按钮，不展示 token。
+3. 用户点击获取按钮后，页面调用 `POST /api/auth/refresh`。
+4. 后端验证登录 session 后返回 300s `auth_token`。
 5. 用户执行：
 
 ```bash
@@ -190,8 +160,3 @@ mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init
 - 不允许 Agent 自己生成或刷新授权。
 - 不使用长期 `server.api_token` 作为 CLI 写入 `init` 的授权凭据。
 - 旧 `--admin_auth` 方案不再使用。
-
-## 参考
-
-- Cloudflare Turnstile client-side rendering: <https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/>
-- Cloudflare Turnstile server-side validation: <https://developers.cloudflare.com/turnstile/get-started/server-side-validation/>
