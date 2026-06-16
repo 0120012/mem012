@@ -199,7 +199,7 @@ export function ChangesPage() {
             <button
               type="button"
               aria-label="收回变更详情"
-              className="absolute left-0 top-1/2 flex h-11 w-8 -translate-x-full -translate-y-1/2 items-center justify-center rounded-l-md border bg-background text-muted-foreground shadow-sm hover:bg-accent"
+              className="absolute left-2 top-1/2 z-10 flex h-11 w-8 -translate-y-1/2 items-center justify-center rounded-md border bg-background text-muted-foreground shadow-sm hover:bg-accent sm:left-0 sm:-translate-x-full sm:rounded-l-md"
               onClick={() => { setExpandedUuid(null); setDetail(null) }}
             >
               <ChevronRight className="h-4 w-4" />
