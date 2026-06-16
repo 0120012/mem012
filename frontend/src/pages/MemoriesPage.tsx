@@ -72,6 +72,18 @@ function MemoryContentEditor({ readOnly, value, onChange }: { readOnly: boolean;
   return <div id="memory-content" className="min-h-64 flex-1 overflow-hidden rounded-md border" ref={hostRef} />
 }
 
+type MemoryDateField = "created_at" | "updated_at"
+
+function memoryMatchesDateRange(memory: MemoryItem, field: MemoryDateField, from: string, to: string) {
+  const memoryTime = new Date(memory[field]).getTime()
+  const fromTime = from ? new Date(`${from}T00:00:00`).getTime() : NaN
+  const toTime = to ? new Date(`${to}T23:59:59.999`).getTime() : NaN
+  if (Number.isNaN(memoryTime)) return false
+  if (!Number.isNaN(fromTime) && memoryTime < fromTime) return false
+  if (!Number.isNaN(toTime) && memoryTime > toTime) return false
+  return true
+}
+
 export function MemoriesPage() {
   const { activeProject } = useAuth()
   const [searchParams] = useSearchParams()
@@ -90,11 +102,18 @@ export function MemoriesPage() {
   const [keywordInputOpen, setKeywordInputOpen] = useState(false)
   const [keywordError, setKeywordError] = useState("")
   const categoryFilter = searchParams.get("category")?.trim() || ""
-  const keywordFilter = searchParams.get("keyword")?.trim() || ""
-  const visibleMemories = memories.filter((m) =>
-    (!categoryFilter || m.category === categoryFilter) &&
-    (!keywordFilter || !m.keywords || m.keywords.includes(keywordFilter))
-  )
+  const memoryFilter = searchParams.get("filter")?.trim().toLocaleLowerCase("zh-CN") || ""
+  const dateField: MemoryDateField = searchParams.get("date_field") === "created_at" ? "created_at" : "updated_at"
+  const dateFrom = searchParams.get("date_from")?.trim() || ""
+  const dateTo = searchParams.get("date_to")?.trim() || ""
+  const visibleMemories = memories.filter((m) => {
+    if (categoryFilter && m.category !== categoryFilter) return false
+    if ((dateFrom || dateTo) && !memoryMatchesDateRange(m, dateField, dateFrom, dateTo)) return false
+    if (!memoryFilter) return true
+    return [m.category, m.title_norm, m.summary, m.content, m.recall_when, ...(m.keywords || [])].some((value) =>
+      value?.toLocaleLowerCase("zh-CN").includes(memoryFilter)
+    )
+  })
   const selectedMemory = visibleMemories.find((m) => m.memory_uuid === selectedUuid) || null
 
   const fetchMemories = useCallback(async () => {
@@ -117,18 +136,25 @@ export function MemoriesPage() {
     return () => window.clearTimeout(timer)
   }, [activeProject, fetchMemories])
 
-  useEffect(() => {
+  const resetEditorState = (memory: MemoryItem | null) => {
     setIsEditing(false)
     setCopiedUuid("")
-    setEditorKeywords(selectedMemory?.keywords || [])
-    setContentDraft(selectedMemory?.content || "")
+    setEditorKeywords(memory?.keywords || [])
+    setContentDraft(memory?.content || "")
     setKeywordDraft("")
     setKeywordInputOpen(false)
     setKeywordError("")
-  }, [selectedUuid])
+  }
 
-  const toggleCard = (uuid: string) => {
-    setSelectedUuid(selectedUuid === uuid ? null : uuid)
+  const closeSelectedMemory = () => {
+    setSelectedUuid(null)
+    resetEditorState(null)
+  }
+
+  const toggleCard = (memory: MemoryItem) => {
+    const nextMemory = selectedUuid === memory.memory_uuid ? null : memory
+    setSelectedUuid(nextMemory?.memory_uuid || null)
+    resetEditorState(nextMemory)
   }
 
   const copySelectedUuid = async () => {
@@ -208,7 +234,7 @@ export function MemoriesPage() {
   return (
     <div className="mx-auto max-w-7xl p-4 sm:p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-lg font-semibold text-foreground">{keywordFilter || categoryFilter || "记忆"}</h1>
+        <h1 className="text-lg font-semibold text-foreground">{memoryFilter || categoryFilter || "记忆"}</h1>
         <Button variant="outline" size="sm" onClick={fetchMemories} disabled={loading}>刷新</Button>
       </div>
 
@@ -223,8 +249,8 @@ export function MemoriesPage() {
         </div>
       ) : memories.length === 0 ? (
         <p className="text-muted-foreground text-center py-12">暂无记忆</p>
-      ) : visibleMemories.length === 0 && keywordFilter ? (
-        <p className="text-muted-foreground text-center py-12">该关键词暂无记忆</p>
+      ) : visibleMemories.length === 0 && memoryFilter ? (
+        <p className="text-muted-foreground text-center py-12">没有匹配的记忆</p>
       ) : visibleMemories.length === 0 ? (
         <p className="text-muted-foreground text-center py-12">该分类暂无记忆</p>
       ) : (
@@ -241,7 +267,7 @@ export function MemoriesPage() {
               >
                 <div
                   className="flex min-h-0 flex-1 cursor-pointer flex-col gap-3 p-3"
-                  onClick={() => toggleCard(m.memory_uuid)}
+                  onClick={() => toggleCard(m)}
                 >
                   <div className="flex min-w-0 items-start gap-2">
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5 text-foreground">{m.title_norm}</span>
@@ -284,14 +310,14 @@ export function MemoriesPage() {
             type="button"
             aria-label="关闭编辑框"
             className="fixed inset-0 z-30 cursor-default bg-black/5"
-            onClick={() => setSelectedUuid(null)}
+            onClick={closeSelectedMemory}
           />
           <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-xl border-l bg-background shadow-xl sm:w-[520px]">
             <button
               type="button"
               aria-label="收回编辑框"
-              className="absolute left-0 top-1/2 flex h-11 w-8 -translate-x-full -translate-y-1/2 items-center justify-center rounded-l-md border bg-background text-muted-foreground shadow-sm hover:bg-accent"
-              onClick={() => setSelectedUuid(null)}
+              className="absolute left-2 top-1/2 z-10 flex h-11 w-8 -translate-y-1/2 items-center justify-center rounded-md border bg-background text-muted-foreground shadow-sm hover:bg-accent sm:left-0 sm:-translate-x-full sm:rounded-l-md"
+              onClick={closeSelectedMemory}
             >
               <ChevronRight className="h-4 w-4" />
             </button>
