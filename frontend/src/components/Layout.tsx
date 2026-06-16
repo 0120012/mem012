@@ -35,10 +35,8 @@ export function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
   const [mobileSidebarState, setMobileSidebarState] = useState<MobileSidebarState>("closed")
-  const [memoryOpen, setMemoryOpen] = useState(true)
-  const [memoryCategories, setMemoryCategories] = useState<string[]>([])
-  const [openCategory, setOpenCategory] = useState("")
-  const [categoryKeywords, setCategoryKeywords] = useState<Record<string, string[]>>({})
+  const [closedMemoryProjectId, setClosedMemoryProjectId] = useState("")
+  const [memoryCategoryState, setMemoryCategoryState] = useState<{ projectId: string; categories: string[] }>({ projectId: "", categories: [] })
   const [projectOpen, setProjectOpen] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window === "undefined") return "system"
@@ -53,16 +51,19 @@ export function Layout() {
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
 
+  const activeProjectId = activeProject?.project_id || ""
+  const memoryOpen = Boolean(activeProjectId) && closedMemoryProjectId !== activeProjectId
+  const memoryCategories = memoryCategoryState.projectId === activeProjectId ? memoryCategoryState.categories : []
+
   useEffect(() => {
-    setMemoryCategories([])
-    setOpenCategory("")
-    setCategoryKeywords({})
-    setMemoryOpen(Boolean(activeProject))
-    if (!activeProject) return
+    if (!activeProjectId) return
     void api.memories.list()
-      .then((data) => setMemoryCategories(Array.from(new Set((data || []).map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"))))
-      .catch(() => setMemoryCategories([]))
-  }, [activeProject])
+      .then((data) => setMemoryCategoryState({
+        projectId: activeProjectId,
+        categories: Array.from(new Set((data || []).map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN")),
+      }))
+      .catch(() => setMemoryCategoryState({ projectId: activeProjectId, categories: [] }))
+  }, [activeProjectId])
 
   // 监听系统主题变化
   useEffect(() => {
@@ -99,31 +100,33 @@ export function Layout() {
 
   const handleMemoryToggle = () => {
     const nextOpen = !memoryOpen
-    setMemoryOpen(nextOpen)
-    if (!nextOpen || !activeProject || memoryCategories.length > 0) return
+    setClosedMemoryProjectId(nextOpen ? "" : activeProjectId)
+    if (!nextOpen || !activeProjectId || memoryCategories.length > 0) return
     void api.memories.list()
-      .then((data) => setMemoryCategories(Array.from(new Set((data || []).map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"))))
-      .catch(() => setMemoryCategories([]))
-  }
-
-  const handleCategoryKeywordToggle = (category: string) => {
-    const nextOpen = openCategory !== category
-    setOpenCategory(nextOpen ? category : "")
-    if (!nextOpen || categoryKeywords[category]) return
-    void api.memories.categoryKeywords(category)
-      .then((keywords) => setCategoryKeywords((current) => ({ ...current, [category]: keywords || [] })))
-      .catch(() => setCategoryKeywords((current) => ({ ...current, [category]: [] })))
+      .then((data) => setMemoryCategoryState({
+        projectId: activeProjectId,
+        categories: Array.from(new Set((data || []).map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN")),
+      }))
+      .catch(() => setMemoryCategoryState({ projectId: activeProjectId, categories: [] }))
   }
 
   const currentPath = `${location.pathname}${location.search}`
   const categoryFilter = new URLSearchParams(location.search).get("category")?.trim() || ""
-  const keywordFilter = new URLSearchParams(location.search).get("keyword")?.trim() || ""
   const memoriesActive = location.pathname === "/memories"
-  const pageTitle = memoriesActive ? (keywordFilter || categoryFilter || "Projects") : currentPath === "/changes?filter=trash" ? "回收站" : currentPath === "/changes" ? "待确认" : currentPath === "/graph" ? "图谱" : currentPath === "/auth" ? "授权" : "Mem"
+  const memoryFilter = memoriesActive ? new URLSearchParams(location.search).get("filter") || "" : ""
+  const pageTitle = memoriesActive ? (memoryFilter || categoryFilter || "记忆") : currentPath === "/changes?filter=trash" ? "回收站" : currentPath === "/changes" ? "待确认" : currentPath === "/graph" ? "图谱" : currentPath === "/auth" ? "授权" : "Mem"
   // 当前主题图标组件
   const ThemeIcon = theme === "system" ? Monitor : theme === "dark" ? Moon : Sun
   const mobileSidebarOpen = mobileSidebarState !== "closed"
   const mobileProjectOpen = mobileSidebarState === "projects"
+  const updateMemoryFilter = (value: string) => {
+    const params = new URLSearchParams(memoriesActive ? location.search : "")
+    const filter = value.trim()
+    if (filter) params.set("filter", filter)
+    else params.delete("filter")
+    params.delete("keyword")
+    navigate({ pathname: "/memories", search: params.toString() }, { replace: memoriesActive })
+  }
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -150,43 +153,28 @@ export function Layout() {
           </DropdownMenu>
         </div>
         <nav className="flex-1 px-2 py-3 space-y-1">
-          <button
-            type="button"
-            onClick={handleMemoryToggle}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-              memoriesActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-            )}
-          >
-            <FileText className="h-4 w-4" />
-            <span className="flex-1 text-left">记忆</span>
-            <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", memoryOpen && "rotate-180")} />
-          </button>
+          <div className={cn(
+            "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+            memoriesActive ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+          )}>
+            <Link to="/memories" className="flex min-w-0 flex-1 items-center gap-2">
+              <FileText className="h-4 w-4" />
+              <span className="flex-1 text-left">记忆</span>
+            </Link>
+            <button type="button" aria-label={memoryOpen ? "收起类别" : "展开类别"} onClick={handleMemoryToggle} className="shrink-0 rounded-sm p-1 hover:bg-accent">
+              <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", memoryOpen && "rotate-180")} />
+            </button>
+          </div>
           {memoryOpen && (
             <div className="ml-5 border-l pl-2">
               {memoryCategories.map((category) => (
-                <div key={category}>
-                  <div className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
-                    categoryFilter === category ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                  )}>
-                    <Link to={`/memories?category=${encodeURIComponent(category)}`} className="flex min-w-0 flex-1 items-center gap-2">
-                      <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate text-left">{category}</span>
-                    </Link>
-                    <button type="button" aria-label={openCategory === category ? "收起关键词" : "展开关键词"} onClick={() => handleCategoryKeywordToggle(category)} className="shrink-0 rounded-sm p-1 hover:bg-accent">
-                      <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", openCategory === category && "rotate-180")} />
-                    </button>
-                  </div>
-                  {openCategory === category && (categoryKeywords[category] || []).map((keyword) => (
-                    <Link key={keyword} to={`/memories?category=${encodeURIComponent(category)}&keyword=${encodeURIComponent(keyword)}`} className={cn(
-                      "ml-4 block truncate rounded-md px-3 py-1 text-xs transition-colors",
-                      keywordFilter === keyword ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                    )}>
-                      {keyword}
-                    </Link>
-                  ))}
-                </div>
+                <Link key={category} to={`/memories?category=${encodeURIComponent(category)}`} className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
+                  categoryFilter === category ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                )}>
+                  <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-left">{category}</span>
+                </Link>
               ))}
             </div>
           )}
@@ -234,7 +222,32 @@ export function Layout() {
           </div>
         )}
         <nav className="flex-1 px-2 py-3 space-y-1">
-          {navItems.map((item) => {
+          <div className={cn(
+            "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+            memoriesActive ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+          )}>
+            <Link to="/memories" onClick={closeMobileSidebar} className="flex min-w-0 flex-1 items-center gap-2">
+              <FileText className="h-4 w-4" />
+              <span className="flex-1 text-left">记忆</span>
+            </Link>
+            <button type="button" aria-label={memoryOpen ? "收起类别" : "展开类别"} onClick={handleMemoryToggle} className="shrink-0 rounded-sm p-1 hover:bg-accent">
+              <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", memoryOpen && "rotate-180")} />
+            </button>
+          </div>
+          {memoryOpen && (
+            <div className="ml-5 border-l pl-2">
+              {memoryCategories.map((category) => (
+                <Link key={category} to={`/memories?category=${encodeURIComponent(category)}`} onClick={closeMobileSidebar} className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
+                  categoryFilter === category ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                )}>
+                  <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-left">{category}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+          {navItems.filter((item) => item.to !== "/memories").map((item) => {
             const active = currentPath === item.to
             return (
               <Link key={item.to} to={item.to} onClick={closeMobileSidebar} className={cn(
@@ -270,7 +283,7 @@ export function Layout() {
           {/* 搜索 */}
           <div className="hidden sm:flex relative max-w-xs">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input className="h-7 pl-7 text-xs bg-muted/50 border-transparent focus:border-border" placeholder="搜索..." />
+            <Input className="h-7 pl-7 text-xs bg-muted/50 border-transparent focus:border-border" value={memoryFilter} onChange={(event) => updateMemoryFilter(event.target.value)} placeholder="过滤记忆..." />
           </div>
 
           {/* 主题切换 */}
