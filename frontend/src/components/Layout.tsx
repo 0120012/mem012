@@ -2,11 +2,10 @@ import { Outlet, Link, useNavigate, useLocation } from "react-router-dom"
 import { useAuth } from "@/auth/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { Input } from "@/components/ui/input"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { FileText, Clock, LogOut, Menu, X, Search, Monitor, Moon, Sun, ChevronDown, GitBranch, ShieldCheck, Trash2, Folder } from "lucide-react"
+import { FileText, Clock, LogOut, Menu, X, Monitor, Moon, Sun, ChevronDown, GitBranch, ShieldCheck, Trash2, Folder } from "lucide-react"
 import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { api } from "@/api/client"
@@ -119,14 +118,6 @@ export function Layout() {
   const ThemeIcon = theme === "system" ? Monitor : theme === "dark" ? Moon : Sun
   const mobileSidebarOpen = mobileSidebarState !== "closed"
   const mobileProjectOpen = mobileSidebarState === "projects"
-  const updateMemoryFilter = (value: string) => {
-    const params = new URLSearchParams(memoriesActive ? location.search : "")
-    const filter = value.trim()
-    if (filter) params.set("filter", filter)
-    else params.delete("filter")
-    params.delete("keyword")
-    navigate({ pathname: "/memories", search: params.toString() }, { replace: memoriesActive })
-  }
   const memoryCategoryPath = (category: string) => {
     const params = new URLSearchParams(memoriesActive ? location.search : "")
     params.set("category", category)
@@ -285,12 +276,6 @@ export function Layout() {
           <span className="text-sm font-semibold text-foreground hidden sm:block">{pageTitle}</span>
 
           <div className="flex-1" />
-
-          {/* 搜索 */}
-          <div className="hidden sm:flex relative max-w-xs">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input className="h-7 pl-7 text-xs bg-muted/50 border-transparent focus:border-border" value={memoryFilter} onChange={(event) => updateMemoryFilter(event.target.value)} placeholder="过滤记忆..." />
-          </div>
 
           {/* 主题切换 */}
           <Separator orientation="vertical" className="h-4 hidden sm:block" />
