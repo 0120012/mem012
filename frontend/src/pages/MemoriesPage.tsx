@@ -125,7 +125,7 @@ export function MemoriesPage() {
     if (categoryFilter && m.category !== categoryFilter) return false
     if ((dateFrom || dateTo) && !memoryMatchesDateRange(m, dateField, dateFrom, dateTo)) return false
     if (!memoryFilter) return true
-    return [m.category, m.title_norm, m.summary, m.content, m.recall_when, ...(m.keywords || [])].some((value) =>
+    return [m.memory_uuid, m.title_norm, m.summary, m.content, m.recall_when, ...(m.keywords || [])].some((value) =>
       value?.toLocaleLowerCase("zh-CN").includes(memoryFilter)
     )
   })
@@ -283,8 +283,8 @@ export function MemoriesPage() {
       </div>
       <div className="mb-4 grid gap-3 rounded-md border bg-card p-3 sm:grid-cols-[minmax(0,1fr)_220px] lg:grid-cols-[minmax(0,1fr)_220px_320px]">
         <div className="grid gap-2">
-          <Label htmlFor="memory-filter">文字过滤</Label>
-          <Input id="memory-filter" value={memoryFilterInput} onChange={(event) => updateMemoryFilter(event.target.value)} placeholder="搜索标题、摘要、内容或关键词" />
+          <Label htmlFor="memory-filter">搜索</Label>
+          <Input id="memory-filter" value={memoryFilterInput} onChange={(event) => updateMemoryFilter(event.target.value)} placeholder="搜索 UUID、标题、摘要、关键词、召回时机或内容" />
         </div>
         <div className="grid gap-2">
           <Label>类别</Label>
@@ -365,7 +365,7 @@ export function MemoriesPage() {
         </div>
         {(memoryFilterInput.trim() || categoryFilter || dateFrom || dateTo) && (
           <div className="flex min-h-6 flex-wrap gap-2 sm:col-span-2 lg:col-span-3">
-            {memoryFilterInput.trim() && <Badge variant="outline">文字：{memoryFilterInput.trim()}</Badge>}
+            {memoryFilterInput.trim() && <Badge variant="outline">搜索：{memoryFilterInput.trim()}</Badge>}
             {categoryFilter && <Badge variant="outline">类别：{categoryFilter}</Badge>}
             {(dateFrom || dateTo) && <Badge variant="outline">{dateFieldLabel}：{dateFrom || "不限"} - {dateTo || "不限"}</Badge>}
           </div>
