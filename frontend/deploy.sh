@@ -17,8 +17,12 @@ if [[ "$TARGET_DIR" == "/" ]]; then
 fi
 
 cd "$SCRIPT_DIR"
+NPM_CACHE_DIR="${NPM_CONFIG_CACHE:-${TMPDIR:-/tmp}/mem012-frontend-npm-cache}"
 
-echo "[1/3] 构建前端..."
+echo "[1/4] 安装前端依赖..."
+npm ci --cache "$NPM_CACHE_DIR"
+
+echo "[2/4] 构建前端..."
 npm run build
 
 if [[ ! -d "$SCRIPT_DIR/dist" ]]; then
@@ -26,14 +30,14 @@ if [[ ! -d "$SCRIPT_DIR/dist" ]]; then
   exit 1
 fi
 
-echo "[2/3] 清空目标目录: $TARGET_DIR"
+echo "[3/4] 清空目标目录: $TARGET_DIR"
 shopt -s dotglob nullglob
 old_files=("$TARGET_DIR"/*)
 if (( ${#old_files[@]} > 0 )); then
   rm -rf -- "${old_files[@]}"
 fi
 
-echo "[3/3] 复制 dist 到目标目录"
+echo "[4/4] 复制 dist 到目标目录"
 cp -a "$SCRIPT_DIR/dist/." "$TARGET_DIR/"
 
 echo "[DONE] 发布完成 -> $TARGET_DIR"
