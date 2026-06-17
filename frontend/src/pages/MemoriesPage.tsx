@@ -366,10 +366,9 @@ export function MemoriesPage() {
           <div className="text-xs text-muted-foreground sm:col-span-2 lg:col-span-1 lg:self-end lg:text-right">
             当前结果 {visibleMemories.length} / 全部记忆 {memories.length}
           </div>
-          {(memoryFilterInput.trim() || categoryFilter || dateFrom || dateTo) && (
+          {(memoryFilterInput.trim() || dateFrom || dateTo) && (
             <div className="flex min-h-6 flex-wrap gap-2 sm:col-span-2 lg:col-span-3">
               {memoryFilterInput.trim() && <Badge variant="outline">搜索：{memoryFilterInput.trim()}</Badge>}
-              {categoryFilter && <Badge variant="outline">类别：{categoryFilter}</Badge>}
               {(dateFrom || dateTo) && <Badge variant="outline">{dateFieldLabel}：{dateFrom || "不限"} - {dateTo || "不限"}</Badge>}
             </div>
           )}
