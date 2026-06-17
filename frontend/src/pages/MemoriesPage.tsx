@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, type ChangeEvent, type CompositionEvent } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { ApiError, api, type MemoryItem } from "@/api/client"
 import { useAuth } from "@/auth/AuthContext"
@@ -113,8 +113,10 @@ export function MemoriesPage() {
   const [keywordError, setKeywordError] = useState("")
   const [dateFromOpen, setDateFromOpen] = useState(false)
   const [dateToOpen, setDateToOpen] = useState(false)
+  const memoryFilterComposingRef = useRef(false)
+  const [composingMemoryFilter, setComposingMemoryFilter] = useState<string | null>(null)
   const categoryFilter = searchParams.get("category")?.trim() || ""
-  const memoryFilterInput = searchParams.get("filter") || ""
+  const memoryFilterInput = (composingMemoryFilter ?? searchParams.get("filter")) || ""
   const memoryFilter = memoryFilterInput.trim().toLocaleLowerCase("zh-CN")
   const dateField: MemoryDateField = searchParams.get("date_field") === "created_at" ? "created_at" : "updated_at"
   const dateFieldLabel = dateField === "created_at" ? "创建时间" : "更新时间"
@@ -151,6 +153,28 @@ export function MemoriesPage() {
     else params.delete("filter")
     params.delete("keyword")
     setSearchParams(params, { replace: true })
+  }
+
+  const handleMemoryFilterChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value
+    const isComposing = memoryFilterComposingRef.current || Boolean((event.nativeEvent as { isComposing?: boolean }).isComposing)
+    if (isComposing) {
+      setComposingMemoryFilter(value)
+      return
+    }
+    updateMemoryFilter(value)
+  }
+
+  const handleMemoryFilterCompositionStart = (event: CompositionEvent<HTMLInputElement>) => {
+    memoryFilterComposingRef.current = true
+    setComposingMemoryFilter(event.currentTarget.value)
+  }
+
+  const handleMemoryFilterCompositionEnd = (event: CompositionEvent<HTMLInputElement>) => {
+    const value = event.currentTarget.value
+    memoryFilterComposingRef.current = false
+    setComposingMemoryFilter(null)
+    updateMemoryFilter(value)
   }
 
   const updateCategoryFilter = (category: string) => {
@@ -285,7 +309,14 @@ export function MemoriesPage() {
         <div className="rounded-md border bg-card p-3">
           <div className="grid gap-2">
             <Label htmlFor="memory-filter">搜索</Label>
-            <Input id="memory-filter" value={memoryFilterInput} onChange={(event) => updateMemoryFilter(event.target.value)} placeholder="搜索 UUID、标题、摘要、关键词、召回时机或内容" />
+            <Input
+              id="memory-filter"
+              value={memoryFilterInput}
+              onChange={handleMemoryFilterChange}
+              onCompositionStart={handleMemoryFilterCompositionStart}
+              onCompositionEnd={handleMemoryFilterCompositionEnd}
+              placeholder="搜索 UUID、标题、摘要、关键词、召回时机或内容"
+            />
           </div>
         </div>
         <div className="grid gap-3 rounded-md border bg-card p-3 sm:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[220px_320px_minmax(0,1fr)]">
