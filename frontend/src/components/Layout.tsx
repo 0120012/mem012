@@ -36,6 +36,7 @@ export function Layout() {
   const [mobileSidebarState, setMobileSidebarState] = useState<MobileSidebarState>("closed")
   const [closedMemoryProjectId, setClosedMemoryProjectId] = useState("")
   const [memoryCategoryState, setMemoryCategoryState] = useState<{ projectId: string; categories: string[] }>({ projectId: "", categories: [] })
+  const [pendingChangeState, setPendingChangeState] = useState({ projectId: "", count: 0 })
   const [projectOpen, setProjectOpen] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window === "undefined") return "system"
@@ -63,6 +64,21 @@ export function Layout() {
       }))
       .catch(() => setMemoryCategoryState({ projectId: activeProjectId, categories: [] }))
   }, [activeProjectId])
+
+  useEffect(() => {
+    if (!activeProjectId) return
+    let cancelled = false
+    void api.changes.list()
+      .then((data) => {
+        if (!cancelled) setPendingChangeState({ projectId: activeProjectId, count: (data || []).length })
+      })
+      .catch(() => {
+        if (!cancelled) setPendingChangeState({ projectId: activeProjectId, count: 0 })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeProjectId, location.pathname, location.search])
 
   // 监听系统主题变化
   useEffect(() => {
@@ -118,6 +134,8 @@ export function Layout() {
   const ThemeIcon = theme === "system" ? Monitor : theme === "dark" ? Moon : Sun
   const mobileSidebarOpen = mobileSidebarState !== "closed"
   const mobileProjectOpen = mobileSidebarState === "projects"
+  const pendingChangeCount = pendingChangeState.projectId === activeProjectId ? pendingChangeState.count : 0
+  const hasPendingChanges = pendingChangeCount > 0
   const memoryCategoryPath = (category: string) => {
     const params = new URLSearchParams(memoriesActive ? location.search : "")
     params.set("category", category)
@@ -183,7 +201,10 @@ export function Layout() {
                 active ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               )}>
                 <item.icon className="h-4 w-4" />
-                {item.label}
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.to === "/changes" && hasPendingChanges && (
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-orange-500 ring-2 ring-background" title={`${pendingChangeCount} 条待确认记忆`} aria-label={`${pendingChangeCount} 条待确认记忆`} />
+                )}
               </Link>
             )
           })}
@@ -251,7 +272,11 @@ export function Layout() {
                 "flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
                 active ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               )}>
-                <item.icon className="h-4 w-4" />{item.label}
+                <item.icon className="h-4 w-4" />
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.to === "/changes" && hasPendingChanges && (
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-orange-500 ring-2 ring-background" title={`${pendingChangeCount} 条待确认记忆`} aria-label={`${pendingChangeCount} 条待确认记忆`} />
+                )}
               </Link>
             )
           })}
