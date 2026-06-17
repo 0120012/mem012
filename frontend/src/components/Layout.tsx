@@ -155,9 +155,14 @@ export function Layout() {
   const hasPendingChanges = pendingChangeCount > 0
   const memoryCategoryPath = (category: string) => {
     const params = new URLSearchParams(memoriesActive ? location.search : "")
+    params.delete("filter")
+    params.delete("keyword")
+    params.delete("date_from")
+    params.delete("date_to")
+    params.delete("date_field")
     params.set("category", category)
     const search = params.toString()
-    return `/memories${search ? `?${search}` : ""}`
+    return `${projectPrefix}/memories${search ? `?${search}` : ""}`
   }
 
   return (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type ChangeEvent, type CompositionEvent } from "react"
+import { useState, useEffect, useCallback, useRef, type ChangeEvent, type CompositionEvent, type CSSProperties } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { ApiError, api, type MemoryItem } from "@/api/client"
 import { useAuth } from "@/auth/AuthContext"
@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
-import { CalendarDays, ChevronDown, ChevronRight, Copy, Folder, Minus, Pencil, Plus } from "lucide-react"
+import { CalendarDays, ChevronDown, ChevronRight, Copy, Folder, Minus, Pencil, Plus, X } from "lucide-react"
 
 const statusLabel: Record<string, string> = {
   active: "活跃",
@@ -180,6 +180,11 @@ export function MemoriesPage() {
 
   const updateCategoryFilter = (category: string) => {
     const params = new URLSearchParams(searchParams)
+    params.delete("filter")
+    params.delete("keyword")
+    params.delete("date_from")
+    params.delete("date_to")
+    params.delete("date_field")
     if (category) params.set("category", category)
     else params.delete("category")
     setSearchParams(params, { replace: true })
@@ -340,21 +345,18 @@ export function MemoriesPage() {
           </div>
           <div className="grid gap-2">
             <div className="flex items-center justify-between gap-2">
-              <Label>时间范围</Label>
-              <div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-xs">
-                      {dateFieldLabel}
-                      <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => updateDateField("updated_at")}>更新时间</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => updateDateField("created_at")}>创建时间</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="h-auto justify-between gap-2 px-0 py-0 text-sm font-medium leading-none">
+                    {dateFieldLabel}
+                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={() => updateDateField("updated_at")}>更新时间</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => updateDateField("created_at")}>创建时间</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Popover open={dateFromOpen} onOpenChange={setDateFromOpen}>
@@ -364,8 +366,10 @@ export function MemoriesPage() {
                     {dateFrom || "开始日期"}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent align="start" className="w-auto p-0">
+                <PopoverContent align="start" className="min-w-[340px] p-0">
                   <Calendar
+                    className="p-5 w-full"
+                    style={{ "--cell-size": "3rem" } as CSSProperties}
                     mode="single"
                     selected={dateFrom ? new Date(`${dateFrom}T00:00:00`) : undefined}
                     onSelect={(date) => {
@@ -373,6 +377,13 @@ export function MemoriesPage() {
                       setDateFromOpen(false)
                     }}
                   />
+                  {dateFrom && (
+                    <div className="flex justify-end border-t px-3 py-2">
+                      <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => { updateDateFilter("date_from", ""); setDateFromOpen(false) }}>
+                        <X className="h-3 w-3" />清除
+                      </Button>
+                    </div>
+                  )}
                 </PopoverContent>
               </Popover>
               <Popover open={dateToOpen} onOpenChange={setDateToOpen}>
@@ -382,8 +393,10 @@ export function MemoriesPage() {
                     {dateTo || "结束日期"}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent align="start" className="w-auto p-0">
+                <PopoverContent align="start" className="min-w-[340px] p-0">
                   <Calendar
+                    className="p-5 w-full"
+                    style={{ "--cell-size": "3rem" } as CSSProperties}
                     mode="single"
                     selected={dateTo ? new Date(`${dateTo}T00:00:00`) : undefined}
                     onSelect={(date) => {
@@ -391,6 +404,13 @@ export function MemoriesPage() {
                       setDateToOpen(false)
                     }}
                   />
+                  {dateTo && (
+                    <div className="flex justify-end border-t px-3 py-2">
+                      <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => { updateDateFilter("date_to", ""); setDateToOpen(false) }}>
+                        <X className="h-3 w-3" />清除
+                      </Button>
+                    </div>
+                  )}
                 </PopoverContent>
               </Popover>
             </div>
