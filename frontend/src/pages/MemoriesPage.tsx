@@ -281,95 +281,99 @@ export function MemoriesPage() {
         <h1 className="text-lg font-semibold text-foreground">{memoryFilter || categoryFilter || "记忆"}</h1>
         <Button variant="outline" size="sm" onClick={fetchMemories} disabled={loading}>刷新</Button>
       </div>
-      <div className="mb-4 grid gap-3 rounded-md border bg-card p-3 sm:grid-cols-[minmax(0,1fr)_220px] lg:grid-cols-[minmax(0,1fr)_220px_320px]">
-        <div className="grid gap-2">
-          <Label htmlFor="memory-filter">搜索</Label>
-          <Input id="memory-filter" value={memoryFilterInput} onChange={(event) => updateMemoryFilter(event.target.value)} placeholder="搜索 UUID、标题、摘要、关键词、召回时机或内容" />
+      <div className="mb-4 grid gap-3">
+        <div className="rounded-md border bg-card p-3">
+          <div className="grid gap-2">
+            <Label htmlFor="memory-filter">搜索</Label>
+            <Input id="memory-filter" value={memoryFilterInput} onChange={(event) => updateMemoryFilter(event.target.value)} placeholder="搜索 UUID、标题、摘要、关键词、召回时机或内容" />
+          </div>
         </div>
-        <div className="grid gap-2">
-          <Label>类别</Label>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="justify-between">
-                <span className="truncate">{categoryFilter || "全部类别"}</span>
-                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="max-h-72 w-56 overflow-auto">
-              <DropdownMenuItem onClick={() => updateCategoryFilter("")}>全部类别</DropdownMenuItem>
-              {categories.map((category) => (
-                <DropdownMenuItem key={category} onClick={() => updateCategoryFilter(category)}>{category}</DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-2">
-            <Label>时间范围</Label>
-            <div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-xs">
-                    {dateFieldLabel}
-                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
+        <div className="grid gap-3 rounded-md border bg-card p-3 sm:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[220px_320px_minmax(0,1fr)]">
+          <div className="grid gap-2">
+            <Label>类别</Label>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="justify-between">
+                  <span className="truncate">{categoryFilter || "全部类别"}</span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-h-72 w-56 overflow-auto">
+                <DropdownMenuItem onClick={() => updateCategoryFilter("")}>全部类别</DropdownMenuItem>
+                {categories.map((category) => (
+                  <DropdownMenuItem key={category} onClick={() => updateCategoryFilter(category)}>{category}</DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label>时间范围</Label>
+              <div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-xs">
+                      {dateFieldLabel}
+                      <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => updateDateField("updated_at")}>更新时间</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => updateDateField("created_at")}>创建时间</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Popover open={dateFromOpen} onOpenChange={setDateFromOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className={cn("justify-start text-left font-normal", !dateFrom && "text-muted-foreground")} aria-label={`${dateFieldLabel}开始日期`}>
+                    <CalendarDays className="h-4 w-4" />
+                    {dateFrom || "开始日期"}
                   </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => updateDateField("updated_at")}>更新时间</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => updateDateField("created_at")}>创建时间</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto p-0">
+                  <Calendar
+                    mode="single"
+                    selected={dateFrom ? new Date(`${dateFrom}T00:00:00`) : undefined}
+                    onSelect={(date) => {
+                      updateDateFilter("date_from", date ? dateToInputValue(date) : "")
+                      setDateFromOpen(false)
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+              <Popover open={dateToOpen} onOpenChange={setDateToOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className={cn("justify-start text-left font-normal", !dateTo && "text-muted-foreground")} aria-label={`${dateFieldLabel}结束日期`}>
+                    <CalendarDays className="h-4 w-4" />
+                    {dateTo || "结束日期"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto p-0">
+                  <Calendar
+                    mode="single"
+                    selected={dateTo ? new Date(`${dateTo}T00:00:00`) : undefined}
+                    onSelect={(date) => {
+                      updateDateFilter("date_to", date ? dateToInputValue(date) : "")
+                      setDateToOpen(false)
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Popover open={dateFromOpen} onOpenChange={setDateFromOpen}>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className={cn("justify-start text-left font-normal", !dateFrom && "text-muted-foreground")} aria-label={`${dateFieldLabel}开始日期`}>
-                  <CalendarDays className="h-4 w-4" />
-                  {dateFrom || "开始日期"}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-auto p-0">
-                <Calendar
-                  mode="single"
-                  selected={dateFrom ? new Date(`${dateFrom}T00:00:00`) : undefined}
-                  onSelect={(date) => {
-                    updateDateFilter("date_from", date ? dateToInputValue(date) : "")
-                    setDateFromOpen(false)
-                  }}
-                />
-              </PopoverContent>
-            </Popover>
-            <Popover open={dateToOpen} onOpenChange={setDateToOpen}>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className={cn("justify-start text-left font-normal", !dateTo && "text-muted-foreground")} aria-label={`${dateFieldLabel}结束日期`}>
-                  <CalendarDays className="h-4 w-4" />
-                  {dateTo || "结束日期"}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-auto p-0">
-                <Calendar
-                  mode="single"
-                  selected={dateTo ? new Date(`${dateTo}T00:00:00`) : undefined}
-                  onSelect={(date) => {
-                    updateDateFilter("date_to", date ? dateToInputValue(date) : "")
-                    setDateToOpen(false)
-                  }}
-                />
-              </PopoverContent>
-            </Popover>
+          <div className="text-xs text-muted-foreground sm:col-span-2 lg:col-span-1 lg:self-end lg:text-right">
+            当前结果 {visibleMemories.length} / 全部记忆 {memories.length}
           </div>
-        </div>
-        <div className="text-xs text-muted-foreground sm:col-span-2 lg:col-span-3">
-          当前结果 {visibleMemories.length} / 全部记忆 {memories.length}
-        </div>
-        {(memoryFilterInput.trim() || categoryFilter || dateFrom || dateTo) && (
-          <div className="flex min-h-6 flex-wrap gap-2 sm:col-span-2 lg:col-span-3">
-            {memoryFilterInput.trim() && <Badge variant="outline">搜索：{memoryFilterInput.trim()}</Badge>}
-            {categoryFilter && <Badge variant="outline">类别：{categoryFilter}</Badge>}
-            {(dateFrom || dateTo) && <Badge variant="outline">{dateFieldLabel}：{dateFrom || "不限"} - {dateTo || "不限"}</Badge>}
+          {(memoryFilterInput.trim() || categoryFilter || dateFrom || dateTo) && (
+            <div className="flex min-h-6 flex-wrap gap-2 sm:col-span-2 lg:col-span-3">
+              {memoryFilterInput.trim() && <Badge variant="outline">搜索：{memoryFilterInput.trim()}</Badge>}
+              {categoryFilter && <Badge variant="outline">类别：{categoryFilter}</Badge>}
+              {(dateFrom || dateTo) && <Badge variant="outline">{dateFieldLabel}：{dateFrom || "不限"} - {dateTo || "不限"}</Badge>}
+            </div>
+          )}
           </div>
-        )}
       </div>
 
       {loading ? (
