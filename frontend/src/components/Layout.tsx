@@ -80,6 +80,19 @@ export function Layout() {
     }
   }, [activeProjectId, location.pathname, location.search])
 
+  // What：监听 ChangesPage 派发的 changes-updated 事件，刷新待确认计数。
+  // Why：approve/reject 不改变 URL，Layout 的 useEffect 不会自动重取，需显式通知。
+  useEffect(() => {
+    const handler = () => {
+      if (!activeProjectId) return
+      void api.changes.list()
+        .then((data) => setPendingChangeState({ projectId: activeProjectId, count: (data || []).length }))
+        .catch(() => setPendingChangeState({ projectId: activeProjectId, count: 0 }))
+    }
+    window.addEventListener("changes-updated", handler)
+    return () => window.removeEventListener("changes-updated", handler)
+  }, [activeProjectId])
+
   // 监听系统主题变化
   useEffect(() => {
     if (theme !== "system") return

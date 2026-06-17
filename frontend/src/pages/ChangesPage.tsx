@@ -83,7 +83,8 @@ export function ChangesPage() {
     setLoading(true)
     setError("")
     try {
-      setChanges(await (trashOnly ? api.trash.list() : api.changes.list()) || [])
+      const data = await (trashOnly ? api.trash.list() : api.changes.list()) || []
+      setChanges(data)
     } catch (e) {
       setChanges([])
       setError(e instanceof Error ? e.message : "加载失败")
@@ -124,6 +125,7 @@ export function ChangesPage() {
       setExpandedUuid(null)
       setDetail(null)
       await fetchChanges()
+      window.dispatchEvent(new CustomEvent("changes-updated"))
     } catch (e) {
       setError(e instanceof Error ? e.message : "操作失败")
     } finally {
