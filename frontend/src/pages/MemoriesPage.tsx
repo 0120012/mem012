@@ -5,10 +5,13 @@ import { useAuth } from "@/auth/AuthContext"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { Calendar } from "@/components/ui/calendar"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
-import { CalendarDays, ChevronRight, Copy, Folder, Minus, Pencil, Plus } from "lucide-react"
+import { CalendarDays, ChevronDown, ChevronRight, Copy, Folder, Minus, Pencil, Plus } from "lucide-react"
 
 const statusLabel: Record<string, string> = {
   active: "活跃",
@@ -84,9 +87,16 @@ function memoryMatchesDateRange(memory: MemoryItem, field: MemoryDateField, from
   return true
 }
 
+function dateToInputValue(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
 export function MemoriesPage() {
   const { activeProject } = useAuth()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [memories, setMemories] = useState<MemoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -101,11 +111,16 @@ export function MemoriesPage() {
   const [keywordDraft, setKeywordDraft] = useState("")
   const [keywordInputOpen, setKeywordInputOpen] = useState(false)
   const [keywordError, setKeywordError] = useState("")
+  const [dateFromOpen, setDateFromOpen] = useState(false)
+  const [dateToOpen, setDateToOpen] = useState(false)
   const categoryFilter = searchParams.get("category")?.trim() || ""
-  const memoryFilter = searchParams.get("filter")?.trim().toLocaleLowerCase("zh-CN") || ""
+  const memoryFilterInput = searchParams.get("filter") || ""
+  const memoryFilter = memoryFilterInput.trim().toLocaleLowerCase("zh-CN")
   const dateField: MemoryDateField = searchParams.get("date_field") === "created_at" ? "created_at" : "updated_at"
+  const dateFieldLabel = dateField === "created_at" ? "创建时间" : "更新时间"
   const dateFrom = searchParams.get("date_from")?.trim() || ""
   const dateTo = searchParams.get("date_to")?.trim() || ""
+  const categories = Array.from(new Set(memories.map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"))
   const visibleMemories = memories.filter((m) => {
     if (categoryFilter && m.category !== categoryFilter) return false
     if ((dateFrom || dateTo) && !memoryMatchesDateRange(m, dateField, dateFrom, dateTo)) return false
@@ -128,6 +143,35 @@ export function MemoriesPage() {
     }
     setLoading(false)
   }, [])
+
+  const updateMemoryFilter = (value: string) => {
+    const params = new URLSearchParams(searchParams)
+    const filter = value.trim()
+    if (filter) params.set("filter", filter)
+    else params.delete("filter")
+    params.delete("keyword")
+    setSearchParams(params, { replace: true })
+  }
+
+  const updateCategoryFilter = (category: string) => {
+    const params = new URLSearchParams(searchParams)
+    if (category) params.set("category", category)
+    else params.delete("category")
+    setSearchParams(params, { replace: true })
+  }
+
+  const updateDateFilter = (key: "date_from" | "date_to", value: string) => {
+    const params = new URLSearchParams(searchParams)
+    if (value) params.set(key, value)
+    else params.delete(key)
+    setSearchParams(params, { replace: true })
+  }
+
+  const updateDateField = (field: MemoryDateField) => {
+    const params = new URLSearchParams(searchParams)
+    params.set("date_field", field)
+    setSearchParams(params, { replace: true })
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -236,6 +280,96 @@ export function MemoriesPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-lg font-semibold text-foreground">{memoryFilter || categoryFilter || "记忆"}</h1>
         <Button variant="outline" size="sm" onClick={fetchMemories} disabled={loading}>刷新</Button>
+      </div>
+      <div className="mb-4 grid gap-3 rounded-md border bg-card p-3 sm:grid-cols-[minmax(0,1fr)_220px] lg:grid-cols-[minmax(0,1fr)_220px_320px]">
+        <div className="grid gap-2">
+          <Label htmlFor="memory-filter">文字过滤</Label>
+          <Input id="memory-filter" value={memoryFilterInput} onChange={(event) => updateMemoryFilter(event.target.value)} placeholder="搜索标题、摘要、内容或关键词" />
+        </div>
+        <div className="grid gap-2">
+          <Label>类别</Label>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="justify-between">
+                <span className="truncate">{categoryFilter || "全部类别"}</span>
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-72 w-56 overflow-auto">
+              <DropdownMenuItem onClick={() => updateCategoryFilter("")}>全部类别</DropdownMenuItem>
+              {categories.map((category) => (
+                <DropdownMenuItem key={category} onClick={() => updateCategoryFilter(category)}>{category}</DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <Label>时间范围</Label>
+            <div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-xs">
+                    {dateFieldLabel}
+                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => updateDateField("updated_at")}>更新时间</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => updateDateField("created_at")}>创建时间</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Popover open={dateFromOpen} onOpenChange={setDateFromOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className={cn("justify-start text-left font-normal", !dateFrom && "text-muted-foreground")} aria-label={`${dateFieldLabel}开始日期`}>
+                  <CalendarDays className="h-4 w-4" />
+                  {dateFrom || "开始日期"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-auto p-0">
+                <Calendar
+                  mode="single"
+                  selected={dateFrom ? new Date(`${dateFrom}T00:00:00`) : undefined}
+                  onSelect={(date) => {
+                    updateDateFilter("date_from", date ? dateToInputValue(date) : "")
+                    setDateFromOpen(false)
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
+            <Popover open={dateToOpen} onOpenChange={setDateToOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className={cn("justify-start text-left font-normal", !dateTo && "text-muted-foreground")} aria-label={`${dateFieldLabel}结束日期`}>
+                  <CalendarDays className="h-4 w-4" />
+                  {dateTo || "结束日期"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-auto p-0">
+                <Calendar
+                  mode="single"
+                  selected={dateTo ? new Date(`${dateTo}T00:00:00`) : undefined}
+                  onSelect={(date) => {
+                    updateDateFilter("date_to", date ? dateToInputValue(date) : "")
+                    setDateToOpen(false)
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+        <div className="text-xs text-muted-foreground sm:col-span-2 lg:col-span-3">
+          当前结果 {visibleMemories.length} / 全部记忆 {memories.length}
+        </div>
+        {(memoryFilterInput.trim() || categoryFilter || dateFrom || dateTo) && (
+          <div className="flex min-h-6 flex-wrap gap-2 sm:col-span-2 lg:col-span-3">
+            {memoryFilterInput.trim() && <Badge variant="outline">文字：{memoryFilterInput.trim()}</Badge>}
+            {categoryFilter && <Badge variant="outline">类别：{categoryFilter}</Badge>}
+            {(dateFrom || dateTo) && <Badge variant="outline">{dateFieldLabel}：{dateFrom || "不限"} - {dateTo || "不限"}</Badge>}
+          </div>
+        )}
       </div>
 
       {loading ? (

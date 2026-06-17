@@ -127,6 +127,12 @@ export function Layout() {
     params.delete("keyword")
     navigate({ pathname: "/memories", search: params.toString() }, { replace: memoriesActive })
   }
+  const memoryCategoryPath = (category: string) => {
+    const params = new URLSearchParams(memoriesActive ? location.search : "")
+    params.set("category", category)
+    const search = params.toString()
+    return `/memories${search ? `?${search}` : ""}`
+  }
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -168,7 +174,7 @@ export function Layout() {
           {memoryOpen && (
             <div className="ml-5 border-l pl-2">
               {memoryCategories.map((category) => (
-                <Link key={category} to={`/memories?category=${encodeURIComponent(category)}`} className={cn(
+                <Link key={category} to={memoryCategoryPath(category)} className={cn(
                   "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
                   categoryFilter === category ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
                 )}>
@@ -237,7 +243,7 @@ export function Layout() {
           {memoryOpen && (
             <div className="ml-5 border-l pl-2">
               {memoryCategories.map((category) => (
-                <Link key={category} to={`/memories?category=${encodeURIComponent(category)}`} onClick={closeMobileSidebar} className={cn(
+                <Link key={category} to={memoryCategoryPath(category)} onClick={closeMobileSidebar} className={cn(
                   "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
                   categoryFilter === category ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
                 )}>
