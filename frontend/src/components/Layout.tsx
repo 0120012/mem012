@@ -28,6 +28,7 @@ function getSystemTheme(): "light" | "dark" {
 }
 
 const THEME_KEY = "mem_theme"
+const PROJECT_PATH_RE = /^\/[^/]+\/(memories|changes|graph)(\/.*)?$/
 
 export function Layout() {
   const { activeProject, projects, selectProject, logout } = useAuth()
@@ -138,11 +139,14 @@ export function Layout() {
       .catch(() => setMemoryCategoryState({ projectId: activeProjectId, categories: [] }))
   }
 
-  const currentPath = `${location.pathname}${location.search}`
+  const projectPathMatch = location.pathname.match(PROJECT_PATH_RE)
+  const normalizedPath = projectPathMatch ? `/${projectPathMatch[1]}${projectPathMatch[2] || ""}` : location.pathname
+  const projectPrefix = activeProjectId ? `/${encodeURIComponent(activeProjectId)}` : ""
+  const projectHref = (path: string) => path === "/auth" ? path : `${projectPrefix}${path}`
+  const currentPath = `${normalizedPath}${location.search}`
   const categoryFilter = new URLSearchParams(location.search).get("category")?.trim() || ""
-  const memoriesActive = location.pathname === "/memories"
-  const memoryFilter = memoriesActive ? new URLSearchParams(location.search).get("filter") || "" : ""
-  const pageTitle = memoriesActive ? (memoryFilter || categoryFilter || "记忆") : currentPath === "/changes?filter=trash" ? "回收站" : currentPath === "/changes" ? "待确认" : currentPath === "/graph" ? "图谱" : currentPath === "/auth" ? "授权" : "Mem"
+  const memoriesActive = normalizedPath === "/memories"
+  const pageTitle = memoriesActive ? (categoryFilter || "记忆") : currentPath === "/changes?filter=trash" ? "回收站" : currentPath === "/changes" ? "待确认" : currentPath === "/graph" ? "图谱" : currentPath === "/auth" ? "授权" : "Mem"
   // 当前主题图标组件
   const ThemeIcon = theme === "system" ? Monitor : theme === "dark" ? Moon : Sun
   const mobileSidebarOpen = mobileSidebarState !== "closed"
@@ -162,7 +166,7 @@ export function Layout() {
       <aside className="hidden sm:flex flex-col w-56 border-r bg-card shrink-0">
         {/* Logo + Workspace */}
         <div className="h-12 border-b flex items-center">
-          <Link to="/memories" className="h-12 w-12 shrink-0 border-r flex items-center justify-center text-sm font-bold text-foreground hover:bg-accent/50 transition-colors">Mem</Link>
+          <Link to={projectHref("/memories")} className="h-12 w-12 shrink-0 border-r flex items-center justify-center text-sm font-bold text-foreground hover:bg-accent/50 transition-colors">Mem</Link>
           <DropdownMenu open={projectOpen} onOpenChange={setProjectOpen}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-12 min-w-0 flex-1 rounded-none justify-start px-3 text-sm font-medium">
@@ -185,7 +189,7 @@ export function Layout() {
             "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
             memoriesActive ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
           )}>
-            <Link to="/memories" className="flex min-w-0 flex-1 items-center gap-2">
+            <Link to={projectHref("/memories")} className="flex min-w-0 flex-1 items-center gap-2">
               <FileText className="h-4 w-4" />
               <span className="flex-1 text-left">记忆</span>
             </Link>
@@ -209,7 +213,7 @@ export function Layout() {
           {navItems.filter((item) => item.to !== "/memories").map((item) => {
             const active = currentPath === item.to
             return (
-              <Link key={item.to} to={item.to} className={cn(
+              <Link key={item.to} to={projectHref(item.to)} className={cn(
                 "flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
                 active ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               )}>
@@ -257,7 +261,7 @@ export function Layout() {
             "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
             memoriesActive ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
           )}>
-            <Link to="/memories" onClick={closeMobileSidebar} className="flex min-w-0 flex-1 items-center gap-2">
+            <Link to={projectHref("/memories")} onClick={closeMobileSidebar} className="flex min-w-0 flex-1 items-center gap-2">
               <FileText className="h-4 w-4" />
               <span className="flex-1 text-left">记忆</span>
             </Link>
@@ -281,7 +285,7 @@ export function Layout() {
           {navItems.filter((item) => item.to !== "/memories").map((item) => {
             const active = currentPath === item.to
             return (
-              <Link key={item.to} to={item.to} onClick={closeMobileSidebar} className={cn(
+              <Link key={item.to} to={projectHref(item.to)} onClick={closeMobileSidebar} className={cn(
                 "flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
                 active ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               )}>

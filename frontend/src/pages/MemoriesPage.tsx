@@ -122,6 +122,7 @@ export function MemoriesPage() {
   const dateFieldLabel = dateField === "created_at" ? "创建时间" : "更新时间"
   const dateFrom = searchParams.get("date_from")?.trim() || ""
   const dateTo = searchParams.get("date_to")?.trim() || ""
+  const projectPrefix = activeProject ? `/${encodeURIComponent(activeProject.project_id)}` : ""
   const categories = Array.from(new Set(memories.map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"))
   const visibleMemories = memories.filter((m) => {
     if (categoryFilter && m.category !== categoryFilter) return false
@@ -451,7 +452,7 @@ export function MemoriesPage() {
                       </Badge>
                     ))}
                     {m.has_open_change && (
-                      <Link to="/changes" onClick={(e) => e.stopPropagation()}>
+                      <Link to={`${projectPrefix}/changes`} onClick={(e) => e.stopPropagation()}>
                         <Badge variant="outline" className="text-[10px] border-destructive text-destructive">变更</Badge>
                       </Link>
                     )}

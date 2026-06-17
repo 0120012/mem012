@@ -26,6 +26,9 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="/auth" element={<AuthPage />} />
               <Route element={<ProjectGuard />}>
+                <Route path="/:profile/memories" element={<MemoriesPage />} />
+                <Route path="/:profile/changes" element={<ChangesPage />} />
+                <Route path="/:profile/graph" element={<GraphPage />} />
                 <Route path="/memories" element={<MemoriesPage />} />
                 <Route path="/changes" element={<ChangesPage />} />
                 <Route path="/graph" element={<GraphPage />} />
