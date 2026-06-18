@@ -8,7 +8,7 @@ codex = "postgresql://codex:zxz456123@127.0.0.1:5632/mem_codex"
 claude = "postgresql://claude:zxz456123@127.0.0.1:5632/mem_claude"
 
 [categories]
-index_list = ["core", "book", "myhome", "user", "init"]
+index_list = ["init", "core", "user", "agent", "project", "github", "ops", "book"]
 
 [rerank]
 enabled = false # 是否启用 rerank 模型重排；关闭时只按基础召回分排序。
