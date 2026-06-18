@@ -1,10 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useLocation } from "react-router-dom"
-import "monaco-editor/esm/vs/editor/editor.all.js"
-import "monaco-editor/esm/vs/language/json/monaco.contribution.js"
-import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js"
-import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker"
-import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker"
 import { api, type ChangeDetail, type ChangeItem, type TrashDetail, type TrashItem } from "@/api/client"
 import { useAuth } from "@/auth/AuthContext"
 import { Badge } from "@/components/ui/badge"
@@ -17,10 +12,6 @@ type ReviewItem = ChangeItem | TrashItem
 type ReviewDetail = ChangeDetail | TrashDetail
 type ReviewState = Record<string, unknown> | null
 
-globalThis.MonacoEnvironment = {
-  getWorker: (_workerId, label) => label === "json" ? new JsonWorker() : new EditorWorker(),
-}
-
 const actionLabel: Record<string, string> = {
   create: "新增",
   update: "更新",
@@ -32,37 +23,126 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString("zh-CN")
 }
 
-function StateBlock({ beforeState, afterState, label }: { beforeState: ReviewState; afterState: ReviewState; label: string }) {
-  const hostRef = useRef<HTMLDivElement>(null)
+function extractFields(state: ReviewState): Record<string, string> {
+  if (!state) return {}
+  const memory = state.memory
+  if (!memory || typeof memory !== "object") return { "原始数据": JSON.stringify(state, null, 2) }
+  const fields = memory as Record<string, unknown>
+  const text = (key: string) => typeof fields[key] === "string" ? fields[key] as string : ""
+  const keywords = (Array.isArray(state?.keywords) ? state.keywords : [])
+    .map((i) => i && typeof i === "object" ? (i as Record<string, unknown>).keyword_norm : i)
+    .filter((v): v is string => typeof v === "string" && v.trim() !== "")
+    .join(", ")
+  return {
+    "分类": text("category"),
+    "标题": text("title_norm"),
+    "状态": text("status"),
+    "摘要": text("summary"),
+    "召回时机": text("recall_when"),
+    "关键词": keywords,
+    "内容": text("content"),
+  }
+}
 
-  useEffect(() => {
-    if (!hostRef.current) return
-    const editor = monaco.editor.createDiffEditor(hostRef.current, {
-      automaticLayout: true,
-      minimap: { enabled: false },
-      originalEditable: false,
-      readOnly: true,
-      scrollBeyondLastLine: false,
-      useInlineViewWhenSpaceIsLimited: true,
-      theme: document.documentElement.classList.contains("dark") ? "vs-dark" : "vs",
-    })
-    const original = monaco.editor.createModel(JSON.stringify(beforeState ?? {}, null, 2), "json")
-    const modified = monaco.editor.createModel(JSON.stringify(afterState ?? {}, null, 2), "json")
-    editor.setModel({ original, modified })
+/** What：找出 before 和 after 的共同首尾，标记中间差异子串。 */
+/** Why：在红绿分栏中精确高亮修改的字符，替代 Monaco 在窄空间下无法两栏的问题。 */
+function diffParts(before: string, after: string): {
+  prefix: string; oldMid: string; newMid: string; suffix: string;
+} {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let endB = before.length - 1;
+  let endA = after.length - 1;
+  while (endB >= start && endA >= start && before[endB] === after[endA]) { endB--; endA--; }
+  return {
+    prefix: before.slice(0, start),
+    oldMid: before.slice(start, endB + 1),
+    newMid: after.slice(start, endA + 1),
+    suffix: before.slice(endB + 1),
+  };
+}
 
-    return () => {
-      editor.dispose()
-      original.dispose()
-      modified.dispose()
-    }
-  }, [beforeState, afterState])
+function FieldDiff({ beforeState, afterState }: { beforeState: ReviewState; afterState: ReviewState }) {
+  const b = extractFields(beforeState)
+  const a = extractFields(afterState)
+  const changed = Object.keys({ ...b, ...a })
+    .filter((k) => b[k] !== a[k])
+    .map((k) => ({ field: k, before: b[k] ?? "—", after: a[k] ?? "—" }))
 
   return (
-    <div className="space-y-3">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      {/* What：用 Monaco DiffEditor 对比 before_state / after_state。 */}
-      {/* Why：后端返回的是嵌套 JSON，统一 diff 比字段卡片更容易审阅真实变更。 */}
-      <div ref={hostRef} className="h-[420px] overflow-hidden rounded-md border" />
+    <div className="flex flex-1 flex-col min-h-0">
+      <div className="flex-1 min-h-0 overflow-auto space-y-2">
+        {changed.length === 0 ? (
+          <p className="text-xs text-muted-foreground">无变更</p>
+        ) : (
+          changed.map((e, i) => {
+            /* What：按 memories 编辑框风格排版，Label + 左右双格。 */
+            /* Why：短字段单行对比即可，长内容逐行 + 行号 + 字符高亮。 */
+            const isLong = e.field === "内容" || e.before.includes("\n") || e.after.includes("\n")
+            return (
+              <div key={i} className="grid gap-2">
+                <div className="text-sm font-semibold">{e.field}</div>
+                {isLong ? (
+                  <FieldLines before={e.before} after={e.after} />
+                ) : (
+                  <FieldInline before={e.before} after={e.after} />
+                )}
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FieldInline({ before, after }: { before: string; after: string }) {
+  const dp = diffParts(before, after)
+  return (
+    <div className="grid grid-cols-2 gap-px text-sm rounded-sm overflow-hidden border">
+      <div className="bg-red-50 dark:bg-red-950/30 px-3 py-2 line-through text-muted-foreground break-all">
+        {dp.prefix}<mark className="bg-red-200 dark:bg-red-800/40 text-red-800 dark:text-red-200 rounded-sm px-0.5">{dp.oldMid}</mark>{dp.suffix}
+      </div>
+      <div className="bg-green-50 dark:bg-green-950/30 px-3 py-2 break-all">
+        {dp.prefix}<mark className="bg-green-200 dark:bg-green-800/40 text-green-800 dark:text-green-200 rounded-sm px-0.5">{dp.newMid}</mark>{dp.suffix}
+      </div>
+    </div>
+  )
+}
+
+function FieldLines({ before, after }: { before: string; after: string }) {
+  const beforeLines = before.split("\n")
+  const afterLines = after.split("\n")
+  const maxLen = Math.max(beforeLines.length, afterLines.length)
+  const rows = Array.from({ length: maxLen }, (_, li) => {
+    const bl = beforeLines[li] ?? ""
+    const al = afterLines[li] ?? ""
+    const same = bl === al
+    const dp = same ? null : diffParts(bl, al)
+    return { li, bl, al, same, dp }
+  })
+  return (
+    <div className="grid grid-cols-2 gap-px text-sm font-mono leading-5 rounded-sm overflow-hidden border">
+      <div className="bg-red-50 dark:bg-red-950/30">
+        {rows.map((r) => (
+          <div key={r.li} className={cn("flex", r.same && "line-through text-muted-foreground")}>
+            <span className="w-8 shrink-0 text-right pr-2 text-muted-foreground/40 select-none">{r.li + 1}</span>
+            <span className="flex-1 pr-2 whitespace-pre-wrap break-all">
+              {r.dp ? <><span className="text-muted-foreground">{r.dp.prefix}</span><mark className="bg-red-200 dark:bg-red-800/40 text-red-800 dark:text-red-200">{r.dp.oldMid}</mark><span className="text-muted-foreground">{r.dp.suffix}</span></> : r.bl}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="bg-green-50 dark:bg-green-950/30">
+        {rows.map((r) => (
+          <div key={r.li} className="flex">
+            <span className="w-8 shrink-0 text-right pr-2 text-muted-foreground/40 select-none">{r.li + 1}</span>
+            <span className="flex-1 pr-2 whitespace-pre-wrap break-all">
+              {r.dp ? <><span>{r.dp.prefix}</span><mark className="bg-green-200 dark:bg-green-800/40 text-green-800 dark:text-green-200">{r.dp.newMid}</mark><span>{r.dp.suffix}</span></> : r.al}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -215,18 +295,16 @@ export function ChangesPage() {
                 </div>
               ) : (
                 <>
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-semibold">{trashOnly ? "删除详情" : "变更详情"}</h2>
-                    <Badge variant="outline" className="text-[10px] shrink-0">{actionLabel[detail.action] || detail.action}</Badge>
+                  <div className="flex items-center justify-between gap-3 shrink-0">
+                    <Badge variant="outline" className="text-[10px]">{actionLabel[detail.action] || detail.action}</Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground">{detail.summary || "未填写摘要"}</p>
                   {trashOnly && "trashed_at" in detail && (
                     <div className="rounded-md border bg-muted/30 p-3 space-y-1 text-xs text-muted-foreground">
                       <div>进入回收站：{formatDateTime(detail.trashed_at)}</div>
                       <div>预计永久删除：{formatDateTime(detail.expires_at)}</div>
                     </div>
                   )}
-                  <StateBlock beforeState={detail.before_state} afterState={detail.after_state} label={trashOnly ? "删除 Diff" : "修改 Diff"} />
+                  <FieldDiff beforeState={detail.before_state} afterState={detail.after_state} />
                   <div className="flex gap-2 pt-2">
                     <Button variant="outline" size="sm" className="flex-1" onClick={() => handleAction(detail.memory_uuid, "reject")} disabled={actionLoading}>{trashOnly ? "恢复" : "拒绝"}</Button>
                     <Button variant={trashOnly ? "destructive" : "default"} size="sm" className="flex-1" onClick={() => handleAction(detail.memory_uuid, "approve")} disabled={actionLoading}>{trashOnly ? "确认删除" : "批准"}</Button>
