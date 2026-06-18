@@ -29,19 +29,29 @@ function extractFields(state: ReviewState): Record<string, string> {
   if (!memory || typeof memory !== "object") return { "原始数据": JSON.stringify(state, null, 2) }
   const fields = memory as Record<string, unknown>
   const text = (key: string) => typeof fields[key] === "string" ? fields[key] as string : ""
+  const json = (value: unknown) => JSON.stringify(value, null, 2)
   const keywords = (Array.isArray(state?.keywords) ? state.keywords : [])
     .map((i) => i && typeof i === "object" ? (i as Record<string, unknown>).keyword_norm : i)
     .filter((v): v is string => typeof v === "string" && v.trim() !== "")
     .join(", ")
-  return {
+  const result: Record<string, string> = {
     "分类": text("category"),
     "标题": text("title_norm"),
     "状态": text("status"),
+    "版本": fields.revision == null ? "" : String(fields.revision),
     "摘要": text("summary"),
     "召回时机": text("recall_when"),
     "关键词": keywords,
     "内容": text("content"),
   }
+  if (Array.isArray(state.relations)) result["关系"] = json(state.relations)
+
+  const other = Object.fromEntries(
+    Object.entries(state).filter(([key]) => !["memory", "keywords", "relations"].includes(key))
+  )
+  if (Object.keys(other).length > 0) result["其他数据"] = json(other)
+
+  return result
 }
 
 /** What：找出 before 和 after 的共同首尾，标记中间差异子串。 */
