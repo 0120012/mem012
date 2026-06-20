@@ -40,6 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if let Some(auth_token) = cli_args.auth_token {
+        cli_args
+            .profile
+            .as_deref()
+            .ok_or("缺少参数: --profile；--auth 需要指定 profile，例如 mem012 --profile maccodex --auth <auth_token>")?;
         tools::dispatch_auth_command(config.server_addr(), &auth_token).await?;
         return Ok(());
     }
