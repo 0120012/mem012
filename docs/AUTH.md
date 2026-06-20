@@ -10,7 +10,7 @@
 
 - `/auth` 页面：只在登录 session 存在时可访问；用户点击后展示短期 `auth_token`。
 - 用户：从 `/auth` 页面复制 `auth_token`，手动授权本机 CLI。
-- CLI：执行 `mem012 --auth <auth_token>`，换取本机临时授权文件。
+- CLI：执行 `mem012 --profile <profile> --auth <auth_token>`，换取本机临时授权文件。
 - 后端 API：验证登录 session、签发 `auth_token`、签发 300s Ed25519 单活一次性 grant，并消费 grant。
 - auth file：本机短期授权凭据，路径固定为 `~/.auth/auth_file.mem`。
 
@@ -118,7 +118,7 @@ grant 是 Ed25519 签名票据，签名覆盖 `payload` 的稳定 JSON 字节：
 5. 用户执行：
 
 ```bash
-mem012 --auth <auth_token>
+mem012 --profile riko --auth <auth_token>
 ```
 
 6. CLI 调用 `POST /api/auth/grant`。
@@ -156,7 +156,7 @@ mem012 --profile riko --args '{"tool":"create_memory","params":{"category":"init
 
 ## 非目标
 
-- 不在 skill 文档里写 `mem012 --auth`。
+- 不在 skill 文档里写长期密钥、登录凭据或 `auth_token` 获取方式。
 - 不允许 Agent 自己生成或刷新授权。
 - 不使用长期 `server.api_token` 作为 CLI 写入 `init` 的授权凭据。
 - 旧 `--admin_auth` 方案不再使用。
