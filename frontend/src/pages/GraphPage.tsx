@@ -52,14 +52,19 @@ function MemoryNode({ data, selected }: NodeProps) {
   const d = data as unknown as MemoryNodeData
   return (
     <div className={cn(
-      "relative px-3 py-2 rounded-full border-2 text-center min-w-[70px] max-w-[150px] cursor-pointer transition-all bg-background shadow-md",
-      selected && "ring-2 ring-foreground",
-      d.isCenter ? "border-foreground bg-foreground/10" : "border-border hover:border-foreground/40"
+      "group relative min-w-[150px] max-w-[210px] cursor-pointer rounded-lg border bg-card/95 px-3 py-2 text-left shadow-sm transition-all backdrop-blur",
+      selected && "ring-2 ring-foreground/50",
+      d.isCenter ? "border-foreground/70 shadow-md" : "border-border/80 hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
     )}>
-      <Handle type="target" position={Position.Top} className="!bg-transparent !border-0" />
-      <div className="text-[10px] font-semibold text-foreground line-clamp-1">{d.label}</div>
-      <div className="text-[8px] text-muted-foreground uppercase">{d.category}</div>
-      <Handle type="source" position={Position.Bottom} className="!bg-transparent !border-0" />
+      <Handle type="target" position={Position.Top} className="!h-1.5 !w-8 !rounded-full !border-0 !bg-foreground/20" />
+      <div className="flex items-center gap-2">
+        <span className={cn("h-2.5 w-2.5 rounded-full", d.isCenter ? "bg-foreground" : "bg-muted-foreground/60")} />
+        <div className="min-w-0">
+          <div className="truncate text-[11px] font-semibold leading-4 text-foreground">{d.label}</div>
+          <div className="mt-0.5 text-[9px] uppercase text-muted-foreground">{d.category}</div>
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} className="!h-1.5 !w-8 !rounded-full !border-0 !bg-foreground/20" />
     </div>
   )
 }
@@ -67,13 +72,16 @@ function MemoryNode({ data, selected }: NodeProps) {
 // ---- Custom Edge ----
 function LabeledEdge({ id, sourceX, sourceY, targetX, targetY, data }: EdgeProps) {
   const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY })
-  const d = data as unknown as { relation_type?: string } | undefined
+  const d = data as unknown as { relation_type?: string; weight?: number | null } | undefined
   return (
     <>
-      <BaseEdge id={id} path={edgePath} className="!stroke-muted-foreground/30" />
+      <BaseEdge id={id} path={edgePath} className="!stroke-foreground/35" style={{ strokeWidth: d?.weight ? 1.5 + d.weight / 60 : 1.5 }} />
       <EdgeLabelRenderer>
         <div style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }} className="nodrag nopan pointer-events-auto cursor-pointer">
-          <div className="bg-background border rounded px-1.5 py-0.5 text-[9px] text-muted-foreground hover:border-foreground/40 transition-colors whitespace-nowrap">{d?.relation_type}</div>
+          <div className="flex items-center gap-1 rounded-full border bg-background/95 px-2 py-1 text-[10px] font-medium text-foreground shadow-sm transition-colors hover:border-foreground/50">
+            <span>{d?.relation_type}</span>
+            {d?.weight != null && <span className="text-muted-foreground">{d.weight}</span>}
+          </div>
         </div>
       </EdgeLabelRenderer>
     </>
@@ -332,7 +340,7 @@ export function GraphPage() {
       </div>
 
       {/* ===== Graph Canvas ===== */}
-      <div className="flex-1 min-h-0 bg-muted/20 relative">
+      <div className="relative min-h-0 flex-1 bg-[radial-gradient(circle_at_20%_20%,hsl(var(--accent))_0,transparent_26%),linear-gradient(135deg,hsl(var(--background)),hsl(var(--muted)))]">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -347,9 +355,9 @@ export function GraphPage() {
           minZoom={0.15}
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
-          className="bg-muted/20 [&_.react-flow__node]:!bg-transparent"
+          className="[&_.react-flow__node]:!bg-transparent"
         >
-          <Background color="hsl(var(--muted-foreground))" gap={20} size={0.5} />
+          <Background color="hsl(var(--muted-foreground))" gap={24} size={0.45} />
           <Controls className="!bg-card !border !rounded-md !shadow-sm [&>button]:!border-border [&>button]:!bg-card [&>button]:!text-foreground [&>button:hover]:!bg-accent" />
         </ReactFlow>
 
