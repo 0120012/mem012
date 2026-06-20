@@ -3,7 +3,7 @@ name: mem012-memory-skill
 description: Use when creating, backing up, importing, searching, deleting, reading hashes, or updating mem012 memories through the CLI. This skill gives exact mem012 commands and JSON request shapes for backup_memory, import_memory, create_memory, search_memory, delete_memory, read_memory_hash, and update_memory_* tools.
 ---
 
-# Mem012 CLI
+# Mem012 CLI SKILL
 
 ## 执行门禁
 - `mem012 init` 是初始化命令，直接读取输出内容；`mem012 --args` 工具调用必须按 JSON 判断结果。
