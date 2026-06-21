@@ -40,3 +40,6 @@ sweep_interval_minutes = 30 # server 后台扫描到期回收站项目的间隔�
 [server]
 addr = "0.0.0.0:37777"
 api_token = "xxx"
+
+[client]
+base_url = "https://xxx.com"
