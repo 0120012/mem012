@@ -17,6 +17,8 @@ pub struct Config {
     #[allow(dead_code)]
     cleanup: CleanupConfig,
     server: ServerConfig,
+    #[serde(default)]
+    client: ClientConfig,
 }
 
 #[derive(Default, Deserialize)]
@@ -85,6 +87,11 @@ struct ServerConfig {
     api_token: Option<String>,
 }
 
+#[derive(Default, Deserialize)]
+struct ClientConfig {
+    base_url: Option<String>,
+}
+
 impl Config {
     pub fn database_url(&self, profile: &str) -> Option<&str> {
         self.database.get(profile).map(String::as_str)
@@ -99,6 +106,12 @@ impl Config {
 
     pub fn server_addr(&self) -> &str {
         self.server.addr.as_str()
+    }
+
+    pub fn client_base_url(&self) -> Option<&str> {
+        // Why：server.addr 是监听地址；远程客户端访问必须使用可请求的公网 base URL。
+        let url = self.client.base_url.as_deref()?.trim();
+        (!url.is_empty()).then_some(url)
     }
 
     pub fn api_token(&self) -> Option<&str> {

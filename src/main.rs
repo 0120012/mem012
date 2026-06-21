@@ -44,7 +44,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .profile
             .as_deref()
             .ok_or("缺少参数: --profile；--auth 需要指定 profile，例如 mem012 --profile maccodex --auth <auth_token>")?;
-        tools::dispatch_auth_command(config.server_addr(), &auth_token).await?;
+        tools::dispatch_auth_command(
+            config.client_base_url().unwrap_or(config.server_addr()),
+            &auth_token,
+        )
+        .await?;
         return Ok(());
     }
 
@@ -68,7 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let request_args = parse::parse_args_json(args_json.as_str())?;
     let embedding_settings = config.embedding_settings();
     let rerank_settings = config.rerank_settings();
-    let api_base_url = local_api_base_url(config.server_addr())?;
+    let api_base_url =
+        local_api_base_url(config.client_base_url().unwrap_or(config.server_addr()))?;
     let tool_context = tools::ToolContext {
         profile: profile.as_str(),
         profile_pool: &profile_pool,
