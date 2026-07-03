@@ -24,6 +24,9 @@ embeddings_api_type = "embeddings"
 embeddings_model = "BAAI/bge-m3"
 embeddings_dimension = 1024
 embeddings_key = "" # embeddings_api = local 时可为空。
+# embedding 保底召回允许的最大余弦距离，超过即过滤，防止无关查询兜底命中最近邻。
+# 默认 0.55 按 BAAI/bge-m3 标定（无关查询 score ≤ 0.36，相关改写 ≥ 0.54）；更换模型后需重新标定。
+embeddings_fallback_max_distance = 0.55
 
 [network]
 enable_proxy = false # true 时才使用下面的 proxy。

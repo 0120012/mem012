@@ -51,6 +51,7 @@ pub struct EmbeddingSettings {
     pub key: String,
     pub model: String,
     pub dimension: usize,
+    pub fallback_max_distance: f64,
     pub proxy: Option<String>,
 }
 
@@ -61,6 +62,7 @@ struct EmbeddingsConfig {
     embeddings_key: String,
     embeddings_model: Option<String>,
     embeddings_dimension: Option<usize>,
+    embeddings_fallback_max_distance: Option<f64>,
 }
 
 #[derive(Default, Deserialize)]
@@ -207,6 +209,11 @@ impl Config {
                 .unwrap_or("BAAI/bge-m3")
                 .to_string(),
             dimension: self.embeddings.embeddings_dimension.unwrap_or(1024),
+            // Why：默认值按 BAAI/bge-m3 实测标定（无关 score ≤ 0.36，相关 ≥ 0.54，取中值 0.45 即距离 0.55）；更换模型需在 config 重标。
+            fallback_max_distance: self
+                .embeddings
+                .embeddings_fallback_max_distance
+                .unwrap_or(0.55),
             proxy: self.provider_proxy(),
         })
     }

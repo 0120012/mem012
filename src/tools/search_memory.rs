@@ -373,6 +373,7 @@ async fn search_embedding_fallback(
         WHERE NOT EXISTS (SELECT 1 FROM unnest($7::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) = 0)
             AND NOT EXISTS (SELECT 1 FROM unnest($8::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) > 0)
             AND (cardinality($9::text[]) = 0 OR EXISTS (SELECT 1 FROM unnest($9::text[]) AS terms(term) WHERE strpos(lower(search_text), lower(term)) > 0))
+            AND distance <= $13
         ORDER BY distance ASC, title_text ASC
         LIMIT $12
         "#,
@@ -389,6 +390,7 @@ async fn search_embedding_fallback(
     .bind(&settings.model)
     .bind(settings.dimension as i32)
     .bind(plan.effective_limit)
+    .bind(settings.fallback_max_distance)
     .fetch_all(context.profile_pool)
     .await?;
     Ok(SearchOutcome {
@@ -492,7 +494,7 @@ fn print_search_response(
             if let Some(content_preview) = candidate.content_preview {
                 result["content_preview"] = serde_json::json!(content_preview);
             }
-            if rerank {
+            if rerank || embedding_fallback {
                 result["score"] = serde_json::json!(candidate.score);
             }
             result
