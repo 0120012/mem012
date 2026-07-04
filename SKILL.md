@@ -6,7 +6,8 @@ description: Use when creating, backing up, importing, searching, deleting, read
 # Mem012 CLI SKILL
 
 ## 执行门禁
-- `mem012 init` 是初始化命令，直接读取输出内容；`mem012 --args` 工具调用必须按 JSON 判断结果。
+- 首次使用某个 profile 或升级后迁移 schema，先执行 `mem012 --profile {profile} dbsetup`。
+- `mem012 init` 只读取初始化记忆，直接读取输出内容；`mem012 --args` 工具调用必须按 JSON 判断结果。
 - 工具调用成功条件：命令退出码为 0，且 JSON 中 `state == "success"`、`error == null`。否则一律视为失败。
 - 任一步失败，立即停止并报告用户；禁止继续执行后续写操作，禁止伪造成功结果。
 - 写操作必须单步执行；一次命令只能包含一个 `create_memory`、`import_memory`、`delete_memory` 或 `update_memory_*` 工具。
@@ -18,6 +19,12 @@ description: Use when creating, backing up, importing, searching, deleting, read
 - `update_memory_*` 成功通常返回 `data.result == "pending_review"`，不表示已经确认通过。
 - `delete_memory` 成功返回 `data.result == "trashed"`。
 - revision/hash 失效时停止，重新 `read_memory_hash`。
+
+## dbsetup -- 数据库 schema 初始化
+
+```bash
+mem012 --profile {profile} dbsetup
+```
 
 ## init -- 初始化 -- 找回自己
 
