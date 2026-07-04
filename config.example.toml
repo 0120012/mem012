@@ -33,7 +33,7 @@ enable_proxy = false # true 时才使用下面的 proxy。
 proxy = "socks5://127.0.0.1:12828" # 可选；也支持 "http://127.0.0.1:12828"。
 
 [debug]
-# true 会在 CLI 启动时清空 profile/share 记忆表并重新建表，只能在本地调试打开。
+# true 只在 dbsetup 时清空目标 profile 记忆表并重新建表，只能在本地调试打开。
 reset_db = false
 
 [cleanup]
