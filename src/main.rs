@@ -52,16 +52,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // ==== 2. initialize database schema for CLI commands
+    // ==== 2. connect profile database for CLI commands
     let profile = cli_args.profile.ok_or("缺少参数: --profile")?;
     let database_url = config
         .database_url(profile.as_str())
         .ok_or("未找到指定 profile")?;
-    // Why：main 持有运行期连接池，init_db 和后续工具才能借用同一组数据库连接。
+    // Why：main 持有运行期连接池，dbsetup、init 和后续工具才能借用同一组数据库连接。
     let profile_pool = sqlx::postgres::PgPoolOptions::new()
         .connect(database_url)
         .await?;
-    psql::init_db(&profile_pool, profile.as_str(), config.reset_db()).await?;
+    if cli_args.command.as_deref() == Some("dbsetup") {
+        // What：只在显式 dbsetup 命令中执行数据库 schema 初始化/迁移。
+        // Why：远程 PostgreSQL 下普通工具调用反复跑 DDL/schema check 会显著增加延迟。
+        psql::init_db(&profile_pool, profile.as_str(), config.reset_db()).await?;
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "state": "success",
+                "tool": "dbsetup",
+                "data": { "initialized": true },
+                "error": null,
+                "profile": profile
+            }))?
+        );
+        return Ok(());
+    }
     if cli_args.command.as_deref() == Some("init") {
         tools::dispatch_init_command(&profile_pool).await?;
         return Ok(());
