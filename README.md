@@ -73,3 +73,9 @@ docker exec -e PGPASSWORD="$MEM012_POSTGRES_PASSWORD" mem012-postgres \
 我的profile: codex.
 mem012 是我的记忆系统。启动后，我必须先执行 shell 命令 `mem012 --profile codex init`，完整读取返回内容，完成初始化后再继续处理用户请求。
 ```
+
+## 7. SKILL && mem012_prompt
+
+[SKILL.md](SKILL.md)
+
+[mem012_prompt.md](mem012_prompt.md)
