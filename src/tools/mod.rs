@@ -1,5 +1,6 @@
 mod auth;
 mod backup_memory;
+pub(crate) mod cli_help;
 mod create_memory;
 mod delete_memory;
 mod import_memory;

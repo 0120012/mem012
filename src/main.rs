@@ -16,7 +16,7 @@ struct CliArgs {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
-    let help_requested = agent_help_requested(&raw_args);
+    let help_requested = tools::cli_help::agent_help_requested(&raw_args);
 
     // ==== 1. load config
     let config = match config::load_config("config.toml") {
@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     if help_requested {
-        print_agent_help(&config)?;
+        tools::cli_help::print_agent_help(&config)?;
         return Ok(());
     }
 
