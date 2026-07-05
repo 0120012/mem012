@@ -235,13 +235,44 @@ impl Config {
 pub fn load_config(path: &str) -> Result<Config, Box<dyn std::error::Error>> {
     // What：读取 MEM012_CONFIG 指向的配置；未设置时回退到调用方传入路径。
     // Why：agent 通常不在项目目录执行，配置路径必须能由宿主环境固定注入。
-    let config_path = std::env::var_os("MEM012_CONFIG")
-        .filter(|value| !value.as_os_str().is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(path));
-    let text = std::fs::read_to_string(config_path)?;
+    let text = std::fs::read_to_string(config_path(path))?;
 
     parse_config_text(&text)
+}
+
+pub fn config_path(default_path: &str) -> std::path::PathBuf {
+    config_path_from_env(default_path, std::env::var_os("MEM012_CONFIG"))
+}
+
+pub fn local_api_base_url(server_addr: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // What：把 server 监听地址转换成 CLI 可请求的本机 API 地址。
+    // Why：0.0.0.0 是监听地址，不是可靠的客户端目标地址，CLI 必须改用 loopback 访问本机服务。
+    let trimmed = server_addr.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("server.addr 不能为空".into());
+    }
+    let (scheme, target) = if let Some(target) = trimmed.strip_prefix("http://") {
+        ("http://", target)
+    } else if let Some(target) = trimmed.strip_prefix("https://") {
+        ("https://", target)
+    } else {
+        ("http://", trimmed)
+    };
+    let target = target
+        .strip_prefix("0.0.0.0:")
+        .map(|port| format!("127.0.0.1:{port}"))
+        .unwrap_or_else(|| target.to_string());
+    Ok(format!("{scheme}{target}"))
+}
+
+fn config_path_from_env(
+    default_path: &str,
+    env_path: Option<std::ffi::OsString>,
+) -> std::path::PathBuf {
+    env_path
+        .filter(|value| !value.as_os_str().is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(default_path))
 }
 
 fn parse_config_text(text: &str) -> Result<Config, Box<dyn std::error::Error>> {
@@ -263,9 +294,150 @@ fn parse_config_text(text: &str) -> Result<Config, Box<dyn std::error::Error>> {
     Ok(config)
 }
 
+pub fn append_database_profile_text(
+    text: &str,
+    profile: &str,
+    database_url: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // What：在 TOML 文本的 [database] 内追加一个 profile 连接串。
+    // Why：create_profile 需要保留用户配置文件里的注释和顺序，不能用反序列化重写整份配置。
+    validate_database_profile_name(profile)?;
+    let mut document = text.parse::<toml_edit::DocumentMut>()?;
+    let database = document
+        .get_mut("database")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .ok_or("配置缺少 [database] 段")?;
+    if database.contains_key(profile) {
+        return Err(format!("profile 已存在于 [database]: {profile}").into());
+    }
+    database.insert(profile, toml_edit::value(database_url));
+
+    Ok(document.to_string())
+}
+
+pub fn write_config_text_atomic(
+    path: &std::path::Path,
+    text: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：把配置文本写入同目录临时文件，再原子 rename 到目标路径。
+    // Why：create_profile 成功后不能让配置文件停在半写入状态，否则会污染后续 CLI 启动。
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let file_name = path.file_name().ok_or("配置路径缺少文件名")?;
+    let mut temp_name = std::ffi::OsString::from(".");
+    temp_name.push(file_name);
+    temp_name.push(format!(".{}.tmp", std::process::id()));
+    let temp_path = parent.join(temp_name);
+    let permissions = std::fs::metadata(path)?.permissions();
+    std::fs::write(&temp_path, text)?;
+    if let Err(error) = std::fs::set_permissions(&temp_path, permissions) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error.into());
+    }
+    if let Err(error) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+pub fn derive_profile_database_url(
+    admin_database_url: &str,
+    profile: &str,
+    password: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    validate_database_profile_name(profile)?;
+    let mut url = url::Url::parse(admin_database_url)?;
+    if !matches!(url.scheme(), "postgres" | "postgresql") {
+        return Err("admin database URL 必须使用 postgres/postgresql scheme".into());
+    }
+    url.set_username(profile)
+        .map_err(|_| "profile 名称不能写入 database URL")?;
+    url.set_password(Some(password))
+        .map_err(|_| "profile 密码不能写入 database URL")?;
+    let database_path = format!("/mem_{profile}");
+    url.set_path(&database_path);
+
+    Ok(url.to_string())
+}
+
+pub fn derive_admin_profile_database_url(
+    admin_database_url: &str,
+    profile: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    validate_database_profile_name(profile)?;
+    let mut url = url::Url::parse(admin_database_url)?;
+    if !matches!(url.scheme(), "postgres" | "postgresql") {
+        return Err("admin database URL 必须使用 postgres/postgresql scheme".into());
+    }
+    url.set_path(&format!("/mem_{profile}"));
+
+    Ok(url.to_string())
+}
+
+fn validate_database_profile_name(profile: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let valid = profile
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_lowercase)
+        && profile
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    if !valid {
+        return Err("profile 名称必须匹配 [a-z][a-z0-9_]*".into());
+    }
+    if matches!(profile, "postgres" | "template0" | "template1") {
+        return Err("profile 名称是保留名".into());
+    }
+    Ok(())
+}
+
+pub fn generate_profile_password() -> String {
+    use rand::{Rng as _, seq::SliceRandom as _};
+
+    const UPPER: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const LOWER: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
+    const DIGIT: &[u8] = b"0123456789";
+    const ALL: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    // What：生成固定 16 位、只含 ASCII 字母数字的 profile 密码。
+    // Why：显式保留大小写和数字类别，避免下游数据库密码策略拒绝随机弱形态。
+    let mut rng = rand::rngs::OsRng;
+    let mut password = Vec::with_capacity(16);
+    password.push(UPPER[rng.gen_range(0..UPPER.len())] as char);
+    password.push(LOWER[rng.gen_range(0..LOWER.len())] as char);
+    password.push(DIGIT[rng.gen_range(0..DIGIT.len())] as char);
+    while password.len() < 16 {
+        password.push(ALL[rng.gen_range(0..ALL.len())] as char);
+    }
+    password.shuffle(&mut rng);
+    password.into_iter().collect()
+}
+
+pub fn admin_database_url_from_env_value(
+    value: Option<std::ffi::OsString>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let value = value.ok_or("缺少环境变量 MEM012_ADMIN_DATABASE_URL")?;
+    let value = value
+        .into_string()
+        .map_err(|_| "MEM012_ADMIN_DATABASE_URL 必须是 UTF-8")?;
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("MEM012_ADMIN_DATABASE_URL 不能为空".into());
+    }
+    Ok(value.to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_config_text;
+    use super::{
+        admin_database_url_from_env_value, append_database_profile_text, config_path_from_env,
+        derive_admin_profile_database_url, derive_profile_database_url, generate_profile_password,
+        local_api_base_url, parse_config_text, write_config_text_atomic,
+    };
+    use std::{ffi::OsString, path::PathBuf};
 
     #[test]
     fn parse_config_text_rejects_missing_cleanup_section() {
@@ -316,5 +488,298 @@ server = { addr = "127.0.0.1:3012" }
         assert!(entries.contains(&("riko", "postgres://localhost/riko")));
         assert!(entries.contains(&("claude", "postgres://localhost/claude")));
         assert!(entries.contains(&("share", "postgres://localhost/share")));
+    }
+
+    #[test]
+    fn config_path_from_env_uses_default_without_override() {
+        assert_eq!(
+            config_path_from_env("config.toml", None),
+            PathBuf::from("config.toml")
+        );
+        assert_eq!(
+            config_path_from_env("config.toml", Some(OsString::new())),
+            PathBuf::from("config.toml")
+        );
+    }
+
+    #[test]
+    fn config_path_from_env_prefers_non_empty_override() {
+        assert_eq!(
+            config_path_from_env("config.toml", Some(OsString::from("/tmp/mem012.toml"))),
+            PathBuf::from("/tmp/mem012.toml")
+        );
+    }
+
+    #[test]
+    fn local_api_base_url_maps_wildcard_listener_to_loopback() {
+        assert_eq!(
+            local_api_base_url("0.0.0.0:37777").unwrap(),
+            "http://127.0.0.1:37777"
+        );
+        assert_eq!(
+            local_api_base_url("http://0.0.0.0:37777/").unwrap(),
+            "http://127.0.0.1:37777"
+        );
+    }
+
+    #[test]
+    fn local_api_base_url_preserves_client_addresses() {
+        assert_eq!(
+            local_api_base_url("127.0.0.1:37777").unwrap(),
+            "http://127.0.0.1:37777"
+        );
+        assert_eq!(
+            local_api_base_url("https://example.com").unwrap(),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn append_database_profile_text_preserves_existing_config_shape() {
+        let updated = append_database_profile_text(
+            r#"# keep top comment
+[database]
+# keep database comment
+riko = "postgres://localhost/riko"
+
+[server]
+addr = "127.0.0.1:3012"
+"#,
+            "rikocodex",
+            "postgres://localhost/mem_rikocodex",
+        )
+        .unwrap();
+
+        assert!(updated.contains("# keep top comment"));
+        assert!(updated.contains("# keep database comment"));
+        assert!(
+            updated.find("riko =").unwrap() < updated.find("rikocodex =").unwrap()
+                && updated.find("rikocodex =").unwrap() < updated.find("[server]").unwrap()
+        );
+        let document = updated.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(
+            document["database"]["rikocodex"].as_str(),
+            Some("postgres://localhost/mem_rikocodex")
+        );
+    }
+
+    #[test]
+    fn append_database_profile_text_keeps_config_parseable() {
+        let updated = append_database_profile_text(
+            r#"[database]
+riko = "postgres://localhost/riko"
+
+[embeddings]
+embeddings_api = "local"
+embeddings_key = ""
+
+[cleanup]
+trash_retention_minutes = 10080
+sweep_interval_minutes = 5
+
+[server]
+addr = "127.0.0.1:3012"
+"#,
+            "rikocodex",
+            "postgres://localhost/mem_rikocodex",
+        )
+        .unwrap();
+
+        let config = parse_config_text(&updated).unwrap();
+
+        assert_eq!(
+            config.database_url("rikocodex"),
+            Some("postgres://localhost/mem_rikocodex")
+        );
+    }
+
+    #[test]
+    fn append_database_profile_text_accepts_inline_database_table() {
+        let updated = append_database_profile_text(
+            r#"
+database = { riko = "postgres://localhost/riko", share = "postgres://localhost/share" }
+embeddings = { embeddings_api = "local", embeddings_key = "" }
+cleanup = { trash_retention_minutes = 10080, sweep_interval_minutes = 5 }
+server = { addr = "127.0.0.1:3012" }
+"#,
+            "rikocodex",
+            "postgres://localhost/mem_rikocodex",
+        )
+        .unwrap();
+
+        let config = parse_config_text(&updated).unwrap();
+
+        assert!(updated.contains("database = {"));
+        assert_eq!(
+            config.database_url("rikocodex"),
+            Some("postgres://localhost/mem_rikocodex")
+        );
+    }
+
+    #[test]
+    fn append_database_profile_text_rejects_existing_profile() {
+        let error = append_database_profile_text(
+            r#"[database]
+riko = "postgres://localhost/riko"
+"#,
+            "riko",
+            "postgres://localhost/other",
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "profile 已存在于 [database]: riko");
+    }
+
+    #[test]
+    fn write_config_text_atomic_replaces_target_content() {
+        let root = std::env::temp_dir().join(format!(
+            "mem012_atomic_config_write_test_{}",
+            std::process::id()
+        ));
+        let path = root.join("config.toml");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&path, "old").unwrap();
+
+        write_config_text_atomic(&path, "new").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_config_text_atomic_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = std::env::temp_dir().join(format!(
+            "mem012_atomic_config_permission_test_{}",
+            std::process::id()
+        ));
+        let path = root.join("config.toml");
+        let temp_path = root.join(format!(".config.toml.{}.tmp", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&temp_path, "stale").unwrap();
+        std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_config_text_atomic(&path, "new").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(mode, 0o600);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn database_profile_helpers_reject_invalid_profile_names() {
+        for profile in ["Riko", "riKo", "1riko", "riko-codex"] {
+            assert!(
+                append_database_profile_text("[database]\n", profile, "postgres://db").is_err()
+            );
+            assert!(
+                derive_profile_database_url("postgres://admin@localhost/postgres", profile, "pw")
+                    .is_err()
+            );
+            assert!(
+                derive_admin_profile_database_url("postgres://admin@localhost/postgres", profile)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn database_profile_helpers_accept_share_profile() {
+        let updated =
+            append_database_profile_text("[database]\n", "share", "postgres://localhost/mem_share")
+                .unwrap();
+        let profile_url =
+            derive_profile_database_url("postgres://admin@localhost/postgres", "share", "pw")
+                .unwrap();
+        let admin_url =
+            derive_admin_profile_database_url("postgres://admin@localhost/postgres", "share")
+                .unwrap();
+
+        assert!(updated.contains("share = \"postgres://localhost/mem_share\""));
+        assert_eq!(profile_url, "postgres://share:pw@localhost/mem_share");
+        assert_eq!(admin_url, "postgres://admin@localhost/mem_share");
+    }
+
+    #[test]
+    fn derive_profile_database_url_replaces_user_password_and_database() {
+        let url = derive_profile_database_url(
+            "postgresql://admin:secret@127.0.0.1:5632/postgres?sslmode=disable",
+            "rikocodex",
+            "abc_DEF-123",
+        )
+        .unwrap();
+
+        assert_eq!(
+            url,
+            "postgresql://rikocodex:abc_DEF-123@127.0.0.1:5632/mem_rikocodex?sslmode=disable"
+        );
+    }
+
+    #[test]
+    fn derive_profile_database_url_rejects_non_postgres_scheme() {
+        let error = derive_profile_database_url("http://127.0.0.1/postgres", "rikocodex", "pw")
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "admin database URL 必须使用 postgres/postgresql scheme"
+        );
+    }
+
+    #[test]
+    fn derive_admin_profile_database_url_keeps_admin_credentials() {
+        let url = derive_admin_profile_database_url(
+            "postgresql://admin:secret@127.0.0.1:5632/postgres?sslmode=disable",
+            "rikocodex",
+        )
+        .unwrap();
+
+        assert_eq!(
+            url,
+            "postgresql://admin:secret@127.0.0.1:5632/mem_rikocodex?sslmode=disable"
+        );
+    }
+
+    #[test]
+    fn generate_profile_password_is_16_ascii_alphanumeric_with_required_classes() {
+        let first = generate_profile_password();
+        let second = generate_profile_password();
+
+        assert_eq!(first.len(), 16);
+        assert_ne!(first, second);
+        assert!(first.bytes().all(|byte| byte.is_ascii_alphanumeric()));
+        assert!(first.bytes().any(|byte| byte.is_ascii_uppercase()));
+        assert!(first.bytes().any(|byte| byte.is_ascii_lowercase()));
+        assert!(first.bytes().any(|byte| byte.is_ascii_digit()));
+        assert!(!first.contains(['_', '-']));
+    }
+
+    #[test]
+    fn admin_database_url_from_env_value_accepts_non_empty_value() {
+        assert_eq!(
+            admin_database_url_from_env_value(Some(OsString::from(
+                " postgresql://admin:secret@127.0.0.1/postgres "
+            )))
+            .unwrap(),
+            "postgresql://admin:secret@127.0.0.1/postgres"
+        );
+    }
+
+    #[test]
+    fn admin_database_url_from_env_value_rejects_missing_or_empty_value() {
+        let missing = admin_database_url_from_env_value(None).unwrap_err();
+        let empty = admin_database_url_from_env_value(Some(OsString::from("  "))).unwrap_err();
+
+        assert_eq!(
+            missing.to_string(),
+            "缺少环境变量 MEM012_ADMIN_DATABASE_URL"
+        );
+        assert_eq!(empty.to_string(), "MEM012_ADMIN_DATABASE_URL 不能为空");
     }
 }
