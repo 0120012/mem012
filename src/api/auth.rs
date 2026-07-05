@@ -559,14 +559,12 @@ fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Mutex as TestMutex, OnceLock},
-        time::Duration,
-    };
+    use std::{sync::OnceLock, time::Duration};
 
     use axum::{Json, http::StatusCode};
     use base64::Engine;
     use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
+    use tokio::sync::Mutex as TestMutex;
 
     use super::{
         INIT_GRANT_SCOPE, InitAuthStore, InitGrantRequest, InitGrantStore, URL_SAFE_NO_PAD,
@@ -777,7 +775,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn auth_grant_consume_keeps_state_for_unsigned_invalid_grant() {
-        let _guard = auth_handler_test_lock().lock().unwrap();
+        let _guard = auth_handler_test_lock().lock().await;
         clear_init_authorization_state();
         init_auth_store()
             .lock()
@@ -811,7 +809,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn auth_grant_consume_keeps_state_for_stale_signed_grant() {
-        let _guard = auth_handler_test_lock().lock().unwrap();
+        let _guard = auth_handler_test_lock().lock().await;
         clear_init_authorization_state();
         let now = now_epoch();
         let stale = signed_init_grant(init_grant_signing_key(), now);
@@ -847,7 +845,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn auth_grant_consume_clears_state_for_current_expired_grant() {
-        let _guard = auth_handler_test_lock().lock().unwrap();
+        let _guard = auth_handler_test_lock().lock().await;
         clear_init_authorization_state();
         let now = now_epoch();
         let expired = signed_init_grant(init_grant_signing_key(), now.saturating_sub(301));
@@ -874,7 +872,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn auth_grant_exchanges_token_for_single_active_grant() {
-        let _guard = auth_handler_test_lock().lock().unwrap();
+        let _guard = auth_handler_test_lock().lock().await;
         clear_init_authorization_state();
         let token = init_auth_store()
             .lock()
