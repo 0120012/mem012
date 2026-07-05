@@ -5,17 +5,17 @@
 重写目标不是复刻 mem_012 旧版 URI 图，而是做一套更适合长期 Agent 记忆的后端：
 
 ```text
-profile 私库 + mem_share 共享库 + category 分类 + Memory Unit + 关键词主导搜索 + 关系图 + 二次确认
+profile 独立库 + share profile + category 分类 + Memory Unit + 关键词主导搜索 + 关系图 + 二次确认
 ```
 
 ## 已确定结论
 
 - `profile` 只做私有数据库隔离；启动时从 TOML 选定，不进入搜索参数。
 - `delete_memory` 先软删除；用户确认 delete 后立即硬删除。
-- 运行时同时允许访问当前 profile 私库和 `mem_share` 共享库。
+- `share` 是一个普通 profile，需要时手动执行 `mem012 --create_profile share` 创建，并通过 `mem012 --profile share ...` 显式访问。
 - `category` 是记忆的大类，例如 `core / book / myhome / user`；普通写入必须来自 `[categories].index_list` TOML 白名单，Agent 不允许自造 category。
 - `init` 用于 Agent 初始化、工具引导和 skill 引导；`mem012 --profile <profile> init` 只读取当前 profile 库中 `category = init` 且 `status != trashed` 的内容，写入 `init` 必须通过 `~/.auth/auth_file.mem` grant 授权。
-- `share` 是 share profile 的专属 category；普通 profile 禁止使用。
+- `share` 是 share profile 的专属 category；其他 profile 禁止使用。
 - URI 不再作为核心寻址方式，也不再有 `domain://path`。
 - `kind` 不做配置白名单，不做核心寻址维度；如果需要分类，交给 category 或关键词处理。
 - `disclosure` 的思想保留，字段改成 `recall_when`。
@@ -23,26 +23,24 @@ profile 私库 + mem_share 共享库 + category 分类 + Memory Unit + 关键词
 - PostgreSQL-only；不再保留 SQLite 分支。
 - MCP、HTTP、CLI 共享同一套核心服务。
 
-## 账户与共享库边界
+## 账户与 share 边界
 
-`mem_012/docs/PSQL_Account.md` 定义的是“一账号一私库 + 一个共享库”：
+`mem_012/docs/PSQL_Account.md` 定义的是“一 profile 一私库”：
 
 ```text
-profile riko -> mem_riko
-shared -> mem_share
+profile <profile> -> mem_<profile>
 ```
 
 规则：
 
-- 每个 profile 私库和 `mem_share` 使用同一套表结构。
-- 后端运行时持有两个连接：当前 profile 私库连接、`mem_share` 连接。
-- 普通写入默认进入当前 profile 私库；写入 `mem_share` 必须走明确入口。
-- 搜索默认可以合并当前 profile 私库和 `mem_share`，但返回结果必须带库来源。
-- 目标为 `mem_share` 时，工作态写入和二次确认记录都只作用于 `mem_share`。
-- `mem_share` 只允许 `category = share`；profile 私库禁止使用 `category = share`。
-- 所有读接口返回 `db_scope = profile | share`；`db_scope = profile` 时同时返回当前 profile 名。
+- `share` 按普通 profile 处理：role 为 `share`，database 为 `mem_share`。
+- `share` 不自动创建；只有显式运行 `mem012 --create_profile share` 才会创建并写入配置。
+- 运行时只连接当前 `--profile` 指定的数据库，不因为普通 profile 自动连接 `mem_share`。
+- 操作共享库时显式使用 `mem012 --profile share ...`。
+- `mem_share` 和其他 profile database 使用同一套表结构。
+- `mem_share` 只允许 `category = share`；其他 profile database 禁止使用 `category = share`。
 - `memory_relations` 只在同一个数据库内建边，不做跨数据库外键。
-- AGE 图也按数据库分别维护：私库一个 graph，`mem_share` 一个 graph。
+- AGE 图也按数据库分别维护：每个 profile database 一个 graph。
 - 如果以后需要跨库关系，另建引用层；第一版不把跨库关系塞进 `memory_relations`。
 
 ## 一、数据库结构
@@ -77,8 +75,8 @@ updated_at timestamptz not null
 ```text
 category 非空，并符合 slug 规则
 title_norm 非空，不能为空字符串，并且等于 normalize_title(title_norm)
-profile 私库禁止 category = share
-mem_share 只允许 category = share
+非 share profile database 禁止 category = share
+share profile database 只允许 category = share
 status 由后端状态机控制
 pending / active memory 在同一数据库内不允许 category + title_norm 重复
 ```
@@ -439,7 +437,7 @@ updated_at timestamptz not null
 
 规则：
 
-- 每个数据库一行，私库和 `mem_share` 各自维护自己的 dirty 状态。
+- 每个 profile database 一行，各自维护自己的 dirty 状态。
 - `dirty = true` 表示 AGE 图可能落后于 `memory_units` / `memory_relations`。
 - 写入工作态或拒绝回滚导致 `memory_units` / `memory_relations` 可见性变化时，在同一 SQL 事务内把 `dirty` 标记为 true。
 - approve create 自动写入默认 relations 时必须标记 `dirty`。
@@ -574,28 +572,27 @@ recall_memory(query)
 
 图不负责分类。分类由 `category` 和 `keyword_norm` 负责。
 
-## 四、搜索合并规则
+## 四、搜索规则
 
-跨库搜索由后端合并结果，Agent 不需要指定来源。
+搜索只作用于当前 `--profile` 指定的数据库；需要搜索共享库时显式使用 `--profile share`。
 
 ```text
 recall_memory(query)
 1. normalize query
-2. 在目标库集合执行 keyword exact / trigram / embedding 分路召回
-4. 收集候选 memory_uuid，并合并 match_sources
-5. 对候选做 memory_relations 一跳扩展
-6. 按 db_scope、status、category 过滤
-7. 按 db_scope + memory_uuid 去重
-8. 计算 score 并排序
-9. 返回结果
+2. 在当前 profile database 执行 keyword exact / trigram / embedding 分路召回
+3. 收集候选 memory_uuid，并合并 match_sources
+4. 对候选做 memory_relations 一跳扩展
+5. 按 status、category 过滤
+6. 按 memory_uuid 去重
+7. 计算 score 并排序
+8. 返回结果
 ```
 
 规则：
 
-- 查询在当前 profile 私库和 `mem_share` 分别执行 keyword / trigram / embedding。
-- 合并结果只按 `db_scope + memory_uuid` 去重。
-- profile 和 share 没有共同 identity；同名结果同时存在时，作为两条不同结果返回。
-- 返回结果必须包含 `db_scope`、`profile`、`memory_uuid`、`title_norm`、`score`、`match_sources`。
+- 查询只在当前 profile database 执行 keyword / trigram / embedding。
+- 结果按 `memory_uuid` 去重。
+- 返回结果必须包含当前 profile、`memory_uuid`、`title_norm`、`score`、`match_sources`。
 
 状态过滤：
 

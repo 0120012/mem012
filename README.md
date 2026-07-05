@@ -51,6 +51,7 @@ mem012 --create_profile <profile>
 
 `--create_profile` 会创建 role/database、启用扩展、初始化 mem012 表结构，并把 profile 连接串追加到 `config.toml`。日常 `mem012 --profile <profile> init` 只读取 `category=init` 的初始化记忆。配置中的 `reset_db=true` 只会在 `create_memory` 写入前重置当前 profile 的记忆表并重新建表，只能用于本地调试。
 
+`share` 是普通 profile 名，需要共享库时手动执行 `mem012 --create_profile share` 创建，之后用 `mem012 --profile share ...` 显式访问；普通 profile 启动时不会自动创建或连接 `mem_share`。
 
 ## 4. Init 授权
 
