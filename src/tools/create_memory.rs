@@ -347,7 +347,7 @@ fn is_init_create(args: &CreateMemoryArgs, profile: &str) -> bool {
 }
 
 fn init_auth_file_path() -> Result<std::path::PathBuf, String> {
-    crate::init_auth_file_path().map_err(|_| init_auth_file_help())
+    super::auth_file::init_auth_file_path().map_err(|_| init_auth_file_help())
 }
 
 fn read_init_auth_file(
