@@ -1,10 +1,6 @@
 # MEM012
 mem012 是一个面向 AI Agent 的 CLI 记忆系统，提供持久化记忆与 RAG 检索能力，并支持通过 Web 端管理记忆。
 
-## 0. Agent安装
-
-给其他 Agent 接入 mem012 时，需要把 `mem012` 安装到系统 `PATH`，并让 Agent 读取本仓库的 `SKILL.md` 作为工具调用说明。新 profile 先由 `mem012 --create_profile <profile>` 创建；日常初始化读取执行 `mem012 --profile <profile> init`；创建、搜索、读取、更新、删除记忆都通过 `mem012 --profile <profile> --args '<json_object>'` 调用。
-
 ## 1. PostgreSQL
 
 ### 1.1 构建 PostgreSQL 镜像
@@ -16,7 +12,7 @@ docker build -t mem012-postgres:pg18 -f docker/postgres/Dockerfile docker/postgr
 ### 1.2 持久化启动
 
 ```bash
-export MEM012_POSTGRES_USER='mem012_admin'
+export MEM012_ADMIN_POSTGRES_USER='mem012_admin'
 export MEM012_POSTGRES_PASSWORD='your_admin_password'
 
 docker run -d \
@@ -24,7 +20,7 @@ docker run -d \
   --restart unless-stopped \
   --network 1panel-network \
   -p 5632:5432 \
-  -e POSTGRES_USER="$MEM012_POSTGRES_USER" \
+  -e POSTGRES_USER="$MEM012_ADMIN_POSTGRES_USER" \
   -e POSTGRES_PASSWORD="$MEM012_POSTGRES_PASSWORD" \
   -v mem012_pg18_data:/var/lib/postgresql \
   mem012-postgres:pg18
@@ -43,15 +39,18 @@ sh install.sh
 每个agent可以独享一个profile，实现记忆隔离。首次创建某个 profile 时，显式运行：
 
 ```bash
+export MEM012_PROFILE='codex'
 export MEM012_ADMIN_DATABASE_URL="postgresql://${MEM012_ADMIN_POSTGRES_USER}:${MEM012_POSTGRES_PASSWORD}@127.0.0.1:5632/postgres"
-mem012 --create_profile <profile>
+mem012 --create_profile "$MEM012_PROFILE"
 ```
 
 ## 4. 验证
 
+验证第 3 步创建的 profile database。
+
 ```bash
 docker exec -e PGPASSWORD="$MEM012_POSTGRES_PASSWORD" mem012-postgres \
-  psql -U "$MEM012_POSTGRES_USER" -d "mem_<profile>" \
+  psql -U "$MEM012_ADMIN_POSTGRES_USER" -d "mem_${MEM012_PROFILE}" \
   -c "select name, installed_version from pg_available_extensions where name in ('vector', 'pg_trgm', 'age');"
 ```
 
