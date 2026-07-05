@@ -20,6 +20,9 @@ pub async fn run(
     // Why：create_memory 独立成文件，后续字段校验和写入 memory_changes 不污染工具路由层。
     let create_args = serde_json::from_value::<CreateMemoryArgs>(args.clone())?;
     validate_create_memory_args(&create_args, context.profile, context.category_index_list)?;
+    if context.reset_db {
+        crate::psql::init_db(context.profile_pool, context.profile, true).await?;
+    }
     if is_init_create(&create_args, context.profile) {
         consume_init_auth_grant(context.api_base_url).await?;
     }

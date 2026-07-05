@@ -3,6 +3,7 @@ pub(crate) mod auth_file;
 mod backup_memory;
 pub(crate) mod cli_help;
 mod create_memory;
+mod create_profile;
 mod delete_memory;
 mod import_memory;
 mod read_memory;
@@ -18,15 +19,25 @@ pub struct ToolContext<'a> {
     pub api_base_url: &'a str,
     pub embedding_settings: Option<&'a crate::config::EmbeddingSettings>,
     pub rerank_settings: Option<&'a crate::config::RerankSettings>,
+    pub reset_db: bool,
 }
 
 pub async fn dispatch_auth_command(
-    server_addr: &str,
+    api_base_url: &str,
     auth_token: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // What：分发顶层 `mem012 --auth` 命令。
     // Why：main 只处理 CLI 生命周期，具体 auth 命令仍归 tools 模块管理。
-    auth::run(server_addr, auth_token).await
+    auth::run(api_base_url, auth_token).await
+}
+
+pub async fn dispatch_create_profile_command(
+    config: &crate::config::Config,
+    profile: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：分发顶层 `mem012 --create_profile` 命令。
+    // Why：main 只保留入口编排，profile 创建的副作用集中在独立工具模块。
+    create_profile::run(config, profile).await
 }
 
 pub async fn dispatch_init_command(
