@@ -1,11 +1,5 @@
 [database]
-riko = "postgresql://riko:zxz456123@127.0.0.1:5632/mem_riko"
-nous = "postgresql://nous:zxz456123@127.0.0.1:5632/mem_nous"
-claw = "postgresql://claw:zxz456123@127.0.0.1:5632/mem_claw"
-doge = "postgresql://doge:zxz456123@127.0.0.1:5632/mem_doge"
-share = "postgresql://share:zxz456123@127.0.0.1:5632/mem_share"
-codex = "postgresql://codex:zxz456123@127.0.0.1:5632/mem_codex"
-claude = "postgresql://claude:zxz456123@127.0.0.1:5632/mem_claude"
+# 新 profile 由 `mem012 --create_profile <profile>` 创建并追加到这里。
 
 [categories]
 index_list = ["init", "core", "user", "agent", "project", "github", "ops", "book"]
@@ -33,7 +27,7 @@ enable_proxy = false # true 时才使用下面的 proxy。
 proxy = "socks5://127.0.0.1:12828" # 可选；也支持 "http://127.0.0.1:12828"。
 
 [debug]
-# true 只在 dbsetup 时清空目标 profile 记忆表并重新建表，只能在本地调试打开。
+# true 会在 create_memory 写入前清空目标 profile 记忆表并重新建表，只能在本地调试打开。
 reset_db = false
 
 [cleanup]
@@ -45,4 +39,5 @@ addr = "0.0.0.0:37777"
 api_token = "xxx"
 
 [client]
+# CLI/Agent 调用本机 HTTP API 时使用的外部可访问地址；为空则回退到 server.addr。
 base_url = "https://xxx.com"
