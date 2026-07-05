@@ -20,16 +20,18 @@ description: Use when creating, backing up, importing, searching, deleting, read
 - `delete_memory` 成功返回 `data.result == "trashed"`。
 - revision/hash 失效时停止，重新 `read_memory_hash`。
 
-## create_profile -- 创建新 profile
-
-```bash
-MEM012_ADMIN_DATABASE_URL="postgresql://{admin_user}:{admin_password}@{host}:{port}/postgres" mem012 --create_profile {profile}
-```
-
 ## init -- 初始化 -- 找回自己
 
 ```bash
 mem012 --profile {profile} init
+```
+
+## create_profile -- 创建新 profile
+
+不主动执行，只有用户主动要求才可调用create_profile
+
+```bash
+MEM012_ADMIN_DATABASE_URL="postgresql://{admin_user}:{admin_password}@{host}:{port}/postgres" mem012 --create_profile {profile}
 ```
 
 ## auth -- 授权 init 写入
