@@ -134,7 +134,7 @@ mem012 --profile riko --args {"tool":"create_memory","params":{}}
 - `category` 未提供时默认为 `core`。
 - `category` 必须来自 `[categories].index_list` 配置白名单，Agent 不能自造 category。
 - `category = init` 用于初始化内容，写入前必须已有 `~/.auth/auth_file.mem`。
-- 如果缺少 auth file，Agent 必须向用户申请授权；用户从 `/auth` 获取 token 后执行 `mem012 --auth <auth_token>`。
+- 如果缺少 auth file，Agent 必须向用户申请授权；用户从 `/auth` 获取 token 后执行 `mem012 --profile <profile> --auth <auth_token>`。
 - 写入 `init` 的命令示例：
 
 ```bash

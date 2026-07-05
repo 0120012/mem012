@@ -6,7 +6,7 @@ description: Use when creating, backing up, importing, searching, deleting, read
 # Mem012 CLI SKILL
 
 ## 执行门禁
-- 首次使用某个 profile 或升级后迁移 schema，先执行 `mem012 --profile {profile} dbsetup`。
+- 新 profile 必须先由 `mem012 --create_profile {profile}` 创建；日常 `init` 和 `--args` 不执行 DDL。
 - `mem012 init` 只读取初始化记忆，直接读取输出内容；`mem012 --args` 工具调用必须按 JSON 判断结果。
 - 工具调用成功条件：命令退出码为 0，且 JSON 中 `state == "success"`、`error == null`。否则一律视为失败。
 - 任一步失败，立即停止并报告用户；禁止继续执行后续写操作，禁止伪造成功结果。
@@ -20,10 +20,10 @@ description: Use when creating, backing up, importing, searching, deleting, read
 - `delete_memory` 成功返回 `data.result == "trashed"`。
 - revision/hash 失效时停止，重新 `read_memory_hash`。
 
-## dbsetup -- 数据库 schema 初始化
+## create_profile -- 创建新 profile
 
 ```bash
-mem012 --profile {profile} dbsetup
+MEM012_ADMIN_DATABASE_URL="postgresql://{admin_user}:{admin_password}@{host}:{port}/postgres" mem012 --create_profile {profile}
 ```
 
 ## init -- 初始化 -- 找回自己

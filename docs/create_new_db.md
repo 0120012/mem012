@@ -1,47 +1,11 @@
-# 创建新数据库
+# 创建新 profile
 
-用 `uutest` 管理账号创建新 profile 数据库。
+新 profile 不再通过手写 PostgreSQL DDL 创建。
 
-## 1. 设置变量
-
-```bash
-export MEM012_NEW_USER='doge'
-export MEM012_NEW_DB='mem_doge'
-export MEM012_NEW_PASSWORD='你的密码'
-```
-
-## 2. 创建用户
+使用管理员连接串执行：
 
 ```bash
-docker exec -it mem012-postgres psql -U uutest -d postgres \
-  -c "CREATE USER ${MEM012_NEW_USER} WITH PASSWORD '${MEM012_NEW_PASSWORD}';"
+MEM012_ADMIN_DATABASE_URL="postgresql://{admin_user}:{admin_password}@{host}:{port}/postgres" mem012 --create_profile {profile}
 ```
 
-## 3. 创建数据库
-
-```bash
-docker exec -it mem012-postgres psql -U uutest -d postgres \
-  -c "CREATE DATABASE ${MEM012_NEW_DB} OWNER ${MEM012_NEW_USER};"
-```
-
-## 4. 启用扩展
-
-```bash
-docker exec -it mem012-postgres psql -U uutest -d "$MEM012_NEW_DB" \
-  -c "CREATE EXTENSION IF NOT EXISTS vector;"
-
-docker exec -it mem012-postgres psql -U uutest -d "$MEM012_NEW_DB" \
-  -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-
-docker exec -it mem012-postgres psql -U uutest -d "$MEM012_NEW_DB" \
-  -c "CREATE EXTENSION IF NOT EXISTS age;"
-```
-
-## 5. 验证扩展
-
-```bash
-docker exec -it mem012-postgres psql -U uutest -d "$MEM012_NEW_DB" \
-  -c "select name, installed_version from pg_available_extensions where name in ('vector', 'pg_trgm', 'age');"
-```
-
-`installed_version` 不为空表示当前数据库已启用该扩展。
+该命令会一次性完成 role、database、扩展、权限、mem012 表结构初始化，并把 profile 连接串追加到 `config.toml`。
