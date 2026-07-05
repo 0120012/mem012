@@ -16,9 +16,19 @@ pub async fn init_db(
         reset_memory_tables(pool, db_label.as_str()).await?;
     }
 
-    migrate_memory_tables(pool, db_label.as_str()).await?;
+    migrate_memory_tables(pool, db_label.as_str(), true).await?;
 
     Ok(true)
+}
+
+pub(crate) async fn init_profile_memory_tables(
+    pool: &Pool<Postgres>,
+    profile: &str,
+) -> Result<(), sqlx::Error> {
+    // What：只创建/迁移 mem012 主表和索引，不执行扩展或 AGE graph DDL。
+    // Why：create_profile 已用 admin 完成扩展和权限设置，profile 连接只应验证运行期 schema 权限。
+    let db_label = format!("profile {profile}");
+    migrate_memory_tables(pool, db_label.as_str(), false).await
 }
 
 async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
@@ -43,7 +53,11 @@ async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<()
     Ok(())
 }
 
-async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
+async fn migrate_memory_tables(
+    pool: &Pool<Postgres>,
+    db_label: &str,
+    include_extension_setup: bool,
+) -> Result<(), sqlx::Error> {
     // Why：profile 库和 share 库结构一致，复用同一套建表顺序可以避免 schema 漂移。
     drop_memory_handles(pool).await?;
     if schema_ready(pool).await? {
@@ -51,8 +65,10 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
         ensure_memory_summary_optional(pool).await?;
         ensure_memory_status_constraint(pool).await?;
         ensure_memory_change_identity(pool).await?;
-        cr_memory_indexes(pool, db_label).await?;
-        ensure_memory_graph(pool).await?;
+        cr_memory_indexes(pool, db_label, include_extension_setup).await?;
+        if include_extension_setup {
+            ensure_memory_graph(pool).await?;
+        }
         return Ok(());
     }
 
@@ -60,7 +76,7 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     cr_normalize_title_function(pool).await?;
     cr_memory_units_table(pool, db_label).await?;
     ensure_memory_status_constraint(pool).await?;
-    cr_memory_embeddings_table(pool).await?;
+    cr_memory_embeddings_table(pool, include_extension_setup).await?;
     cr_memory_keywords_table(pool).await?;
     cr_memory_search_index_table(pool).await?;
     cr_memory_usage_table(pool).await?;
@@ -68,8 +84,10 @@ async fn migrate_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<
     cr_memory_changes_table(pool).await?;
     ensure_memory_change_identity(pool).await?;
     cr_memory_graph_meta_table(pool).await?;
-    cr_memory_indexes(pool, db_label).await?;
-    ensure_memory_graph(pool).await?;
+    cr_memory_indexes(pool, db_label, include_extension_setup).await?;
+    if include_extension_setup {
+        ensure_memory_graph(pool).await?;
+    }
     Ok(())
 }
 
@@ -125,18 +143,24 @@ async fn ensure_memory_graph(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-async fn cr_memory_indexes(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
+async fn cr_memory_indexes(
+    pool: &Pool<Postgres>,
+    db_label: &str,
+    include_extension_setup: bool,
+) -> Result<(), sqlx::Error> {
     // Why：查询路径依赖不同访问模式，索引集中创建可以避免表结构和召回策略混在一起。
     if memory_indexes_ready(pool).await? {
         return Ok(());
     }
 
-    sqlx::query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
-        .execute(pool)
-        .await?;
+    if include_extension_setup {
+        sqlx::query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+            .execute(pool)
+            .await?;
+        sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
+            .execute(pool)
+            .await?;
+    }
 
     let indexes = [
         "CREATE INDEX IF NOT EXISTS memory_units_category_status_idx ON memory_units (category, status)",
@@ -555,11 +579,16 @@ async fn cr_memory_units_table(
     }
 }
 
-async fn cr_memory_embeddings_table(pool: &sqlx::Pool<sqlx::Postgres>) -> Result<(), sqlx::Error> {
+async fn cr_memory_embeddings_table(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    include_extension_setup: bool,
+) -> Result<(), sqlx::Error> {
     // Why：vector 类型来自 pgvector 扩展，建 embedding 表前必须先让当前数据库启用它。
-    sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
-        .execute(pool)
-        .await?;
+    if include_extension_setup {
+        sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
+            .execute(pool)
+            .await?;
+    }
 
     let cr_memory_embeddings = sqlx::query(
         r#"
