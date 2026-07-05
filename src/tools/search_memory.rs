@@ -123,7 +123,12 @@ fn validate_query_logic(query: &str, advanced: bool) -> ToolResult<()> {
     let has_or = query
         .split_whitespace()
         .any(|part| part.eq_ignore_ascii_case("OR"));
-    if (advanced && (has_and || has_or)) || (!advanced && has_and && has_or) {
+    let invalid_logic = if advanced {
+        has_and || has_or
+    } else {
+        has_and && has_or
+    };
+    if invalid_logic {
         Err("query 不能包含非法 AND/OR 逻辑".into())
     } else {
         Ok(())
@@ -457,11 +462,11 @@ async fn rerank_candidates(
     let mut remaining = outcome.results.into_iter().map(Some).collect::<Vec<_>>();
     let mut results = Vec::with_capacity(remaining.len());
     for item in ranked {
-        if let Some(slot) = remaining.get_mut(item.index) {
-            if let Some(mut candidate) = slot.take() {
-                candidate.score = item.score;
-                results.push(candidate);
-            }
+        if let Some(slot) = remaining.get_mut(item.index)
+            && let Some(mut candidate) = slot.take()
+        {
+            candidate.score = item.score;
+            results.push(candidate);
         }
     }
     results.extend(remaining.into_iter().flatten());

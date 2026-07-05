@@ -1,5 +1,3 @@
-use axum;
-
 pub async fn app_run(addr: &str, sweep_interval_minutes: u64) {
     tokio::spawn(trash_cleanup_worker(sweep_interval_minutes));
     let app = crate::api::router_list();

@@ -548,7 +548,6 @@ fn build_replace_next_state(
                 .unwrap_or(serde_json::Value::Null),
         );
     }
-    drop(set);
     if updated_fields.is_empty() {
         return Err("NO_CHANGE".into());
     }
