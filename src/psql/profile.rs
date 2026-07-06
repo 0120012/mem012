@@ -16,6 +16,9 @@ pub(crate) fn quoted_pg_identifier(identifier: &str) -> Result<String, Box<dyn s
 
 fn validate_profile_name(profile: &str) -> Result<(), Box<dyn std::error::Error>> {
     quoted_pg_identifier(profile)?;
+    if profile.len() > crate::PROFILE_NAME_MAX_LEN {
+        return Err(format!("profile 名称长度不能超过 {}", crate::PROFILE_NAME_MAX_LEN).into());
+    }
     if matches!(profile, "postgres" | "template0" | "template1") {
         return Err("profile 名称是保留名".into());
     }
@@ -872,6 +875,10 @@ mod tests {
             error.to_string(),
             "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
         );
+
+        let error = profile_database_setup_sql("abcdefghijklmnopqrstuvwxyzabcde").unwrap_err();
+
+        assert_eq!(error.to_string(), "profile 名称长度不能超过 30");
     }
 
     #[test]

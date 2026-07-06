@@ -388,6 +388,9 @@ fn validate_database_profile_name(profile: &str) -> Result<(), Box<dyn std::erro
     if !valid {
         return Err("profile 名称必须匹配 [a-z][a-z0-9_]*".into());
     }
+    if profile.len() > crate::PROFILE_NAME_MAX_LEN {
+        return Err(format!("profile 名称长度不能超过 {}", crate::PROFILE_NAME_MAX_LEN).into());
+    }
     if matches!(profile, "postgres" | "template0" | "template1") {
         return Err("profile 名称是保留名".into());
     }
@@ -674,7 +677,13 @@ riko = "postgres://localhost/riko"
 
     #[test]
     fn database_profile_helpers_reject_invalid_profile_names() {
-        for profile in ["Riko", "riKo", "1riko", "riko-codex"] {
+        for profile in [
+            "Riko",
+            "riKo",
+            "1riko",
+            "riko-codex",
+            "abcdefghijklmnopqrstuvwxyzabcde",
+        ] {
             assert!(
                 append_database_profile_text("[database]\n", profile, "postgres://db").is_err()
             );

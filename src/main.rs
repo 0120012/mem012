@@ -6,6 +6,8 @@ mod psql;
 mod server;
 mod tools;
 
+const PROFILE_NAME_MAX_LEN: usize = 30;
+
 struct CliArgs {
     command: Option<String>,
     profile: Option<String>,

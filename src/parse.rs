@@ -87,6 +87,9 @@ fn validate_profile_name(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !valid {
         return Err("profile 名称必须匹配 [a-z][a-z0-9_]*".into());
     }
+    if name.len() > crate::PROFILE_NAME_MAX_LEN {
+        return Err(format!("profile 名称长度不能超过 {}", crate::PROFILE_NAME_MAX_LEN).into());
+    }
     if matches!(name, "postgres" | "template0" | "template1") {
         return Err("profile 名称是保留名".into());
     }
@@ -148,6 +151,7 @@ mod tests {
             "riKo",
             "1riko",
             "riko-codex",
+            "abcdefghijklmnopqrstuvwxyzabcde",
             "postgres",
             "template0",
         ] {
