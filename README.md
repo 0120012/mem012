@@ -1,15 +1,17 @@
 # MEM012
 mem012 是一个面向 AI Agent 的 CLI 记忆系统，提供持久化记忆与 RAG 检索能力，并支持通过 Web 端管理记忆。
 
-## 1. PostgreSQL
+## 1. 编译并安装
 
-### 1.1 构建 PostgreSQL 镜像
+```bash
+sh install.sh
+```
+
+## 2. PostgreSQL
 
 ```bash
 docker build -t mem012-postgres:pg18 -f docker/postgres/Dockerfile docker/postgres
 ```
-
-### 1.2 持久化启动
 
 ```bash
 export MEM012_ADMIN_POSTGRES_USER='mem012_admin'
@@ -24,14 +26,6 @@ docker run -d \
   -e POSTGRES_PASSWORD="$MEM012_POSTGRES_PASSWORD" \
   -v mem012_pg18_data:/var/lib/postgresql \
   mem012-postgres:pg18
-```
-
-镜像只提供 PostgreSQL 与 `vector / pg_trgm / age` 扩展能力；管理员账号由 `docker run` 的 `POSTGRES_USER / POSTGRES_PASSWORD` 决定，不会自动创建 profile。
-
-## 2. 编译并安装
-
-```bash
-sh install.sh
 ```
 
 ## 3. 创建 profile
