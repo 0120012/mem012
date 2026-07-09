@@ -4,6 +4,8 @@ use serde::Deserialize;
 
 type ToolResult<T> = Result<T, Box<dyn std::error::Error>>;
 
+const RERANK_MIN_SCORE: f32 = 0.1;
+
 #[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -459,22 +461,34 @@ async fn rerank_candidates(
         return Ok(outcome);
     }
     let embedding_fallback = outcome.embedding_fallback;
-    let mut remaining = outcome.results.into_iter().map(Some).collect::<Vec<_>>();
-    let mut results = Vec::with_capacity(remaining.len());
-    for item in ranked {
-        if let Some(slot) = remaining.get_mut(item.index)
-            && let Some(mut candidate) = slot.take()
-        {
-            candidate.score = item.score;
-            results.push(candidate);
-        }
-    }
-    results.extend(remaining.into_iter().flatten());
+    let results = apply_rerank_results(outcome.results, ranked);
     Ok(SearchOutcome {
         results,
         embedding_fallback,
         rerank: true,
     })
+}
+
+fn apply_rerank_results(
+    candidates: Vec<SearchCandidate>,
+    ranked: Vec<crate::provider::rerank::RerankResult>,
+) -> Vec<SearchCandidate> {
+    // What：按 provider 排名重建候选列表，并丢弃接近 0 的 rerank 命中。
+    // Why：rerank top_n 会返回低相关尾部，继续输出会让“候选”退化成噪声。
+    let mut remaining = candidates.into_iter().map(Some).collect::<Vec<_>>();
+    let mut results = Vec::with_capacity(remaining.len());
+    for item in ranked {
+        if let Some(slot) = remaining.get_mut(item.index)
+            && let Some(mut candidate) = slot.take()
+        {
+            if item.score >= RERANK_MIN_SCORE {
+                candidate.score = item.score;
+                results.push(candidate);
+            }
+        }
+    }
+    results.extend(remaining.into_iter().flatten());
+    results
 }
 
 fn print_search_response(
@@ -525,7 +539,11 @@ fn print_search_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{SearchTermsPlan, build_semantic_query, parse_search_request};
+    use super::{
+        SearchCandidate, SearchTermsPlan, apply_rerank_results, build_semantic_query,
+        parse_search_request,
+    };
+    use crate::provider::rerank::RerankResult;
 
     #[test]
     fn parse_search_request_accepts_supported_shapes() {
@@ -577,5 +595,38 @@ mod tests {
 
         assert_eq!(build_semantic_query("", &terms), "饮酒 月亮");
         assert_eq!(build_semantic_query("自然语言", &terms), "自然语言");
+    }
+
+    #[test]
+    fn apply_rerank_results_filters_near_zero_scores() {
+        let results = apply_rerank_results(
+            vec![test_candidate("relevant"), test_candidate("noise")],
+            vec![
+                RerankResult {
+                    index: 0,
+                    score: 0.9,
+                },
+                RerankResult {
+                    index: 1,
+                    score: 0.0001,
+                },
+            ],
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title_norm, "relevant");
+        assert_eq!(results[0].score, 0.9);
+    }
+
+    fn test_candidate(title_norm: &str) -> SearchCandidate {
+        SearchCandidate {
+            memory_uuid: title_norm.to_string(),
+            title_norm: title_norm.to_string(),
+            status: "active".to_string(),
+            summary: String::new(),
+            content_preview: None,
+            matched_fields: Vec::new(),
+            score: 0.0,
+        }
     }
 }
