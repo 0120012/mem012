@@ -1,10 +1,11 @@
 # MEM012
 mem012 是一个面向 AI Agent 的 CLI 记忆系统，提供持久化记忆与 RAG 检索能力，并支持通过 Web 端管理记忆。
 
-## 1. 编译并安装
+
+## 1. 配置config.toml：
 
 ```bash
-sh install.sh
+cp config.example.toml config.toml
 ```
 
 ## 2. PostgreSQL
@@ -28,7 +29,15 @@ docker run -d \
   mem012-postgres:pg18
 ```
 
-## 3. 创建 profile
+## 3. 编译并安装
+
+安装程序；在使用 systemd 的 Linux 上，自动安装并启动 `mem012.service`。
+
+```bash
+sh install.sh
+```
+
+## 4. 创建 profile
 
 每个agent可以独享一个profile，实现记忆隔离。首次创建某个 profile 时，显式运行：
 
@@ -38,9 +47,16 @@ export MEM012_ADMIN_DATABASE_URL="postgresql://${MEM012_ADMIN_POSTGRES_USER}:${M
 mem012 --create_profile "$MEM012_PROFILE"
 ```
 
-## 4. 验证
+创建 profile 会更新 `config.toml`。重启服务以加载新配置，并确认服务仍在运行：
 
-验证第 3 步创建的 profile database。
+```bash
+sudo systemctl restart mem012.service
+sudo systemctl is-active --quiet mem012.service
+```
+
+## 5. 验证
+
+验证第 4 步创建的 profile database。
 
 ```bash
 docker exec -e PGPASSWORD="$MEM012_POSTGRES_PASSWORD" mem012-postgres \
@@ -50,13 +66,13 @@ docker exec -e PGPASSWORD="$MEM012_POSTGRES_PASSWORD" mem012-postgres \
 
 `installed_version` 不为空，才表示当前数据库已启用该扩展。
 
-## 5. 设置初始化记忆
+## 6. 设置初始化记忆 (可选)
 
-1. 启动 `mem012 server`，打开 `http://127.0.0.1:37777/auth` 获取 5 分钟有效的 `auth_token`。
+1. 执行 `sudo systemctl is-active --quiet mem012.service` 确认服务正在运行，再打开 `http://127.0.0.1:37777/auth` 获取 5 分钟有效的 `auth_token`。
 2. 同一用户环境执行 `mem012 --profile <profile> --auth <auth_token>`，生成临时授权文件 `~/.auth/auth_file.mem`。
 3. 通过 `create_memory` 创建类别位`init` 的记忆，会在初始化后读取。
 
-## 6. SOUL.md
+## 7. SOUL.md
 
 下面的这段话加入全局引导文件。
 
@@ -67,7 +83,7 @@ docker exec -e PGPASSWORD="$MEM012_POSTGRES_PASSWORD" mem012-postgres \
 mem012 是我的记忆系统。启动后，我必须先执行 shell 命令 `mem012 --profile codex init`，完整读取返回内容，完成初始化后再继续处理用户请求。
 ```
 
-## 7. SKILL && mem012_prompt
+## 8. SKILL && mem012_prompt
 
 [SKILL.md](SKILL.md)
 
