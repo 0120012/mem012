@@ -35,8 +35,8 @@ trash_retention_minutes = 10080 # 进入回收站后保留 7 天，超时由 ser
 sweep_interval_minutes = 30 # server 后台扫描到期回收站项目的间隔。
 
 [server]
-addr = "0.0.0.0:37777"
-api_token = "xxx" # web password
+addr = "0.0.0.0:37777" # host
+api_token = "xxx" # web login password
 
 [client]
 # CLI/Agent 调用本机 HTTP API 时使用的外部可访问地址；为空则回退到 server.addr。
