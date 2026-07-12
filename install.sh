@@ -8,6 +8,37 @@ DEST="$BIN_DIR/mem012"
 CONFIG_PATH=${MEM012_CONFIG:-"$ROOT_DIR/config.toml"}
 PROFILE_FILE="$HOME/.bashrc"
 EXPORT_LINE="export MEM012_CONFIG=\"$CONFIG_PATH\""
+DEFAULT_FRONTEND_DIR=/opt/1panel/www/sites/mem012
+INSTALL_MODE=all
+FRONTEND_DIR=$DEFAULT_FRONTEND_DIR
+
+parse_install_args() {
+    # What：把安装参数归一化为 all、frontend 或 backend，并校验前端目标目录。
+    # Why：在执行任何构建或系统操作前拒绝歧义输入，避免错误模式产生部分安装。
+    case $# in
+        0) ;;
+        1)
+            case $1 in
+                --frontend) INSTALL_MODE=frontend ;;
+                --backend) INSTALL_MODE=backend ;;
+                *) printf '未知参数：%s\n' "$1" >&2; return 2 ;;
+            esac
+            ;;
+        2)
+            if [ "$1" != --frontend ]; then
+                printf '%s\n' '--backend 不接受附加参数，且 --frontend 与 --backend 互斥。' >&2
+                return 2
+            fi
+            case $2 in
+                ''|/|[!/]*) printf '前端安装目录必须是非空绝对路径，且不能是 /：%s\n' "$2" >&2; return 2 ;;
+                *) INSTALL_MODE=frontend; FRONTEND_DIR=$2 ;;
+            esac
+            ;;
+        *) printf '%s\n' '参数过多。用法：install.sh [--frontend [绝对路径] | --backend]' >&2; return 2 ;;
+    esac
+}
+
+parse_install_args "$@"
 
 write_profile_config_line() {
     profile_file=$1
@@ -70,21 +101,42 @@ install_server_service() {
     fi
 }
 
-if [ -f "$HOME/.zshrc" ]; then
-    PROFILE_FILE="$HOME/.zshrc"
-fi
+install_backend() {
+    # What：构建并安装后端二进制、shell 配置和 systemd 服务。
+    # Why：后端副作用需要一个明确边界，后续才能按安装模式选择性执行。
+    if [ -f "$HOME/.zshrc" ]; then
+        PROFILE_FILE="$HOME/.zshrc"
+    fi
 
-cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+    cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+    if [ -d "$BIN_DIR" ] && [ -w "$BIN_DIR" ]; then
+        install -m 0755 "$TARGET" "$DEST"
+    else
+        sudo install -d "$BIN_DIR"
+        sudo install -m 0755 "$TARGET" "$DEST"
+    fi
 
-if [ -d "$BIN_DIR" ] && [ -w "$BIN_DIR" ]; then
-    install -m 0755 "$TARGET" "$DEST"
-else
-    sudo install -d "$BIN_DIR"
-    sudo install -m 0755 "$TARGET" "$DEST"
-fi
+    write_profile_config_line "$PROFILE_FILE" "$EXPORT_LINE"
+    install_server_service
+    printf 'installed: %s\n' "$DEST"
+    printf 'configured: %s\n' "$PROFILE_FILE"
+    printf '[DONE] 后端安装完成 -> %s\n' "$DEST"
+}
 
-write_profile_config_line "$PROFILE_FILE" "$EXPORT_LINE"
-install_server_service
+install_frontend() {
+    # What：调用内部部署脚本，把前端发布到已校验的目标目录。
+    # Why：顶层脚本是唯一用户入口，内部脚本不应自行推断生产路径。
+    bash "$ROOT_DIR/frontend/deploy.sh" "$FRONTEND_DIR"
+}
 
-printf 'installed: %s\n' "$DEST"
-printf 'configured: %s\n' "$PROFILE_FILE"
+run_install() {
+    # What：按已解析的安装模式选择前端、后端或完整安装流程。
+    # Why：模式分流必须集中在单一入口，确保各模式不会产生越界副作用。
+    case $INSTALL_MODE in
+        all) install_backend; install_frontend ;;
+        frontend) install_frontend ;;
+        backend) install_backend ;;
+    esac
+}
+
+run_install
