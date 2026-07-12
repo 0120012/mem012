@@ -31,7 +31,7 @@ docker run -d \
 
 ## 3. 编译并安装
 
-统一通过顶层 `install.sh` 安装。前端默认发布到 `/opt/1panel/www/sites/mem012`；在使用 systemd 的 Linux 上，安装后端时会自动安装并启动 `mem012.service`。
+统一通过顶层 `install.sh` 安装。前端默认发布到 `/opt/1panel/www/sites/mem012/index`；在使用 systemd 的 Linux 上，安装后端时会自动安装并启动 `mem012.service`。
 
 ```bash
 # 同时安装前端和后端
