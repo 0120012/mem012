@@ -31,20 +31,31 @@ docker run -d \
 
 ## 3. 编译并安装
 
-安装程序；在使用 systemd 的 Linux 上，自动安装并启动 `mem012.service`。
+统一通过顶层 `install.sh` 安装。前端默认发布到 `/opt/1panel/www/sites/mem012`；在使用 systemd 的 Linux 上，安装后端时会自动安装并启动 `mem012.service`。
 
 ```bash
+# 同时安装前端和后端
 sh install.sh
+
+# 只安装前端到默认目录
+sh install.sh --frontend
+
+# 只安装前端到指定目录（必须使用绝对路径）
+sh install.sh --frontend /opt/1panel/www/sites/custom-site
+
+# 只安装后端
+sh install.sh --backend
 ```
 
 ## 4. 创建 profile
 
-每个agent可以独享一个profile，实现记忆隔离。首次创建某个 profile 时，显式运行：
+每个agent可以独享一个profile，实现记忆隔离。
+
+例如创建一个profile 给codex使用，同时会创建mem_codex库
 
 ```bash
-export MEM012_PROFILE='codex'
 export MEM012_ADMIN_DATABASE_URL="postgresql://${MEM012_ADMIN_POSTGRES_USER}:${MEM012_POSTGRES_PASSWORD}@127.0.0.1:5632/postgres"
-mem012 --create_profile "$MEM012_PROFILE"
+mem012 --create_profile codex
 ```
 
 创建 profile 会更新 `config.toml`。重启服务以加载新配置，并确认服务仍在运行：
@@ -54,25 +65,13 @@ sudo systemctl restart mem012.service
 sudo systemctl is-active --quiet mem012.service
 ```
 
-## 5. 验证
-
-验证第 4 步创建的 profile database。
-
-```bash
-docker exec -e PGPASSWORD="$MEM012_POSTGRES_PASSWORD" mem012-postgres \
-  psql -U "$MEM012_ADMIN_POSTGRES_USER" -d "mem_${MEM012_PROFILE}" \
-  -c "select name, installed_version from pg_available_extensions where name in ('vector', 'pg_trgm', 'age');"
-```
-
-`installed_version` 不为空，才表示当前数据库已启用该扩展。
-
-## 6. 设置初始化记忆 (可选)
+## 5. 设置初始化记忆 (可选)
 
 1. 执行 `sudo systemctl is-active --quiet mem012.service` 确认服务正在运行，再打开 `http://127.0.0.1:37777/auth` 获取 5 分钟有效的 `auth_token`。
 2. 同一用户环境执行 `mem012 --profile <profile> --auth <auth_token>`，生成临时授权文件 `~/.auth/auth_file.mem`。
 3. 通过 `create_memory` 创建类别位`init` 的记忆，会在初始化后读取。
 
-## 7. SOUL.md
+## 6. SOUL.md
 
 下面的这段话加入全局引导文件。
 
@@ -83,8 +82,21 @@ docker exec -e PGPASSWORD="$MEM012_POSTGRES_PASSWORD" mem012-postgres \
 mem012 是我的记忆系统。启动后，我必须先执行 shell 命令 `mem012 --profile codex init`，完整读取返回内容，完成初始化后再继续处理用户请求。
 ```
 
-## 8. SKILL && mem012_prompt
+## 7. SKILL && mem012_prompt
 
 [SKILL.md](SKILL.md)
 
 [mem012_prompt.md](mem012_prompt.md)
+
+## 8. 记忆导出/导入
+
+记忆导出:
+
+```shell
+mem012 --profile maccodex --args '{"tool":"backup_memory","params":{"output_path":"/绝对路径/backup.json"}}'
+```
+
+记忆导入：
+```shell
+mem012 --profile 目标profile --args '{"tool":"import_memory","params":{"input_path":"/绝对路径/backup.json"}}'
+```
