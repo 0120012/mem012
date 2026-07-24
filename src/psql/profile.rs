@@ -293,6 +293,43 @@ END $$;
 "#
 }
 
+pub(crate) fn reassign_memory_graph_owner_sql(
+    profile: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // What：把 create_graph 生成的 memory_graph 对象 owner 转给 profile。
+    // Why：AGE 建标签/写点要求表 owner；只 GRANT DML 会在 rebuild 时报 must be owner of table _ag_label_vertex。
+    let role = quoted_pg_identifier(profile)?;
+    Ok(format!(
+        r#"
+DO $reassign$
+DECLARE
+    obj record;
+BEGIN
+    EXECUTE 'ALTER SCHEMA memory_graph OWNER TO {role}';
+    FOR obj IN
+        SELECT c.relname
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'memory_graph'
+          AND c.relkind IN ('r', 'p')
+    LOOP
+        EXECUTE format('ALTER TABLE memory_graph.%I OWNER TO {role}', obj.relname);
+    END LOOP;
+    FOR obj IN
+        SELECT c.relname
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'memory_graph'
+          AND c.relkind = 'S'
+    LOOP
+        EXECUTE format('ALTER SEQUENCE memory_graph.%I OWNER TO {role}', obj.relname);
+    END LOOP;
+END
+$reassign$;
+"#
+    ))
+}
+
 pub(crate) fn load_age_sql() -> &'static str {
     "LOAD 'age'"
 }
@@ -314,6 +351,7 @@ pub(crate) fn profile_database_setup_sql(
         load_age_sql().to_string(),
         set_age_search_path_sql().to_string(),
         create_memory_graph_sql().to_string(),
+        reassign_memory_graph_owner_sql(profile)?,
         grant_public_schema_usage_create_sql(profile)?,
         grant_ag_catalog_schema_usage_sql(profile)?,
         grant_agtype_usage_sql(profile)?,
@@ -440,8 +478,9 @@ mod tests {
         grant_public_sequences_default_privileges_sql, grant_public_sequences_usage_sql,
         grant_public_tables_default_privileges_sql, grant_public_tables_dml_sql,
         initialize_profile_database_schema, load_age_sql, profile_admin_resources_conflict_error,
-        profile_database_setup_sql, quoted_pg_identifier, revoke_public_connect_sql,
-        set_age_search_path_sql, terminate_profile_database_connections_sql,
+        profile_database_setup_sql, quoted_pg_identifier, reassign_memory_graph_owner_sql,
+        revoke_public_connect_sql, set_age_search_path_sql,
+        terminate_profile_database_connections_sql,
     };
 
     #[test]
@@ -834,6 +873,29 @@ mod tests {
     }
 
     #[test]
+    fn reassign_memory_graph_owner_sql_transfers_schema_and_objects_to_profile() {
+        let sql = reassign_memory_graph_owner_sql("rikocodex").unwrap();
+
+        assert!(sql.contains("ALTER SCHEMA memory_graph OWNER TO \"rikocodex\""));
+        assert!(sql.contains("ALTER TABLE memory_graph.%I OWNER TO \"rikocodex\""));
+        assert!(sql.contains("ALTER SEQUENCE memory_graph.%I OWNER TO \"rikocodex\""));
+        assert!(sql.contains("nspname = 'memory_graph'"));
+        assert!(sql.contains("AND c.relkind IN ('r', 'p')"));
+        assert!(sql.contains("AND c.relkind = 'S'"));
+        assert!(sql.find("AND c.relkind IN ('r', 'p')") < sql.find("AND c.relkind = 'S'"));
+    }
+
+    #[test]
+    fn reassign_memory_graph_owner_sql_rejects_invalid_profile() {
+        let error = reassign_memory_graph_owner_sql("riko-codex").unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
+        );
+    }
+
+    #[test]
     fn load_age_sql_matches_existing_age_load_statement() {
         assert_eq!(load_age_sql(), "LOAD 'age'");
     }
@@ -850,7 +912,7 @@ mod tests {
     fn profile_database_setup_sql_orders_extension_age_and_permission_sql() {
         let sql = profile_database_setup_sql("rikocodex").unwrap();
 
-        assert_eq!(sql.len(), 19);
+        assert_eq!(sql.len(), 20);
         assert_eq!(sql[0], "CREATE EXTENSION IF NOT EXISTS vector");
         assert_eq!(sql[1], "CREATE EXTENSION IF NOT EXISTS pg_trgm");
         assert_eq!(sql[2], "CREATE EXTENSION IF NOT EXISTS age");
@@ -860,8 +922,9 @@ mod tests {
             r#"SET LOCAL search_path = ag_catalog, "$user", public"#
         );
         assert!(sql[5].contains("PERFORM ag_catalog.create_graph('memory_graph')"));
+        assert!(sql[6].contains("ALTER SCHEMA memory_graph OWNER TO \"rikocodex\""));
         assert_eq!(
-            sql[18],
+            sql[19],
             "ALTER DEFAULT PRIVILEGES FOR ROLE \"rikocodex\" IN SCHEMA memory_graph GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO \"rikocodex\""
         );
         assert!(sql.iter().all(|statement| !statement.contains("uutest")));
