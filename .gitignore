@@ -27,5 +27,7 @@ target
 node_modules/
 frontend/node_modules/
 config.toml
+/plan.md
+/plan2.md
 _PLAN.md
 .cli-proxy-api/
