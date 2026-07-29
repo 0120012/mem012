@@ -1,6 +1,14 @@
 # MEM012
-mem012 是一个面向 AI Agent 的 CLI 记忆系统，提供持久化记忆与 RAG 检索能力，并支持通过 Web 端管理记忆。
+mem012 是一个所有Agent的CLI 记忆系统，提供持久化记忆与 RAG 检索能力，并支持通过 Web 端管理记忆。
 
+<img src="frontend/public/mem012-architecture.png" alt="MEM012 架构图" width="600">
+
+## 让每个 Agent 都拥有长期记忆
+
+- **全 Agent 兼容**：支持上述 Agent 及其他能调用 CLI / HTTP/JSON 工具的运行环境，无需专用 SDK。
+- **持久化记忆 + RAG 检索**：记忆存储在 PostgreSQL，支持关键词、向量与重排检索。
+- **独立记忆**：不同 Agent 可以拥有独立记忆空间，避免上下文互相污染。
+- **可视化记忆审查**：Agent 负责调用，Web 界面负责审查：可集中查看记忆与变更记录，并进行审核、批准、拒绝、恢复和维护。
 
 ## 1. 配置config.toml：
 
