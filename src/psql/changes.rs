@@ -18,6 +18,13 @@ LEFT JOIN memory_units u ON u.uuid = c.memory_uuid
 WHERE c.action <> 'delete' OR u.status IS DISTINCT FROM 'trashed'
 "#;
 
+const COUNT_CHANGES_SQL: &str = r#"
+SELECT COUNT(*)
+FROM memory_changes c
+LEFT JOIN memory_units u ON u.uuid = c.memory_uuid
+WHERE c.action <> 'delete' OR u.status IS DISTINCT FROM 'trashed'
+"#;
+
 const CHANGE_DETAIL_SQL: &str = r#"
 SELECT jsonb_build_object(
     'memory_uuid', c.memory_uuid::text,
@@ -139,6 +146,20 @@ pub async fn list_changes(
         .fetch_one(&pool)
         .await?;
     Ok(serde_json::from_str(&rows)?)
+}
+
+// What：只返回当前项目可审查变更的数量。
+// Why：侧栏徽标不需要完整摘要，避免应用启动时构造整个变更列表。
+pub async fn count_changes(
+    database_url: &str,
+) -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    Ok(sqlx::query_scalar(COUNT_CHANGES_SQL)
+        .fetch_one(&pool)
+        .await?)
 }
 
 // What：列出当前项目回收站里的待删除记忆，并计算自动硬删时间。

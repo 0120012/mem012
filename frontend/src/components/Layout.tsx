@@ -36,7 +36,6 @@ export function Layout() {
   const location = useLocation()
   const [mobileSidebarState, setMobileSidebarState] = useState<MobileSidebarState>("closed")
   const [closedMemoryProjectId, setClosedMemoryProjectId] = useState("")
-  const [memoryCategoryState, setMemoryCategoryState] = useState<{ projectId: string; categories: string[] }>({ projectId: "", categories: [] })
   const [pendingChangeState, setPendingChangeState] = useState({ projectId: "", count: 0 })
   const [projectOpen, setProjectOpen] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => {
@@ -54,24 +53,14 @@ export function Layout() {
 
   const activeProjectId = activeProject?.project_id || ""
   const memoryOpen = Boolean(activeProjectId) && closedMemoryProjectId !== activeProjectId
-  const memoryCategories = memoryCategoryState.projectId === activeProjectId ? memoryCategoryState.categories : []
-
-  useEffect(() => {
-    if (!activeProjectId) return
-    void api.memories.list()
-      .then((data) => setMemoryCategoryState({
-        projectId: activeProjectId,
-        categories: Array.from(new Set((data || []).map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN")),
-      }))
-      .catch(() => setMemoryCategoryState({ projectId: activeProjectId, categories: [] }))
-  }, [activeProjectId])
+  const memoryCategories = activeProject?.categories || []
 
   useEffect(() => {
     if (!activeProjectId) return
     let cancelled = false
-    void api.changes.list()
+    void api.changes.count()
       .then((data) => {
-        if (!cancelled) setPendingChangeState({ projectId: activeProjectId, count: (data || []).length })
+        if (!cancelled) setPendingChangeState({ projectId: activeProjectId, count: data?.count || 0 })
       })
       .catch(() => {
         if (!cancelled) setPendingChangeState({ projectId: activeProjectId, count: 0 })
@@ -86,8 +75,8 @@ export function Layout() {
   useEffect(() => {
     const handler = () => {
       if (!activeProjectId) return
-      void api.changes.list()
-        .then((data) => setPendingChangeState({ projectId: activeProjectId, count: (data || []).length }))
+      void api.changes.count()
+        .then((data) => setPendingChangeState({ projectId: activeProjectId, count: data?.count || 0 }))
         .catch(() => setPendingChangeState({ projectId: activeProjectId, count: 0 }))
     }
     window.addEventListener("changes-updated", handler)
@@ -130,13 +119,6 @@ export function Layout() {
   const handleMemoryToggle = () => {
     const nextOpen = !memoryOpen
     setClosedMemoryProjectId(nextOpen ? "" : activeProjectId)
-    if (!nextOpen || !activeProjectId || memoryCategories.length > 0) return
-    void api.memories.list()
-      .then((data) => setMemoryCategoryState({
-        projectId: activeProjectId,
-        categories: Array.from(new Set((data || []).map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN")),
-      }))
-      .catch(() => setMemoryCategoryState({ projectId: activeProjectId, categories: [] }))
   }
 
   const projectPathMatch = location.pathname.match(PROJECT_PATH_RE)
