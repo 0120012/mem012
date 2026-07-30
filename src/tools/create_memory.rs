@@ -17,6 +17,30 @@ pub async fn run(
     context: &super::ToolContext<'_>,
     args: &serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let memory_uuid = create(context, args).await?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "state": "success",
+            "tool": "create_memory",
+            "data": {
+                "memory_uuid": memory_uuid,
+                "result": "pending"
+            },
+            "error": null,
+            "profile": context.profile
+        })
+    );
+
+    Ok(())
+}
+
+// What：执行创建记忆的校验、去重和待审核落盘，并返回后端生成的 UUID。
+// Why：CLI 和 HTTP 入口必须共享同一条写入路径，避免两个入口的状态语义分叉。
+pub(crate) async fn create(
+    context: &super::ToolContext<'_>,
+    args: &serde_json::Value,
+) -> Result<String, Box<dyn std::error::Error>> {
     // Why：create_memory 独立成文件，后续字段校验和写入 memory_changes 不污染工具路由层。
     let create_args = serde_json::from_value::<CreateMemoryArgs>(args.clone())?;
     validate_create_memory_args(&create_args, context.profile, context.category_index_list)?;
@@ -40,21 +64,7 @@ pub async fn run(
 
     // database writes
     create_memory_transaction(context.profile_pool, &memory_uuid, &after_state).await?;
-    println!(
-        "{}",
-        serde_json::json!({
-            "state": "success",
-            "tool": "create_memory",
-            "data": {
-                "memory_uuid": memory_uuid,
-                "result": "pending"
-            },
-            "error": null,
-            "profile": context.profile
-        })
-    );
-
-    Ok(())
+    Ok(memory_uuid)
 }
 
 fn build_after_state(

@@ -22,11 +22,17 @@ pub async fn list() -> (StatusCode, Json<Value>) {
     let projects = config
         .database_entries()
         .map(|(project_id, _database_url)| {
+            let categories = if project_id == "share" {
+                vec!["share".to_string()]
+            } else {
+                config.category_index_list().to_vec()
+            };
             json!({
                 "project_id": project_id,
                 "display_name": project_id,
                 "db_scope": if project_id == "share" { "share" } else { "profile" },
-                "is_share": project_id == "share"
+                "is_share": project_id == "share",
+                "categories": categories
             })
         })
         .collect::<Vec<_>>();
