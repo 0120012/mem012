@@ -4,7 +4,7 @@ mod parse;
 mod provider;
 mod psql;
 mod server;
-mod tools;
+pub(crate) mod tools;
 
 const PROFILE_NAME_MAX_LEN: usize = 30;
 

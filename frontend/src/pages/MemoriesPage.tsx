@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type ChangeEvent, type CompositionEvent, type CSSProperties } from "react"
+import { useState, useEffect, useCallback, useRef, type ChangeEvent, type CompositionEvent, type CSSProperties, type FormEvent } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { ApiError, api, type MemoryItem } from "@/api/client"
 import { useAuth } from "@/auth/AuthContext"
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { CalendarDays, ChevronDown, ChevronRight, Copy, Folder, Minus, Pencil, Plus, X } from "lucide-react"
 
@@ -111,6 +112,9 @@ export function MemoriesPage() {
   const [keywordDraft, setKeywordDraft] = useState("")
   const [keywordInputOpen, setKeywordInputOpen] = useState(false)
   const [keywordError, setKeywordError] = useState("")
+  const [createOpen, setCreateOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState("")
   const [dateFromOpen, setDateFromOpen] = useState(false)
   const [dateToOpen, setDateToOpen] = useState(false)
   const memoryFilterComposingRef = useRef(false)
@@ -123,6 +127,7 @@ export function MemoriesPage() {
   const dateFrom = searchParams.get("date_from")?.trim() || ""
   const dateTo = searchParams.get("date_to")?.trim() || ""
   const projectPrefix = activeProject ? `/${encodeURIComponent(activeProject.project_id)}` : ""
+  const categoryOptions = (activeProject?.categories || []).filter((category) => category !== "init")
   const categories = Array.from(new Set(memories.map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"))
   const visibleMemories = memories.filter((m) => {
     if (categoryFilter && m.category !== categoryFilter) return false
@@ -305,12 +310,104 @@ export function MemoriesPage() {
     }
   }
 
+  // What：收集新建表单并提交一条记忆。
+  // Why：统一在页面层校验必填项和拆分关键词，避免把空值直接交给接口。
+  const createMemory = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
+    const title = String(form.get("title") || "").trim()
+    const content = String(form.get("content") || "").trim()
+    const keywords = String(form.get("keywords") || "").split(/[，,]/).map((item) => item.trim()).filter(Boolean)
+    if (!title || !content || keywords.length === 0) {
+      setCreateError("标题、内容和关键词不能为空")
+      return
+    }
+    setCreating(true)
+    setCreateError("")
+    try {
+      await api.memories.create({
+        category: String(form.get("category") || "").trim() || undefined,
+        title,
+        content,
+        summary: String(form.get("summary") || "").trim() || null,
+        recall_when: String(form.get("recall_when") || "").trim() || null,
+        keywords,
+      })
+      formElement.reset()
+      setCreateOpen(false)
+      window.dispatchEvent(new Event("changes-updated"))
+      await fetchMemories()
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : "创建失败")
+    } finally {
+      setCreating(false)
+    }
+  }
+
   return (
     <div className="mx-auto max-w-7xl p-4 sm:p-6">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-lg font-semibold text-foreground">{memoryFilter || categoryFilter || "记忆"}</h1>
-        <Button variant="outline" size="sm" onClick={fetchMemories} disabled={loading}>刷新</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => { setCreateError(""); setCreateOpen(true) }}>
+            <Plus className="h-4 w-4" />新建
+          </Button>
+          <Button variant="outline" size="sm" onClick={fetchMemories} disabled={loading}>刷新</Button>
+        </div>
       </div>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-h-[90vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle>新建记忆</DialogTitle>
+            <DialogDescription>填写记忆内容后提交，提交后等待审核。</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={createMemory} className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="create-memory-category">类别</Label>
+              <select
+                id="create-memory-category"
+                name="category"
+                defaultValue={categoryOptions.includes(categoryFilter) ? categoryFilter : categoryOptions[0] || ""}
+                required
+                disabled={categoryOptions.length === 0}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+              >
+                {categoryOptions.length === 0 ? (
+                  <option value="">暂无可用类别</option>
+                ) : (
+                  categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)
+                )}
+              </select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="create-memory-title">标题 <span className="text-destructive">*</span></Label>
+              <Input id="create-memory-title" name="title" autoFocus />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="create-memory-summary">摘要</Label>
+              <textarea id="create-memory-summary" name="summary" className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="create-memory-recall-when">召回时机</Label>
+              <textarea id="create-memory-recall-when" name="recall_when" className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="create-memory-keywords">关键词 <span className="text-destructive">*</span></Label>
+              <Input id="create-memory-keywords" name="keywords" placeholder="多个关键词用逗号分隔" />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="create-memory-content">内容 <span className="text-destructive">*</span></Label>
+              <textarea id="create-memory-content" name="content" className="min-h-40 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+            </div>
+            {createError && <p className="text-sm text-destructive">{createError}</p>}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>取消</Button>
+              <Button type="submit" disabled={creating}>{creating ? "提交中..." : "创建"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <div className="mb-4 grid gap-3">
         <div className="rounded-md border bg-card p-3">
           <div className="grid gap-2">

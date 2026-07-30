@@ -2,13 +2,15 @@ mod auth;
 pub(crate) mod auth_file;
 mod backup_memory;
 pub(crate) mod cli_help;
-mod create_memory;
+pub(crate) mod create_memory;
 mod create_profile;
 mod delete_memory;
 mod import_memory;
 mod read_memory;
 mod search_memory;
 mod update_memory;
+
+pub(crate) use create_memory::create as create_memory_for_api;
 
 pub struct ToolContext<'a> {
     // Why：工具执行只操作当前 profile，连接池生命周期应由 main 持有。

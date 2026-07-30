@@ -11,6 +11,7 @@ export interface ProjectInfo {
   display_name: string
   db_scope: string
   is_share: boolean
+  categories: string[]
 }
 
 export interface MemoryItem {
@@ -36,6 +37,20 @@ export interface MemoryUpdateInput {
   recall_when: string | null
   content: string
   keywords: string[]
+}
+
+export interface MemoryCreateInput {
+  category?: string
+  title: string
+  content: string
+  summary: string | null
+  recall_when: string | null
+  keywords: string[]
+}
+
+export interface MemoryCreateResult {
+  memory_uuid: string
+  result: "pending"
 }
 
 export interface ChangeItem {
@@ -197,6 +212,12 @@ export const api = {
   memories: {
     list: () => request<MemoryItem[]>("/memories"),
     categoryKeywords: (category: string) => request<string[]>(`/memories/categories/${encodeURIComponent(category)}/keywords`),
+    create: (body: MemoryCreateInput) =>
+      request<MemoryCreateResult>("/create_memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
     update: (uuid: string, body: MemoryUpdateInput) =>
       request<void>(`/memories/${encodeURIComponent(uuid)}`, {
         method: "PATCH",
