@@ -36,6 +36,7 @@ pub fn router_list() -> Router {
         .route("/api/trash/{memory_uuid}/delete", post(trash::delete))
         .route("/api/trash/{memory_uuid}/restore", post(trash::restore))
         .route("/api/changes", get(changes::list))
+        .route("/api/changes/count", get(changes::count))
         .route("/api/changes/{memory_uuid}", get(changes::detail))
         .route("/api/changes/{memory_uuid}/approve", post(changes::approve))
         .route("/api/changes/{memory_uuid}/reject", post(changes::reject))

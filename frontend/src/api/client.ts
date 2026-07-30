@@ -62,6 +62,10 @@ export interface ChangeItem {
   updated_at: string
 }
 
+export interface ChangeCount {
+  count: number
+}
+
 export interface ChangeDetail {
   memory_uuid: string
   action: string
@@ -227,6 +231,7 @@ export const api = {
   },
   changes: {
     list: () => request<ChangeItem[]>("/changes"),
+    count: () => request<ChangeCount>("/changes/count"),
     detail: (uuid: string) => request<ChangeDetail>(`/changes/${uuid}`),
     approve: (uuid: string) => request<void>(`/changes/${uuid}/approve`, { method: "POST" }),
     reject: (uuid: string) => request<void>(`/changes/${uuid}/reject`, { method: "POST" }),

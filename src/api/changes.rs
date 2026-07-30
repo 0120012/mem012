@@ -27,6 +27,33 @@ pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
     )
 }
 
+// What：返回当前项目待确认变更数量。
+// Why：Layout 只需显示徽标，不应为此加载完整变更摘要。
+pub async fn count(headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    let project = match require_project(&headers) {
+        Ok(project) => project,
+        Err(error) => return error_response(error, None),
+    };
+    let url = match database_url(&project) {
+        Ok(url) => url,
+        Err(error) => return error_response(error, Some(&project)),
+    };
+    let count = match crate::psql::count_changes(&url).await {
+        Ok(count) => count,
+        Err(error) => {
+            return error_response(db_error("CHANGE_COUNT_FAILED", error), Some(&project));
+        }
+    };
+    (
+        StatusCode::OK,
+        api_response(
+            Some(serde_json::json!({ "count": count })),
+            None,
+            Some(&project),
+        ),
+    )
+}
+
 // Why：详情接口只根据 memory_uuid 读取 before/after，不让前端提交回滚状态。
 pub async fn detail(
     Path(memory_uuid): Path<String>,
