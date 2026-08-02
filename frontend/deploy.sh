@@ -60,13 +60,28 @@ publish_dist() {
   fi
 }
 
+install_dependencies() {
+  local marker_file lock_hash
+  marker_file="$SCRIPT_DIR/node_modules/.mem012-package-lock.sha256"
+  lock_hash=$(node -e 'const fs=require("fs"), crypto=require("crypto"); process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$SCRIPT_DIR/package-lock.json")
+
+  # What：仅在依赖目录缺失或锁文件变化时安装前端依赖。
+  # Why：重复发布无需每次清空并重建现有的 node_modules。
+  if [[ -f "$marker_file" ]] && [[ "$(<"$marker_file")" == "$lock_hash" ]]; then
+    echo "[1/4] 前端依赖未变化，跳过安装"
+    return
+  fi
+  echo "[1/4] 安装前端依赖..."
+  npm ci --cache "$NPM_CACHE_DIR"
+  printf '%s\n' "$lock_hash" > "$marker_file"
+}
+
 TARGET_DIR=$(validate_target_dir "$@")
 
 cd "$SCRIPT_DIR"
 NPM_CACHE_DIR="${NPM_CONFIG_CACHE:-${TMPDIR:-/tmp}/mem012-frontend-npm-cache}"
 
-echo "[1/4] 安装前端依赖..."
-npm ci --cache "$NPM_CACHE_DIR"
+install_dependencies
 
 echo "[2/4] 构建前端..."
 npm run build
