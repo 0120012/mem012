@@ -238,8 +238,9 @@ fn embedding_input_from_state(state: &Value) -> Result<String, ApiError> {
             parts.push(keywords);
         }
     }
-    (!parts.is_empty())
-        .then(|| parts.join("\n"))
+    let input = parts.join("\n");
+    (!input.is_empty())
+        .then(|| input.chars().take(14_500).collect::<String>())
         .ok_or(ApiError {
             code: "EMBEDDING_INPUT_MISSING",
             message: "embedding input is empty".to_string(),
