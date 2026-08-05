@@ -1,7 +1,13 @@
 use sqlx::Acquire;
 
-const REBUILD_MEMORY_GRAPH_SQL: &str = r#"
-DO $$
+pub(crate) fn create_memory_graph_rebuild_function_sql() -> &'static str {
+    r#"
+CREATE OR REPLACE FUNCTION public.mem012_rebuild_memory_graph()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ag_catalog, pg_catalog
+AS $function$
 DECLARE
     memory_row record;
     relation_row record;
@@ -11,7 +17,7 @@ BEGIN
         DETACH DELETE v
     $cypher$) AS (v agtype)$sql$;
 
-    FOR memory_row IN SELECT uuid::text uuid, category, title_norm, status, summary FROM memory_units WHERE status = 'active'
+    FOR memory_row IN SELECT uuid::text uuid, category, title_norm, status, summary FROM public.memory_units WHERE status = 'active'
     LOOP
         EXECUTE format($sql$SELECT * FROM ag_catalog.cypher('memory_graph', $cypher$
             CREATE (:Memory {uuid: %L, category: %L, title_norm: %L, status: %L, summary: %L})
@@ -21,9 +27,9 @@ BEGIN
     FOR relation_row IN
         SELECT r.uuid::text relation_uuid, r.from_memory_uuid::text from_uuid, r.to_memory_uuid::text to_uuid,
             upper(r.relation_type) edge_label, r.weight, r.note, r.created_at::text created_at
-        FROM memory_relations r
-        JOIN memory_units f ON f.uuid = r.from_memory_uuid AND f.status = 'active'
-        JOIN memory_units t ON t.uuid = r.to_memory_uuid AND t.status = 'active'
+        FROM public.memory_relations r
+        JOIN public.memory_units f ON f.uuid = r.from_memory_uuid AND f.status = 'active'
+        JOIN public.memory_units t ON t.uuid = r.to_memory_uuid AND t.status = 'active'
     LOOP
         EXECUTE format($sql$SELECT * FROM ag_catalog.cypher('memory_graph', $cypher$
             MATCH (a:Memory {uuid: %L}), (b:Memory {uuid: %L})
@@ -32,24 +38,19 @@ BEGIN
             relation_row.relation_uuid, COALESCE(relation_row.weight::text, 'null'), COALESCE(to_json(relation_row.note)::text, 'null'), relation_row.created_at);
     END LOOP;
 
-    INSERT INTO memory_graph_meta (graph_name, dirty, updated_at) VALUES ('memory_graph', false, now())
+    INSERT INTO public.memory_graph_meta (graph_name, dirty, updated_at) VALUES ('memory_graph', false, now())
     ON CONFLICT (graph_name) DO UPDATE SET dirty = false, updated_at = EXCLUDED.updated_at;
-END $$;
-"#;
+END;
+$function$;
+"#
+}
 
 // Why：AGE 是派生层，重建必须只从 SQL 当前工作态生成，避免 pending change 影响图结构。
 pub async fn rebuild_memory_graph(pool: &sqlx::Pool<sqlx::Postgres>) -> Result<(), sqlx::Error> {
     let mut conn = pool.acquire().await?;
-    sqlx::query("CREATE EXTENSION IF NOT EXISTS age")
-        .execute(&mut *conn)
-        .await?;
     load_age_if_allowed(&mut conn).await?;
-
     let mut tx = conn.begin().await?;
-    sqlx::query(r#"SET LOCAL search_path = ag_catalog, "$user", public"#)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query(REBUILD_MEMORY_GRAPH_SQL)
+    sqlx::query("SELECT public.mem012_rebuild_memory_graph()")
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;

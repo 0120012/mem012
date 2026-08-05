@@ -12,6 +12,7 @@ fn parse_cli_args_from(
     let mut command = None;
     let mut profile = None;
     let mut create_profile = None;
+    let mut target = None;
     let mut args_json = None;
     let mut auth_token = None;
     let mut args = args.into_iter();
@@ -32,6 +33,12 @@ fn parse_cli_args_from(
                 let name = args.next().ok_or("--create_profile 缺少 profile 名称")?;
                 validate_profile_name(name.as_str())?;
                 create_profile = Some(name);
+            }
+            "--target" => {
+                if target.is_some() {
+                    return Err("--target 不能重复使用".into());
+                }
+                target = Some(args.next().ok_or("--target 缺少目标数据库名称")?);
             }
             "--args" => {
                 if args_json.is_some() {
@@ -60,6 +67,11 @@ fn parse_cli_args_from(
         if auth_token.is_some() {
             return Err("--create_profile 不支持 --auth".into());
         }
+    } else if target
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err("--target 只能和 --create_profile 一起使用".into());
     }
     if auth_token.is_some() {
         if let Some(command) = command.as_deref() {
@@ -74,6 +86,10 @@ fn parse_cli_args_from(
         command,
         profile,
         create_profile,
+        target: target.and_then(|value| {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_string())
+        }),
         args_json,
         auth_token,
     })
@@ -128,6 +144,48 @@ mod tests {
         let cli_args = parse_cli_args_from(args).unwrap();
 
         assert_eq!(cli_args.create_profile.as_deref(), Some("share"));
+    }
+
+    #[test]
+    fn parse_cli_args_accepts_target_database_for_create_profile() {
+        let cli_args = parse_cli_args_from(vec![
+            "--create_profile".to_string(),
+            "maccodex".to_string(),
+            "--target".to_string(),
+            "mem_codex".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(cli_args.target.as_deref(), Some("mem_codex"));
+    }
+
+    #[test]
+    fn parse_cli_args_treats_empty_target_as_default_path() {
+        for value in ["", "   "] {
+            let cli_args = parse_cli_args_from(vec![
+                "--create_profile".to_string(),
+                "maccodex".to_string(),
+                "--target".to_string(),
+                value.to_string(),
+            ])
+            .unwrap();
+
+            assert!(cli_args.target.is_none());
+        }
+    }
+
+    #[test]
+    fn parse_cli_args_rejects_nonempty_target_without_create_profile() {
+        let error = match parse_cli_args_from(vec!["--target".to_string(), "mem_codex".to_string()])
+        {
+            Ok(_) => panic!("target should require create_profile"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "--target 只能和 --create_profile 一起使用"
+        );
     }
 
     #[test]
@@ -190,6 +248,7 @@ mod tests {
     fn parse_cli_args_rejects_missing_option_values() {
         for (option, expected) in [
             ("--profile", "--profile 缺少 profile 名称"),
+            ("--target", "--target 缺少目标数据库名称"),
             ("--args", "--args 缺少 JSON object"),
             ("--auth", "--auth 缺少 auth_token"),
         ] {

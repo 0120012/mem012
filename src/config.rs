@@ -363,6 +363,47 @@ pub fn derive_profile_database_url(
     Ok(url.to_string())
 }
 
+pub fn derive_target_database_url(
+    admin_database_url: &str,
+    profile: &str,
+    password: &str,
+    target_database: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // What：从管理员连接串派生新 profile 访问既有数据库的连接串。
+    // Why：共享数据库必须保留主机、端口和连接参数，只替换登录身份与数据库路径。
+    validate_database_profile_name(profile)?;
+    if target_database.trim().is_empty() {
+        return Err("目标 database 不能为空".into());
+    }
+    let mut url = url::Url::parse(admin_database_url)?;
+    if !matches!(url.scheme(), "postgres" | "postgresql") {
+        return Err("admin database URL 必须使用 postgres/postgresql scheme".into());
+    }
+    url.set_username(profile)
+        .map_err(|_| "profile 名称不能写入 database URL")?;
+    url.set_password(Some(password))
+        .map_err(|_| "profile 密码不能写入 database URL")?;
+    url.set_path(&format!("/{}", target_database.trim()));
+    Ok(url.to_string())
+}
+
+pub fn derive_admin_target_database_url(
+    admin_database_url: &str,
+    target_database: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // What：从管理员连接串派生管理员访问既有数据库的连接串。
+    // Why：授权操作需要切换数据库路径，但必须继续使用原管理员身份和连接参数。
+    if target_database.trim().is_empty() {
+        return Err("目标 database 不能为空".into());
+    }
+    let mut url = url::Url::parse(admin_database_url)?;
+    if !matches!(url.scheme(), "postgres" | "postgresql") {
+        return Err("admin database URL 必须使用 postgres/postgresql scheme".into());
+    }
+    url.set_path(&format!("/{}", target_database.trim()));
+    Ok(url.to_string())
+}
+
 pub fn derive_admin_profile_database_url(
     admin_database_url: &str,
     profile: &str,
@@ -437,7 +478,8 @@ pub fn admin_database_url_from_env_value(
 mod tests {
     use super::{
         admin_database_url_from_env_value, append_database_profile_text, config_path_from_env,
-        derive_admin_profile_database_url, derive_profile_database_url, generate_profile_password,
+        derive_admin_profile_database_url, derive_admin_target_database_url,
+        derive_profile_database_url, derive_target_database_url, generate_profile_password,
         local_api_base_url, parse_config_text, write_config_text_atomic,
     };
     use std::{ffi::OsString, path::PathBuf};
@@ -727,6 +769,31 @@ riko = "postgres://localhost/riko"
         assert_eq!(
             url,
             "postgresql://rikocodex:abc_DEF-123@127.0.0.1:5632/mem_rikocodex?sslmode=disable"
+        );
+    }
+
+    #[test]
+    fn derive_target_database_urls_preserve_admin_host_port_and_query() {
+        let profile_url = derive_target_database_url(
+            "postgresql://admin:secret@127.0.0.1:5632/postgres?sslmode=disable",
+            "maccodex",
+            "new_password",
+            "mem_codex",
+        )
+        .unwrap();
+        let admin_url = derive_admin_target_database_url(
+            "postgresql://admin:secret@127.0.0.1:5632/postgres?sslmode=disable",
+            "mem_codex",
+        )
+        .unwrap();
+
+        assert_eq!(
+            profile_url,
+            "postgresql://maccodex:new_password@127.0.0.1:5632/mem_codex?sslmode=disable"
+        );
+        assert_eq!(
+            admin_url,
+            "postgresql://admin:secret@127.0.0.1:5632/mem_codex?sslmode=disable"
         );
     }
 

@@ -35,7 +35,9 @@ pub(crate) fn agent_help_requested(args: &[String]) -> bool {
         match arg.as_str() {
             "--help" | "help" | "--tool=help" => return true,
             "--tool" if args.get(index + 1).is_some_and(|value| value == "help") => return true,
-            "--profile" | "--create_profile" | "--args" | "--auth" => skip_value = true,
+            "--profile" | "--create_profile" | "--target" | "--args" | "--auth" => {
+                skip_value = true
+            }
             _ => {}
         }
     }
@@ -53,5 +55,9 @@ mod tests {
             "help".to_string()
         ]));
         assert!(agent_help_requested(&["--help".to_string()]));
+        assert!(!agent_help_requested(&[
+            "--target".to_string(),
+            "help".to_string()
+        ]));
     }
 }
