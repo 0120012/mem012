@@ -67,6 +67,14 @@ export MEM012_ADMIN_DATABASE_URL="postgresql://${MEM012_ADMIN_POSTGRES_USER}:${M
 mem012 --create_profile codex
 ```
 
+To create a new profile role that reuses an existing database, pass `--target`. This does not create a second database:
+
+```bash
+mem012 --create_profile maccodex --target mem_codex
+```
+
+Omitting `--target`, or passing an empty value, keeps the default behavior of creating `mem_<profile>`.
+
 Creating a profile updates `config.toml`. Restart the service to load the new configuration and confirm that it is still running:
 
 ```bash
