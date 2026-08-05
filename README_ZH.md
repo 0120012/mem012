@@ -66,6 +66,14 @@ export MEM012_ADMIN_DATABASE_URL="postgresql://${MEM012_ADMIN_POSTGRES_USER}:${M
 mem012 --create_profile codex
 ```
 
+如果 profile 需要连接已经存在的数据库，可指定 `--target`。该模式会创建新的 PostgreSQL role，但不会创建新的数据库：
+
+```bash
+mem012 --create_profile maccodex --target mem_codex
+```
+
+不填写 `--target`，或传入空值，仍然创建默认的 `mem_{profile}` 数据库。
+
 创建 profile 会更新 `config.toml`。重启服务以加载新配置，并确认服务仍在运行：
 
 ```bash
