@@ -25,7 +25,80 @@ fn validate_profile_name(profile: &str) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+pub(crate) fn validate_target_database_name(
+    database: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：校验共享 profile 使用的既有数据库名称。
+    // Why：目标名会进入连接串和动态 SQL，必须在远端操作前收敛到安全标识符。
+    if database.len() > 63 {
+        return Err("目标 database 名称长度不能超过 63".into());
+    }
+    quoted_pg_identifier(database)?;
+    if matches!(database, "template0" | "template1") {
+        return Err("目标 database 是保留库".into());
+    }
+    Ok(())
+}
+
 const PROFILE_ADMIN_RESOURCES_SQL: &str = "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1), EXISTS(SELECT 1 FROM pg_database WHERE datname = $2)";
+const SHARED_TARGET_DATABASE_SQL: &str = "SELECT r.rolname, r.rolsuper FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE d.datname = $1";
+const SHARED_TARGET_SCHEMA_SQL: &str = r#"
+SELECT
+    to_regclass('public.memory_units') IS NOT NULL
+    AND to_regclass('public.memory_embeddings') IS NOT NULL
+    AND to_regclass('public.memory_keywords') IS NOT NULL
+    AND to_regclass('public.memory_search_index') IS NOT NULL
+    AND to_regclass('public.memory_usage') IS NOT NULL
+    AND to_regclass('public.memory_relations') IS NOT NULL
+    AND to_regclass('public.memory_changes') IS NOT NULL
+    AND to_regclass('public.memory_graph_meta') IS NOT NULL
+    AND to_regnamespace('memory_graph') IS NOT NULL,
+    current_database() = 'mem_share',
+    EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE c.contype = 'c'
+          AND n.nspname = 'public'
+          AND t.relname = 'memory_units'
+          AND pg_get_constraintdef(c.oid) LIKE '%category = ''share''%'
+    ),
+    EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE c.contype = 'c'
+          AND n.nspname = 'public'
+          AND t.relname = 'memory_units'
+          AND pg_get_constraintdef(c.oid) LIKE '%category <> ''share''%'
+    )
+"#;
+
+fn shared_profile_category_conflict(
+    profile: &str,
+    category_share_only: bool,
+    category_non_share: bool,
+) -> Option<String> {
+    // What：判断 profile 与目标库 memory_units 的 category 范围是否冲突。
+    // Why：共享 profile 不能在命令成功后才因数据库 CHECK constraint 失败。
+    if category_share_only && category_non_share {
+        return Some("目标 database 同时存在 share 和非 share category 约束，拒绝共享".into());
+    }
+    if !category_share_only && !category_non_share {
+        return Some("目标 database 缺少可识别的 category scope 约束，拒绝共享".into());
+    }
+    if profile == "share" && category_non_share {
+        return Some("profile `share` 不能连接禁止 category=share 的目标 database".into());
+    }
+    if profile != "share" && category_share_only {
+        return Some(format!(
+            "profile `{profile}` 不能连接只允许 category=share 的目标 database"
+        ));
+    }
+    None
+}
 
 fn profile_admin_resources_conflict_error(
     profile: &str,
@@ -57,6 +130,67 @@ pub(crate) async fn ensure_profile_admin_resources_absent(
         .await?;
     if let Some(error) =
         profile_admin_resources_conflict_error(profile, role_exists, database_exists)
+    {
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+pub(crate) async fn ensure_shared_profile_target(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    profile: &str,
+    target_database: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // What：预检共享 profile 的 role、目标数据库和数据库 owner。
+    // Why：共享路径只能新增 role，不能覆盖既有 role 或误操作不存在的目标库。
+    validate_profile_name(profile)?;
+    let target_database = target_database.trim();
+    validate_target_database_name(target_database)?;
+    let role_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)")
+            .bind(profile)
+            .fetch_one(pool)
+            .await?;
+    if role_exists {
+        return Err(format!("远端 role 已存在: {profile}").into());
+    }
+    let owner = sqlx::query_as::<_, (String, bool)>(SHARED_TARGET_DATABASE_SQL)
+        .bind(target_database)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| format!("目标 database 不存在: {target_database}"))?;
+    if owner.1 {
+        return Err(format!("目标 database owner 是 superuser，拒绝共享: {}", owner.0).into());
+    }
+    quoted_pg_identifier(&owner.0)?;
+    Ok(owner.0)
+}
+
+pub(crate) async fn ensure_shared_profile_schema(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    profile: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：确认目标数据库已经具备 mem012 基础表和 AGE 图 schema。
+    // Why：共享 profile 只复用既有库，不应在未知数据库上隐式初始化或改写结构。
+    validate_profile_name(profile)?;
+    let (ready, target_is_share_database, category_share_only, category_non_share): (
+        bool,
+        bool,
+        bool,
+        bool,
+    ) = sqlx::query_as(SHARED_TARGET_SCHEMA_SQL)
+        .fetch_one(pool)
+        .await?;
+    if !ready {
+        return Err("目标 database 不是已初始化的 mem012 库".into());
+    }
+    let category_profile = if target_is_share_database {
+        "share"
+    } else {
+        profile
+    };
+    if let Some(error) =
+        shared_profile_category_conflict(category_profile, category_share_only, category_non_share)
     {
         return Err(error.into());
     }
@@ -134,6 +268,51 @@ pub(crate) fn grant_connect_sql(profile: &str) -> Result<String, Box<dyn std::er
     let database_name = format!("mem_{profile}");
     let database = quoted_pg_identifier(&database_name)?;
     Ok(format!("GRANT CONNECT ON DATABASE {database} TO {role}"))
+}
+
+pub(crate) fn grant_connect_to_database_sql(
+    profile: &str,
+    target_database: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // What：生成新 profile 连接既有数据库的授权 SQL。
+    // Why：共享路径不能复用按 profile 派生的 mem_<profile> 数据库名。
+    let role = quoted_pg_identifier(profile)?;
+    let target_database = target_database.trim();
+    validate_target_database_name(target_database)?;
+    let database = quoted_pg_identifier(target_database)?;
+    Ok(format!("GRANT CONNECT ON DATABASE {database} TO {role}"))
+}
+
+pub(crate) fn revoke_connect_to_database_sql(
+    profile: &str,
+    target_database: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let role = quoted_pg_identifier(profile)?;
+    let target_database = target_database.trim();
+    validate_target_database_name(target_database)?;
+    let database = quoted_pg_identifier(target_database)?;
+    Ok(format!("REVOKE CONNECT ON DATABASE {database} FROM {role}"))
+}
+
+pub(crate) fn revoke_role_membership_sql(
+    owner: &str,
+    profile: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let owner = quoted_pg_identifier(owner)?;
+    let profile = quoted_pg_identifier(profile)?;
+    Ok(format!("REVOKE {owner} FROM {profile}"))
+}
+
+pub(crate) fn drop_owned_sql(profile: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let profile = quoted_pg_identifier(profile)?;
+    Ok(format!("DROP OWNED BY {profile}"))
+}
+
+pub(crate) fn grant_public_schema_usage_sql(
+    profile: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let role = quoted_pg_identifier(profile)?;
+    Ok(format!("GRANT USAGE ON SCHEMA public TO {role}"))
 }
 
 pub(crate) fn grant_public_schema_usage_create_sql(
@@ -330,6 +509,28 @@ $reassign$;
     ))
 }
 
+pub(crate) fn reassign_memory_graph_rebuild_function_owner_sql(
+    profile: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let role = quoted_pg_identifier(profile)?;
+    Ok(format!(
+        "ALTER FUNCTION public.mem012_rebuild_memory_graph() OWNER TO {role}"
+    ))
+}
+
+pub(crate) fn grant_memory_graph_rebuild_execute_sql(
+    profile: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let role = quoted_pg_identifier(profile)?;
+    Ok(format!(
+        "GRANT EXECUTE ON FUNCTION public.mem012_rebuild_memory_graph() TO {role}"
+    ))
+}
+
+pub(crate) fn revoke_memory_graph_rebuild_public_execute_sql() -> &'static str {
+    "REVOKE ALL ON FUNCTION public.mem012_rebuild_memory_graph() FROM PUBLIC"
+}
+
 pub(crate) fn load_age_sql() -> &'static str {
     "LOAD 'age'"
 }
@@ -352,6 +553,10 @@ pub(crate) fn profile_database_setup_sql(
         set_age_search_path_sql().to_string(),
         create_memory_graph_sql().to_string(),
         reassign_memory_graph_owner_sql(profile)?,
+        super::age_graph::create_memory_graph_rebuild_function_sql().to_string(),
+        reassign_memory_graph_rebuild_function_owner_sql(profile)?,
+        revoke_memory_graph_rebuild_public_execute_sql().to_string(),
+        grant_memory_graph_rebuild_execute_sql(profile)?,
         grant_public_schema_usage_create_sql(profile)?,
         grant_ag_catalog_schema_usage_sql(profile)?,
         grant_agtype_usage_sql(profile)?,
@@ -407,6 +612,36 @@ pub(crate) async fn cleanup_profile_admin_resources(
     Ok(())
 }
 
+async fn cleanup_shared_profile_admin_resources(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    profile: &str,
+    target_database: &str,
+    owner: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let statements = [
+        revoke_connect_to_database_sql(profile, target_database)?,
+        revoke_role_membership_sql(owner, profile)?,
+        drop_profile_role_sql(profile)?,
+    ];
+    for statement in statements {
+        sqlx::query(&statement).execute(pool).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn cleanup_shared_profile_resources(
+    target_pool: &sqlx::Pool<sqlx::Postgres>,
+    admin_pool: &sqlx::Pool<sqlx::Postgres>,
+    profile: &str,
+    target_database: &str,
+    owner: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    sqlx::query(&drop_owned_sql(profile)?)
+        .execute(target_pool)
+        .await?;
+    cleanup_shared_profile_admin_resources(admin_pool, profile, target_database, owner).await
+}
+
 pub(crate) async fn apply_profile_admin_setup_sql(
     pool: &sqlx::Pool<sqlx::Postgres>,
     profile: &str,
@@ -429,16 +664,15 @@ pub(crate) async fn apply_profile_admin_setup_sql(
             let original = format!(
                 "create_profile admin step `{stage}` failed for role `{profile}` database `{database_name}`: {error}"
             );
-            if role_created || database_created {
-                if let Err(cleanup_error) =
+            if (role_created || database_created)
+                && let Err(cleanup_error) =
                     cleanup_profile_admin_resources(pool, profile, database_created, role_created)
                         .await
-                {
-                    return Err(std::io::Error::other(format!(
-                        "{original}; cleanup failed: {cleanup_error}"
-                    ))
-                    .into());
-                }
+            {
+                return Err(std::io::Error::other(format!(
+                    "{original}; cleanup failed: {cleanup_error}"
+                ))
+                .into());
             }
             return Err(std::io::Error::other(original).into());
         }
@@ -448,6 +682,83 @@ pub(crate) async fn apply_profile_admin_setup_sql(
             _ => {}
         }
     }
+    Ok(())
+}
+
+pub(crate) async fn apply_shared_profile_admin_setup_sql(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    profile: &str,
+    target_database: &str,
+    owner: &str,
+    password: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // What：在管理员连接上创建共享 profile role，并授权目标库连接。
+    // Why：图重建通过目标 owner 所有的 SECURITY DEFINER 函数执行，不让登录 role 继承 owner。
+    validate_profile_name(profile)?;
+    validate_target_database_name(target_database.trim())?;
+    quoted_pg_identifier(owner)?;
+    let statements = [
+        ("create role", create_role_sql(profile, password)?),
+        (
+            "grant database connect",
+            grant_connect_to_database_sql(profile, target_database)?,
+        ),
+    ];
+    let mut role_created = false;
+    for (stage, statement) in statements {
+        if let Err(error) = sqlx::query(&statement).execute(pool).await {
+            let original = format!(
+                "shared create_profile admin step `{stage}` failed for role `{profile}` database `{target_database}`: {error}"
+            );
+            if role_created
+                && let Err(cleanup_error) =
+                    cleanup_shared_profile_admin_resources(pool, profile, target_database, owner)
+                        .await
+            {
+                return Err(std::io::Error::other(format!(
+                    "{original}; cleanup failed: {cleanup_error}"
+                ))
+                .into());
+            }
+            return Err(std::io::Error::other(original).into());
+        }
+        if stage == "create role" {
+            role_created = true;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn shared_profile_database_setup_sql(
+    profile: &str,
+    owner: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    // What：生成共享 profile 在既有 mem012 库上需要的 schema、表、序列和 AGE 权限。
+    // Why：目标库已有扩展和图结构，复用路径只能授权，不能执行新库初始化或转移 owner。
+    validate_profile_name(profile)?;
+    quoted_pg_identifier(owner)?;
+    Ok(vec![
+        super::age_graph::create_memory_graph_rebuild_function_sql().to_string(),
+        reassign_memory_graph_rebuild_function_owner_sql(owner)?,
+        revoke_memory_graph_rebuild_public_execute_sql().to_string(),
+        grant_memory_graph_rebuild_execute_sql(profile)?,
+        grant_public_schema_usage_sql(profile)?,
+        grant_public_tables_dml_sql(profile)?,
+        grant_public_sequences_usage_sql(profile)?,
+    ])
+}
+
+pub(crate) async fn apply_shared_profile_database_setup_sql(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    profile: &str,
+    owner: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let statements = shared_profile_database_setup_sql(profile, owner)?;
+    let mut tx = pool.begin().await?;
+    for statement in statements {
+        sqlx::query(&statement).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -466,12 +777,13 @@ pub(crate) async fn initialize_profile_database_schema(
 #[cfg(test)]
 mod tests {
     use super::{
-        PROFILE_ADMIN_RESOURCES_SQL, apply_profile_admin_setup_sql,
+        PROFILE_ADMIN_RESOURCES_SQL, SHARED_TARGET_DATABASE_SQL, apply_profile_admin_setup_sql,
         apply_profile_database_setup_sql, cleanup_profile_admin_resources, create_database_sql,
-        create_extension_sql, create_memory_graph_sql, create_role_sql, drop_profile_database_sql,
-        drop_profile_role_sql, ensure_profile_admin_resources_absent,
-        grant_ag_catalog_functions_execute_sql, grant_ag_catalog_schema_usage_sql,
-        grant_agtype_usage_sql, grant_connect_sql, grant_memory_graph_schema_usage_create_sql,
+        create_extension_sql, create_memory_graph_sql, create_role_sql, drop_owned_sql,
+        drop_profile_database_sql, drop_profile_role_sql, ensure_profile_admin_resources_absent,
+        ensure_shared_profile_target, grant_ag_catalog_functions_execute_sql,
+        grant_ag_catalog_schema_usage_sql, grant_agtype_usage_sql, grant_connect_sql,
+        grant_connect_to_database_sql, grant_memory_graph_schema_usage_create_sql,
         grant_memory_graph_sequences_default_privileges_sql,
         grant_memory_graph_sequences_usage_sql, grant_memory_graph_tables_default_privileges_sql,
         grant_memory_graph_tables_dml_sql, grant_public_schema_usage_create_sql,
@@ -479,8 +791,10 @@ mod tests {
         grant_public_tables_default_privileges_sql, grant_public_tables_dml_sql,
         initialize_profile_database_schema, load_age_sql, profile_admin_resources_conflict_error,
         profile_database_setup_sql, quoted_pg_identifier, reassign_memory_graph_owner_sql,
-        revoke_public_connect_sql, set_age_search_path_sql,
-        terminate_profile_database_connections_sql,
+        revoke_connect_to_database_sql, revoke_memory_graph_rebuild_public_execute_sql,
+        revoke_public_connect_sql, revoke_role_membership_sql, set_age_search_path_sql,
+        shared_profile_category_conflict, shared_profile_database_setup_sql,
+        terminate_profile_database_connections_sql, validate_target_database_name,
     };
 
     #[test]
@@ -502,6 +816,15 @@ mod tests {
                 "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
             );
         }
+    }
+
+    #[test]
+    fn target_database_name_validation_rejects_invalid_names() {
+        for database in ["", "Mem_codex", "mem-codex", "template0", "template1"] {
+            assert!(validate_target_database_name(database).is_err());
+        }
+        assert!(validate_target_database_name(&"a".repeat(64)).is_err());
+        assert!(validate_target_database_name("mem_codex").is_ok());
     }
 
     #[test]
@@ -557,6 +880,18 @@ mod tests {
             drop_profile_role_sql("rikocodex").unwrap(),
             "DROP ROLE IF EXISTS \"rikocodex\""
         );
+        assert_eq!(
+            drop_owned_sql("maccodex").unwrap(),
+            "DROP OWNED BY \"maccodex\""
+        );
+        assert_eq!(
+            revoke_connect_to_database_sql("maccodex", "mem_codex").unwrap(),
+            "REVOKE CONNECT ON DATABASE \"mem_codex\" FROM \"maccodex\""
+        );
+        assert_eq!(
+            revoke_role_membership_sql("codex", "maccodex").unwrap(),
+            "REVOKE \"codex\" FROM \"maccodex\""
+        );
     }
 
     #[test]
@@ -602,6 +937,45 @@ mod tests {
             error.to_string(),
             "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
         );
+    }
+
+    #[test]
+    fn shared_profile_sql_targets_existing_database_and_owner() {
+        assert_eq!(
+            grant_connect_to_database_sql("maccodex", "mem_codex").unwrap(),
+            "GRANT CONNECT ON DATABASE \"mem_codex\" TO \"maccodex\""
+        );
+        let sql = shared_profile_database_setup_sql("maccodex", "codex").unwrap();
+        assert_eq!(sql.len(), 7);
+        assert!(sql.iter().any(|statement| {
+            statement.contains("SECURITY DEFINER")
+                && statement.contains("public.mem012_rebuild_memory_graph")
+        }));
+        assert!(
+            sql.iter()
+                .any(|statement| { statement == "GRANT USAGE ON SCHEMA public TO \"maccodex\"" })
+        );
+        assert!(sql.iter().all(|statement| {
+            !statement.contains("GRANT USAGE, CREATE ON SCHEMA memory_graph")
+                && !statement.contains("ALTER DEFAULT PRIVILEGES")
+        }));
+        assert!(
+            sql.iter()
+                .all(|statement| !statement.contains("CREATE DATABASE"))
+        );
+        assert!(
+            sql.iter()
+                .all(|statement| !statement.contains("ALTER SCHEMA"))
+        );
+    }
+
+    #[test]
+    fn shared_profile_category_conflict_rejects_incompatible_targets() {
+        assert!(shared_profile_category_conflict("maccodex", true, false).is_some());
+        assert!(shared_profile_category_conflict("share", false, true).is_some());
+        assert!(shared_profile_category_conflict("maccodex", false, true).is_none());
+        assert!(shared_profile_category_conflict("share", true, false).is_none());
+        assert!(shared_profile_category_conflict("maccodex", false, false).is_some());
     }
 
     #[test]
@@ -912,7 +1286,7 @@ mod tests {
     fn profile_database_setup_sql_orders_extension_age_and_permission_sql() {
         let sql = profile_database_setup_sql("rikocodex").unwrap();
 
-        assert_eq!(sql.len(), 20);
+        assert_eq!(sql.len(), 24);
         assert_eq!(sql[0], "CREATE EXTENSION IF NOT EXISTS vector");
         assert_eq!(sql[1], "CREATE EXTENSION IF NOT EXISTS pg_trgm");
         assert_eq!(sql[2], "CREATE EXTENSION IF NOT EXISTS age");
@@ -923,8 +1297,18 @@ mod tests {
         );
         assert!(sql[5].contains("PERFORM ag_catalog.create_graph('memory_graph')"));
         assert!(sql[6].contains("ALTER SCHEMA memory_graph OWNER TO \"rikocodex\""));
+        assert!(sql[7].contains("SECURITY DEFINER"));
         assert_eq!(
-            sql[19],
+            sql[8],
+            "ALTER FUNCTION public.mem012_rebuild_memory_graph() OWNER TO \"rikocodex\""
+        );
+        assert_eq!(sql[9], revoke_memory_graph_rebuild_public_execute_sql());
+        assert_eq!(
+            sql[10],
+            "GRANT EXECUTE ON FUNCTION public.mem012_rebuild_memory_graph() TO \"rikocodex\""
+        );
+        assert_eq!(
+            sql[23],
             "ALTER DEFAULT PRIVILEGES FOR ROLE \"rikocodex\" IN SCHEMA memory_graph GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO \"rikocodex\""
         );
         assert!(sql.iter().all(|statement| !statement.contains("uutest")));
@@ -964,6 +1348,8 @@ mod tests {
         assert!(PROFILE_ADMIN_RESOURCES_SQL.contains("datname = $2"));
         assert!(!PROFILE_ADMIN_RESOURCES_SQL.contains("rikocodex"));
         assert!(!PROFILE_ADMIN_RESOURCES_SQL.contains("mem_"));
+        assert!(SHARED_TARGET_DATABASE_SQL.contains("datname = $1"));
+        assert!(!SHARED_TARGET_DATABASE_SQL.contains("mem_codex"));
     }
 
     #[test]
@@ -995,6 +1381,29 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
+            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_shared_profile_target_rejects_invalid_input_before_querying() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://invalid:invalid@127.0.0.1:1/invalid")
+            .unwrap();
+
+        let profile_error = ensure_shared_profile_target(&pool, "riko-codex", "mem_codex")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            profile_error.to_string(),
+            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
+        );
+
+        let database_error = ensure_shared_profile_target(&pool, "maccodex", "mem-codex")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            database_error.to_string(),
             "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
         );
     }

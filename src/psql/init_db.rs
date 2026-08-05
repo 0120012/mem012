@@ -1,18 +1,41 @@
 use sqlx::{Acquire, Pool, Postgres};
 
+fn reset_db_owner_error(profile: &str, database: &str, owner: &str) -> Option<String> {
+    // What：生成 reset_db 作用域冲突错误。
+    // Why：只有数据库 owner 才能安全清理自己的 profile 数据，成员角色不能触发共享库清理。
+    (owner != profile).then(|| {
+        format!(
+            "reset_db 仅允许清理 profile 自有数据库：database `{database}` owner 是 `{owner}`，profile 是 `{profile}`"
+        )
+    })
+}
+
+fn memory_db_label(profile: &str) -> String {
+    if profile == "share" {
+        "share".to_string()
+    } else {
+        format!("profile {profile}")
+    }
+}
+
 // Why：初始化入口必须独立于服务启动，避免运行态自动修改非当前 profile 库。
 pub async fn init_db(
     pool: &Pool<Postgres>,
     profile: &str,
     reset_db: bool,
 ) -> Result<bool, sqlx::Error> {
-    let db_label = if profile == "share" {
-        "share".to_string()
-    } else {
-        format!("profile {profile}")
-    };
+    let db_label = memory_db_label(profile);
     if reset_db {
         // Why：init_db 只收敛当前 profile 对应库，避免隐式创建或清理其他 profile 库表结构。
+        // Why：共享 profile 会继承目标 owner 权限，清理非自身 owner 的库会波及其他 profile。
+        let (database, owner): (String, String) = sqlx::query_as(
+            "SELECT current_database(), pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()",
+        )
+        .fetch_one(pool)
+        .await?;
+        if let Some(error) = reset_db_owner_error(profile, &database, &owner) {
+            return Err(sqlx::Error::protocol(error));
+        }
         reset_memory_tables(pool, db_label.as_str()).await?;
     }
 
@@ -27,7 +50,7 @@ pub(crate) async fn init_profile_memory_tables(
 ) -> Result<(), sqlx::Error> {
     // What：只创建/迁移 mem012 主表和索引，不执行扩展或 AGE graph DDL。
     // Why：create_profile 已用 admin 完成扩展和权限设置，profile 连接只应验证运行期 schema 权限。
-    let db_label = format!("profile {profile}");
+    let db_label = memory_db_label(profile);
     migrate_memory_tables(pool, db_label.as_str(), false).await
 }
 
@@ -614,5 +637,25 @@ async fn cr_memory_embeddings_table(
             eprintln!("memory_embeddings 表创建失败: {error}");
             Err(error)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{memory_db_label, reset_db_owner_error};
+
+    #[test]
+    fn share_profile_uses_share_database_label() {
+        assert_eq!(memory_db_label("share"), "share");
+        assert_eq!(memory_db_label("codex"), "profile codex");
+    }
+
+    #[test]
+    fn reset_db_allows_only_database_owner() {
+        assert!(reset_db_owner_error("codex", "mem_codex", "codex").is_none());
+        assert_eq!(
+            reset_db_owner_error("maccodex", "mem_codex", "codex").unwrap(),
+            "reset_db 仅允许清理 profile 自有数据库：database `mem_codex` owner 是 `codex`，profile 是 `maccodex`"
+        );
     }
 }

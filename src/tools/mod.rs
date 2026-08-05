@@ -36,10 +36,11 @@ pub async fn dispatch_auth_command(
 pub async fn dispatch_create_profile_command(
     config: &crate::config::Config,
     profile: &str,
+    target: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // What：分发顶层 `mem012 --create_profile` 命令。
     // Why：main 只保留入口编排，profile 创建的副作用集中在独立工具模块。
-    create_profile::run(config, profile).await
+    create_profile::run(config, profile, target).await
 }
 
 pub async fn dispatch_init_command(

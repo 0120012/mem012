@@ -12,6 +12,7 @@ struct CliArgs {
     command: Option<String>,
     profile: Option<String>,
     create_profile: Option<String>,
+    target: Option<String>,
     args_json: Option<String>,
     auth_token: Option<String>,
 }
@@ -43,7 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if let Some(create_profile) = cli_args.create_profile.as_deref() {
-        tools::dispatch_create_profile_command(&config, create_profile).await?;
+        tools::dispatch_create_profile_command(&config, create_profile, cli_args.target.as_deref())
+            .await?;
         return Ok(());
     }
     if let Some(auth_token) = cli_args.auth_token {

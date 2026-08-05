@@ -19,8 +19,11 @@ pub use memories::{
     MemoryUpdateInput, list_memories, list_memory_category_keywords, update_memory,
 };
 pub(crate) use profile::{
-    apply_profile_admin_setup_sql, cleanup_profile_admin_resources,
-    ensure_profile_admin_resources_absent, initialize_profile_database_schema,
+    apply_profile_admin_setup_sql, apply_shared_profile_admin_setup_sql,
+    apply_shared_profile_database_setup_sql, cleanup_profile_admin_resources,
+    cleanup_shared_profile_resources, ensure_profile_admin_resources_absent,
+    ensure_shared_profile_schema, ensure_shared_profile_target, initialize_profile_database_schema,
+    validate_target_database_name,
 };
 pub(crate) use relations::memory_state;
 pub use relations::{
