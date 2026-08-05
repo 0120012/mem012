@@ -52,6 +52,7 @@ SELECT
     AND to_regclass('public.memory_relations') IS NOT NULL
     AND to_regclass('public.memory_changes') IS NOT NULL
     AND to_regclass('public.memory_graph_meta') IS NOT NULL
+    AND to_regprocedure('public.normalize_title(text)') IS NOT NULL
     AND to_regnamespace('memory_graph') IS NOT NULL,
     current_database() = 'mem_share',
     EXISTS (
@@ -183,6 +184,12 @@ pub(crate) async fn ensure_shared_profile_schema(
         .await?;
     if !ready {
         return Err("目标 database 不是已初始化的 mem012 库".into());
+    }
+    if target_is_share_database && profile != "share" {
+        return Err(format!(
+            "目标 database `mem_share` 仅允许 profile `share`，拒绝关联 `{profile}`"
+        )
+        .into());
     }
     let category_profile = if target_is_share_database {
         "share"
