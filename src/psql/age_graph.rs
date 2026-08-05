@@ -49,6 +49,27 @@ $function$;
 pub async fn rebuild_memory_graph(pool: &sqlx::Pool<sqlx::Postgres>) -> Result<(), sqlx::Error> {
     let mut conn = pool.acquire().await?;
     load_age_if_allowed(&mut conn).await?;
+    let missing_rebuild_function: bool = sqlx::query_scalar(
+        "SELECT to_regprocedure('public.mem012_rebuild_memory_graph()') IS NULL",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if missing_rebuild_function {
+        // Why：旧库可能未经过 profile setup，先补齐函数再调用以保留重建入口兼容性。
+        sqlx::query(create_memory_graph_rebuild_function_sql())
+            .execute(&mut *conn)
+            .await?;
+        // Why：SECURITY DEFINER 默认向 PUBLIC 授予 EXECUTE，必须限制为当前 profile。
+        sqlx::query("REVOKE ALL ON FUNCTION public.mem012_rebuild_memory_graph() FROM PUBLIC")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(
+            "GRANT EXECUTE ON FUNCTION public.mem012_rebuild_memory_graph() TO CURRENT_USER",
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+
     let mut tx = conn.begin().await?;
     sqlx::query("SELECT public.mem012_rebuild_memory_graph()")
         .execute(&mut *tx)
