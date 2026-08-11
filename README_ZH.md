@@ -10,6 +10,28 @@ mem012 是一个所有Agent的CLI 记忆系统，提供持久化记忆与 RAG �
 - **独立记忆**：不同 Agent 可以拥有独立记忆空间，避免上下文互相污染。
 - **可视化记忆审查**：Agent 负责调用，Web 界面负责审查：可集中查看记忆与变更记录，并进行审核、批准、拒绝、恢复和维护。
 
+## 快速体验
+
+<details>
+<summary>自行编译部署，快速体验记忆系统</summary>
+
+### 1. 从源码编译并部署
+
+项目不提供预编译版本，请先安装 Rust 和 Cargo，然后在项目根目录执行：
+
+```bash
+cp config.example.toml config.toml
+sh install.sh --backend
+```
+
+Linux 使用 systemd 时，确认后端服务已启动：
+
+```bash
+sudo systemctl is-active --quiet mem012.service
+```
+
+</details>
+
 ## 1. 配置config.toml：
 
 ```bash
