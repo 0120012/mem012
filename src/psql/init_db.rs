@@ -18,11 +18,27 @@ fn memory_db_label(profile: &str) -> String {
     }
 }
 
+fn memory_embeddings_table_sql(embeddings_dimension: usize) -> String {
+    format!(
+        r#"
+        CREATE TABLE memory_embeddings (
+            memory_uuid UUID PRIMARY KEY REFERENCES memory_units(uuid) ON DELETE CASCADE,
+            embedding vector({embeddings_dimension}) NOT NULL,
+            embedding_model TEXT NOT NULL,
+            embedding_dimension INT NOT NULL CHECK (embedding_dimension = {embeddings_dimension}),
+            embedded_at TIMESTAMPTZ NOT NULL,
+            CHECK (embedding_model <> '')
+        );
+        "#
+    )
+}
+
 // Why：初始化入口必须独立于服务启动，避免运行态自动修改非当前 profile 库。
 pub async fn init_db(
     pool: &Pool<Postgres>,
     profile: &str,
     reset_db: bool,
+    embeddings_dimension: usize,
 ) -> Result<bool, sqlx::Error> {
     let db_label = memory_db_label(profile);
     if reset_db {
@@ -39,7 +55,7 @@ pub async fn init_db(
         reset_memory_tables(pool, db_label.as_str()).await?;
     }
 
-    migrate_memory_tables(pool, db_label.as_str(), true).await?;
+    migrate_memory_tables(pool, db_label.as_str(), true, embeddings_dimension).await?;
 
     Ok(true)
 }
@@ -47,11 +63,12 @@ pub async fn init_db(
 pub(crate) async fn init_profile_memory_tables(
     pool: &Pool<Postgres>,
     profile: &str,
+    embeddings_dimension: usize,
 ) -> Result<(), sqlx::Error> {
     // What：只创建/迁移 mem012 主表和索引，不执行扩展或 AGE graph DDL。
     // Why：create_profile 已用 admin 完成扩展和权限设置，profile 连接只应验证运行期 schema 权限。
     let db_label = memory_db_label(profile);
-    migrate_memory_tables(pool, db_label.as_str(), false).await
+    migrate_memory_tables(pool, db_label.as_str(), false, embeddings_dimension).await
 }
 
 async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
@@ -80,10 +97,12 @@ async fn migrate_memory_tables(
     pool: &Pool<Postgres>,
     db_label: &str,
     include_extension_setup: bool,
+    embeddings_dimension: usize,
 ) -> Result<(), sqlx::Error> {
     // Why：profile 库和 share 库结构一致，复用同一套建表顺序可以避免 schema 漂移。
     drop_memory_handles(pool).await?;
     if schema_ready(pool).await? {
+        ensure_memory_embeddings_dimension(pool, embeddings_dimension).await?;
         drop_memory_exclude_when(pool).await?;
         ensure_memory_summary_optional(pool).await?;
         ensure_memory_status_constraint(pool).await?;
@@ -99,7 +118,7 @@ async fn migrate_memory_tables(
     cr_normalize_title_function(pool).await?;
     cr_memory_units_table(pool, db_label).await?;
     ensure_memory_status_constraint(pool).await?;
-    cr_memory_embeddings_table(pool, include_extension_setup).await?;
+    cr_memory_embeddings_table(pool, include_extension_setup, embeddings_dimension).await?;
     cr_memory_keywords_table(pool).await?;
     cr_memory_search_index_table(pool).await?;
     cr_memory_usage_table(pool).await?;
@@ -110,6 +129,44 @@ async fn migrate_memory_tables(
     cr_memory_indexes(pool, db_label, include_extension_setup).await?;
     if include_extension_setup {
         ensure_memory_graph(pool).await?;
+    }
+    Ok(())
+}
+
+async fn ensure_memory_embeddings_dimension(
+    pool: &Pool<Postgres>,
+    expected_dimension: usize,
+) -> Result<(), sqlx::Error> {
+    // What：检查已有 memory_embeddings 的向量类型和维度约束是否匹配配置。
+    // Why：已有完整 schema 会跳过建表，必须在启动时阻止配置与数据库漂移到审批阶段才失败。
+    let expected_type = format!("vector({expected_dimension})");
+    let check_pattern = format!("%embedding_dimension = {expected_dimension}%");
+    let Some((actual_type, check_ok)): Option<(String, bool)> = sqlx::query_as(
+        r#"
+        SELECT format_type(a.atttypid, a.atttypmod), EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = 'public.memory_embeddings'::regclass
+                AND contype = 'c'
+                AND pg_get_constraintdef(oid) LIKE $1
+        )
+        FROM pg_attribute a
+        WHERE a.attrelid = 'public.memory_embeddings'::regclass
+            AND a.attname = 'embedding'
+            AND NOT a.attisdropped
+        "#,
+    )
+    .bind(check_pattern)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Err(sqlx::Error::protocol(
+            "memory_embeddings.embedding 列不存在，请先完成数据库迁移",
+        ));
+    };
+    if actual_type != expected_type || !check_ok {
+        return Err(sqlx::Error::protocol(format!(
+            "memory_embeddings 维度不匹配：数据库为 {actual_type}，配置要求 {expected_type}；请先清空旧向量并迁移表结构",
+        )));
     }
     Ok(())
 }
@@ -605,6 +662,7 @@ async fn cr_memory_units_table(
 async fn cr_memory_embeddings_table(
     pool: &sqlx::Pool<sqlx::Postgres>,
     include_extension_setup: bool,
+    embeddings_dimension: usize,
 ) -> Result<(), sqlx::Error> {
     // Why：vector 类型来自 pgvector 扩展，建 embedding 表前必须先让当前数据库启用它。
     if include_extension_setup {
@@ -613,20 +671,8 @@ async fn cr_memory_embeddings_table(
             .await?;
     }
 
-    let cr_memory_embeddings = sqlx::query(
-        r#"
-        CREATE TABLE memory_embeddings (
-            memory_uuid UUID PRIMARY KEY REFERENCES memory_units(uuid) ON DELETE CASCADE,
-            embedding vector(1024) NOT NULL,
-            embedding_model TEXT NOT NULL,
-            embedding_dimension INT NOT NULL CHECK (embedding_dimension = 1024),
-            embedded_at TIMESTAMPTZ NOT NULL,
-            CHECK (embedding_model <> '')
-        );
-        "#,
-    )
-    .execute(pool)
-    .await;
+    let create_sql = memory_embeddings_table_sql(embeddings_dimension);
+    let cr_memory_embeddings = sqlx::query(&create_sql).execute(pool).await;
 
     match cr_memory_embeddings {
         Ok(_) => {
@@ -642,7 +688,7 @@ async fn cr_memory_embeddings_table(
 
 #[cfg(test)]
 mod tests {
-    use super::{memory_db_label, reset_db_owner_error};
+    use super::{memory_db_label, memory_embeddings_table_sql, reset_db_owner_error};
 
     #[test]
     fn share_profile_uses_share_database_label() {
@@ -657,5 +703,13 @@ mod tests {
             reset_db_owner_error("maccodex", "mem_codex", "codex").unwrap(),
             "reset_db 仅允许清理 profile 自有数据库：database `mem_codex` owner 是 `codex`，profile 是 `maccodex`"
         );
+    }
+
+    #[test]
+    fn embedding_table_uses_configured_dimension() {
+        let sql = memory_embeddings_table_sql(768);
+        assert!(sql.contains("embedding vector(768)"));
+        assert!(sql.contains("embedding_dimension = 768"));
+        assert!(!sql.contains("1024"));
     }
 }

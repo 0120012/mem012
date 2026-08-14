@@ -45,7 +45,13 @@ pub(crate) async fn create(
     let create_args = serde_json::from_value::<CreateMemoryArgs>(args.clone())?;
     validate_create_memory_args(&create_args, context.profile, context.category_index_list)?;
     if context.reset_db {
-        crate::psql::init_db(context.profile_pool, context.profile, true).await?;
+        crate::psql::init_db(
+            context.profile_pool,
+            context.profile,
+            true,
+            context.embeddings_dimension,
+        )
+        .await?;
     }
     if is_init_create(&create_args, context.profile) {
         consume_init_auth_grant(context.api_base_url).await?;

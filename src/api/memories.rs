@@ -243,6 +243,7 @@ async fn create_memory_data(project: &str, payload: Value) -> Result<String, Api
         category_index_list: config.category_index_list(),
         api_base_url: &api_base_url,
         embedding_settings: None,
+        embeddings_dimension: config.embeddings_dimension(),
         rerank_settings: None,
         reset_db: false,
     };

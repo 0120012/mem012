@@ -182,13 +182,11 @@ impl Config {
     }
 
     pub fn embedding_settings(&self) -> Option<EmbeddingSettings> {
-        // Why：embedding 是派生索引能力，配置为空时应跳过生成而不是阻塞主流程。
+        // Why：embedding 是派生索引能力，api 为空视为未配置并跳过；key 只是可选鉴权，
+        // 私有/自建 endpoint（如 VPS 部署的 bge）通常无鉴权，空 key 不得作为禁用条件。
         let api = self.embeddings.embeddings_api.trim();
         let key = self.embeddings.embeddings_key.trim();
         if api.is_empty() {
-            return None;
-        }
-        if api != "local" && key.is_empty() {
             return None;
         }
         Some(EmbeddingSettings {
@@ -208,7 +206,7 @@ impl Config {
                 .as_deref()
                 .unwrap_or("BAAI/bge-m3")
                 .to_string(),
-            dimension: self.embeddings.embeddings_dimension.unwrap_or(1024),
+            dimension: self.embeddings_dimension(),
             // Why：默认值按 BAAI/bge-m3 实测标定（无关 score ≤ 0.36，相关 ≥ 0.54，取中值 0.45 即距离 0.55）；更换模型需在 config 重标。
             fallback_max_distance: self
                 .embeddings
@@ -216,6 +214,11 @@ impl Config {
                 .unwrap_or(0.55),
             proxy: self.provider_proxy(),
         })
+    }
+
+    pub fn embeddings_dimension(&self) -> usize {
+        // Why：数据库向量列和 provider 返回值必须共享同一份配置维度。
+        self.embeddings.embeddings_dimension.unwrap_or(1024)
     }
 
     fn provider_proxy(&self) -> Option<String> {
@@ -533,6 +536,26 @@ server = { addr = "127.0.0.1:3012" }
         assert!(entries.contains(&("riko", "postgres://localhost/riko")));
         assert!(entries.contains(&("claude", "postgres://localhost/claude")));
         assert!(entries.contains(&("share", "postgres://localhost/share")));
+    }
+
+    #[test]
+    fn embedding_settings_allows_keyless_private_endpoint() {
+        let config = parse_config_text(
+            r#"
+database = { riko = "postgres://localhost/riko", claude = "postgres://localhost/claude", share = "postgres://localhost/share" }
+search = { default_limit = 5, graph_expand_depth = 1, keyword = 1, fulltext = 1, semantic = 1, graph = 1, stale_penalty = 1 }
+embeddings = { embeddings_api = "http://10.0.0.1:8080/v1", embeddings_key = "" }
+cleanup = { trash_retention_minutes = 10080, sweep_interval_minutes = 5 }
+server = { addr = "127.0.0.1:3012" }
+"#,
+        )
+        .unwrap();
+
+        let settings = config
+            .embedding_settings()
+            .expect("无 key 的私有 endpoint 应启用 embedding");
+        assert_eq!(settings.api, "http://10.0.0.1:8080/v1");
+        assert!(settings.key.is_empty());
     }
 
     #[test]

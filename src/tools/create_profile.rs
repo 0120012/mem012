@@ -45,6 +45,7 @@ pub(crate) async fn run(
             &admin_profile_pool,
             &profile_pool,
             profile,
+            config.embeddings_dimension(),
         )
         .await?;
         crate::config::write_config_text_atomic(&config_path, &updated_config)?;

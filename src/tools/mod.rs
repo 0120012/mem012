@@ -20,6 +20,7 @@ pub struct ToolContext<'a> {
     pub category_index_list: &'a [String],
     pub api_base_url: &'a str,
     pub embedding_settings: Option<&'a crate::config::EmbeddingSettings>,
+    pub embeddings_dimension: usize,
     pub rerank_settings: Option<&'a crate::config::RerankSettings>,
     pub reset_db: bool,
 }

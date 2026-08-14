@@ -773,11 +773,12 @@ pub(crate) async fn initialize_profile_database_schema(
     admin_profile_pool: &sqlx::Pool<sqlx::Postgres>,
     profile_pool: &sqlx::Pool<sqlx::Postgres>,
     profile: &str,
+    embeddings_dimension: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // What：初始化新 profile database 内的扩展、权限和 mem012 表结构。
     // Why：扩展和权限需要 admin 执行，mem012 表结构必须用 profile 连接创建以匹配运行期权限。
     apply_profile_database_setup_sql(admin_profile_pool, profile).await?;
-    super::init_profile_memory_tables(profile_pool, profile).await?;
+    super::init_profile_memory_tables(profile_pool, profile, embeddings_dimension).await?;
     Ok(())
 }
 
@@ -1482,7 +1483,7 @@ mod tests {
             .connect_lazy("postgres://invalid:invalid@127.0.0.1:1/invalid")
             .unwrap();
 
-        let error = initialize_profile_database_schema(&pool, &pool, "riko-codex")
+        let error = initialize_profile_database_schema(&pool, &pool, "riko-codex", 1024)
             .await
             .unwrap_err();
 

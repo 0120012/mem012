@@ -87,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         category_index_list: config.category_index_list(),
         api_base_url: api_base_url.as_str(),
         embedding_settings: embedding_settings.as_ref(),
+        embeddings_dimension: config.embeddings_dimension(),
         rerank_settings: rerank_settings.as_ref(),
         reset_db: config.reset_db(),
     };
