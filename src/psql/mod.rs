@@ -10,7 +10,8 @@ pub(crate) mod search_index;
 pub use age_graph::rebuild_memory_graph;
 pub use changes::{
     ApprovedEmbedding, approve_change, count_changes, delete_expired_trash, delete_trash,
-    get_change, get_trash, list_changes, list_trash, reject_change, restore_trash,
+    get_change, get_trash, list_changes, list_trash, refresh_memory_embedding, reject_change,
+    restore_trash,
 };
 pub use graph_meta::{get_memory_graph_status, mark_memory_graph_dirty};
 pub use init_db::init_db;

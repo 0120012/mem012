@@ -359,6 +359,34 @@ pub async fn approve_change(
     Ok(true)
 }
 
+// What：在审批事务之外单独为一条记忆刷新 embedding。
+// Why：approve 不再同步等待向量生成，后台写入必须自带行锁与 source_state 校验，
+// 才能避免把生成期间已被更新的旧向量覆盖到新工作态上；记忆已不存在时静默跳过。
+pub async fn refresh_memory_embedding(
+    database_url: &str,
+    memory_uuid: &str,
+    embedding: ApprovedEmbedding,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    let mut tx = pool.begin().await?;
+    let locked: Option<String> =
+        sqlx::query_scalar("SELECT uuid::text FROM memory_units WHERE uuid = $1::uuid FOR UPDATE")
+            .bind(memory_uuid)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if locked.is_none() {
+        tx.rollback().await?;
+        return Ok(());
+    }
+    validate_embedding_source(&mut tx, memory_uuid, &embedding.source_state).await?;
+    upsert_approved_embedding(&mut tx, memory_uuid, embedding).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 // Why：拒绝必须在事务里恢复工作态和删除 change，避免出现半回滚状态。
 pub async fn reject_change(
     database_url: &str,

@@ -94,15 +94,14 @@ pub async fn approve(
             return error_response(db_error("CHANGE_DETAIL_FAILED", error), Some(&project));
         }
     };
-    let embedding = match embedding_for_approve(&url, &memory_uuid, &change).await {
-        Ok(embedding) => embedding,
-        Err(error) => return error_response(error, Some(&project)),
-    };
-    match crate::psql::approve_change(&url, &memory_uuid, embedding).await {
-        Ok(true) => (
-            StatusCode::OK,
-            api_response(Some(Value::Null), None, Some(&project)),
-        ),
+    match crate::psql::approve_change(&url, &memory_uuid, None).await {
+        Ok(true) => {
+            spawn_embedding_refresh(url, memory_uuid, change);
+            (
+                StatusCode::OK,
+                api_response(Some(Value::Null), None, Some(&project)),
+            )
+        }
         Ok(false) => missing_change(&project),
         Err(error) => {
             let message = error.to_string();
@@ -114,6 +113,30 @@ pub async fn approve(
             error_response(ApiError { code, message }, Some(&project))
         }
     }
+}
+
+// What：approve 提交后在后台任务里生成并写入 embedding，不阻塞审批响应。
+// Why：分块 embedding 在慢机器上需数分钟，同步等待会超过网关与 Cloudflare 的超时上限，
+// 断连还会连带取消审批本身；向量短暂滞后只影响保底语义召回，可接受。
+fn spawn_embedding_refresh(database_url: String, memory_uuid: String, change: Value) {
+    tokio::spawn(async move {
+        let embedding = match embedding_for_approve(&database_url, &memory_uuid, &change).await {
+            Ok(Some(embedding)) => embedding,
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!(
+                    "embedding refresh skipped for {memory_uuid}: {} {}",
+                    error.code, error.message
+                );
+                return;
+            }
+        };
+        if let Err(error) =
+            crate::psql::refresh_memory_embedding(&database_url, &memory_uuid, embedding).await
+        {
+            eprintln!("embedding refresh write failed for {memory_uuid}: {error}");
+        }
+    });
 }
 
 // Why：reject 只接受 memory_uuid，回滚依据必须来自后端锁定的 before_state。
@@ -159,7 +182,7 @@ async fn embedding_for_approve(
     memory_uuid: &str,
     change: &Value,
 ) -> Result<Option<crate::psql::ApprovedEmbedding>, ApiError> {
-    // What：在 approve 提交前从当前 memory_units 工作态生成 embedding。
+    // What：在 approve 提交后从当前 memory_units 工作态生成 embedding。
     // Why：memory_units 是 Agent 可回读的确定状态，embedding 必须绑定这份状态而不是 change 快照。
     let Some((_, action)) = reviewed_change(change) else {
         return Ok(None);
