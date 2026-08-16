@@ -35,7 +35,58 @@ impl EmbeddingResponse {
     }
 }
 
+// Why：bge-base 硬上限 512 token，超限时 llama.cpp 直接返回 500 而非截断；
+// WordPiece 分词下 token 数不超过字符数（实测 510 个汉字 = 512 token 恰好达界），
+// 取 500 字符/块为 CLS/SEP 与混合文本留出余量。
+const MAX_EMBED_CHARS: usize = 500;
+// Why：单块嵌入在当前 2 核 VPS 上实测约 30s，必须为异常超长输入设上界；
+// 40 块 ≈ 2 万字远超正常记忆体量，超出部分放弃嵌入而不是让写入流程失败。
+const MAX_EMBED_CHUNKS: usize = 40;
+
+// What：按字符边界把输入切成不超过 MAX_EMBED_CHARS 的块。
+fn chunk_input(mut input: &str) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    while let Some((byte_index, _)) = input.char_indices().nth(MAX_EMBED_CHARS) {
+        let (head, tail) = input.split_at(byte_index);
+        chunks.push(head);
+        input = tail;
+    }
+    if !input.is_empty() || chunks.is_empty() {
+        chunks.push(input);
+    }
+    chunks.truncate(MAX_EMBED_CHUNKS);
+    chunks
+}
+
 pub async fn request_embedding(
+    settings: &crate::config::EmbeddingSettings,
+    input: &str,
+) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
+    // What：长输入逐块嵌入，再把块向量归一化平均池化成单一向量。
+    // Why：模型一次容不下全文；块向量均值再归一化可保持余弦距离语义，
+    // 且结果仍是配置维度的单向量，与 pgvector 现有表结构兼容。
+    let chunks = chunk_input(input);
+    let mut vectors = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        vectors.push(request_single_embedding(settings, chunk).await?);
+    }
+    if vectors.len() == 1 {
+        return Ok(vectors.remove(0));
+    }
+    let mut sum = vec![0.0f32; settings.dimension];
+    for vector in &vectors {
+        for (target, value) in sum.iter_mut().zip(vector) {
+            *target += value;
+        }
+    }
+    let norm = sum.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if norm == 0.0 {
+        return Err("embedding 池化结果为零向量".into());
+    }
+    Ok(sum.into_iter().map(|value| value / norm).collect())
+}
+
+async fn request_single_embedding(
     settings: &crate::config::EmbeddingSettings,
     input: &str,
 ) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
