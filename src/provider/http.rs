@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 pub(super) fn http_client(
     proxy: Option<&str>,
 ) -> Result<reqwest::Client, Box<dyn std::error::Error + Send + Sync>> {
     // What：构造 provider 访问外部模型 API 时使用的 HTTP client。
     // Why：embedding 和 rerank 都需要统一处理本机代理，避免每个 provider 调用点重复拼接代理 URL。
-    let mut builder = reqwest::Client::builder();
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(600));
     if let Some(proxy) = proxy {
         builder = builder.proxy(reqwest::Proxy::all(proxy_url(proxy))?);
     }
