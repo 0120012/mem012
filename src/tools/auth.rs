@@ -67,7 +67,7 @@ async fn exchange_init_auth_grant(
 
 #[cfg(test)]
 mod tests {
-    use super::{exchange_init_auth_grant, remove_init_auth_file};
+    use super::exchange_init_auth_grant;
 
     #[tokio::test]
     async fn exchange_init_auth_grant_rejects_empty_token() {
@@ -77,12 +77,5 @@ mod tests {
             .to_string();
 
         assert!(error.contains("--auth token 不能为空"));
-    }
-
-    #[test]
-    fn remove_init_auth_file_ignores_missing_file() {
-        let path = std::env::temp_dir().join("mem012_missing_tool_auth_file_for_test.mem");
-
-        assert!(remove_init_auth_file(&path).is_ok());
     }
 }

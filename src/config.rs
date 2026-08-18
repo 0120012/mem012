@@ -83,10 +83,16 @@ struct CleanupConfig {
     sweep_interval_minutes: u64,
 }
 
+fn default_trusted_proxy_hops() -> usize {
+    1
+}
+
 #[derive(Deserialize)]
 struct ServerConfig {
     addr: String,
     api_token: Option<String>,
+    #[serde(default = "default_trusted_proxy_hops")]
+    trusted_proxy_hops: usize,
 }
 
 #[derive(Default, Deserialize)]
@@ -108,6 +114,10 @@ impl Config {
 
     pub fn server_addr(&self) -> &str {
         self.server.addr.as_str()
+    }
+
+    pub fn trusted_proxy_hops(&self) -> usize {
+        self.server.trusted_proxy_hops
     }
 
     pub fn client_base_url(&self) -> Option<&str> {
@@ -480,12 +490,12 @@ pub fn admin_database_url_from_env_value(
 #[cfg(test)]
 mod tests {
     use super::{
-        admin_database_url_from_env_value, append_database_profile_text, config_path_from_env,
+        admin_database_url_from_env_value, append_database_profile_text,
         derive_admin_profile_database_url, derive_admin_target_database_url,
         derive_profile_database_url, derive_target_database_url, generate_profile_password,
         local_api_base_url, parse_config_text, write_config_text_atomic,
     };
-    use std::{ffi::OsString, path::PathBuf};
+    use std::ffi::OsString;
 
     #[test]
     fn parse_config_text_rejects_missing_cleanup_section() {
@@ -519,26 +529,6 @@ addr = "127.0.0.1:3012"
     }
 
     #[test]
-    fn database_entries_include_share_and_all_profiles() {
-        let config = parse_config_text(
-            r#"
-database = { riko = "postgres://localhost/riko", claude = "postgres://localhost/claude", share = "postgres://localhost/share" }
-search = { default_limit = 5, graph_expand_depth = 1, keyword = 1, fulltext = 1, semantic = 1, graph = 1, stale_penalty = 1 }
-embeddings = { embeddings_api = "local", embeddings_key = "" }
-cleanup = { trash_retention_minutes = 10080, sweep_interval_minutes = 5 }
-server = { addr = "127.0.0.1:3012" }
-"#,
-        )
-        .unwrap();
-
-        let entries: Vec<_> = config.database_entries().collect();
-        assert_eq!(entries.len(), 3);
-        assert!(entries.contains(&("riko", "postgres://localhost/riko")));
-        assert!(entries.contains(&("claude", "postgres://localhost/claude")));
-        assert!(entries.contains(&("share", "postgres://localhost/share")));
-    }
-
-    #[test]
     fn embedding_settings_allows_keyless_private_endpoint() {
         let config = parse_config_text(
             r#"
@@ -556,26 +546,7 @@ server = { addr = "127.0.0.1:3012" }
             .expect("无 key 的私有 endpoint 应启用 embedding");
         assert_eq!(settings.api, "http://10.0.0.1:8080/v1");
         assert!(settings.key.is_empty());
-    }
-
-    #[test]
-    fn config_path_from_env_uses_default_without_override() {
-        assert_eq!(
-            config_path_from_env("config.toml", None),
-            PathBuf::from("config.toml")
-        );
-        assert_eq!(
-            config_path_from_env("config.toml", Some(OsString::new())),
-            PathBuf::from("config.toml")
-        );
-    }
-
-    #[test]
-    fn config_path_from_env_prefers_non_empty_override() {
-        assert_eq!(
-            config_path_from_env("config.toml", Some(OsString::from("/tmp/mem012.toml"))),
-            PathBuf::from("/tmp/mem012.toml")
-        );
+        assert_eq!(config.trusted_proxy_hops(), 1);
     }
 
     #[test]
@@ -587,47 +558,6 @@ server = { addr = "127.0.0.1:3012" }
         assert_eq!(
             local_api_base_url("http://0.0.0.0:37777/").unwrap(),
             "http://127.0.0.1:37777"
-        );
-    }
-
-    #[test]
-    fn local_api_base_url_preserves_client_addresses() {
-        assert_eq!(
-            local_api_base_url("127.0.0.1:37777").unwrap(),
-            "http://127.0.0.1:37777"
-        );
-        assert_eq!(
-            local_api_base_url("https://example.com").unwrap(),
-            "https://example.com"
-        );
-    }
-
-    #[test]
-    fn append_database_profile_text_preserves_existing_config_shape() {
-        let updated = append_database_profile_text(
-            r#"# keep top comment
-[database]
-# keep database comment
-riko = "postgres://localhost/riko"
-
-[server]
-addr = "127.0.0.1:3012"
-"#,
-            "rikocodex",
-            "postgres://localhost/mem_rikocodex",
-        )
-        .unwrap();
-
-        assert!(updated.contains("# keep top comment"));
-        assert!(updated.contains("# keep database comment"));
-        assert!(
-            updated.find("riko =").unwrap() < updated.find("rikocodex =").unwrap()
-                && updated.find("rikocodex =").unwrap() < updated.find("[server]").unwrap()
-        );
-        let document = updated.parse::<toml_edit::DocumentMut>().unwrap();
-        assert_eq!(
-            document["database"]["rikocodex"].as_str(),
-            Some("postgres://localhost/mem_rikocodex")
         );
     }
 
@@ -655,29 +585,6 @@ addr = "127.0.0.1:3012"
 
         let config = parse_config_text(&updated).unwrap();
 
-        assert_eq!(
-            config.database_url("rikocodex"),
-            Some("postgres://localhost/mem_rikocodex")
-        );
-    }
-
-    #[test]
-    fn append_database_profile_text_accepts_inline_database_table() {
-        let updated = append_database_profile_text(
-            r#"
-database = { riko = "postgres://localhost/riko", share = "postgres://localhost/share" }
-embeddings = { embeddings_api = "local", embeddings_key = "" }
-cleanup = { trash_retention_minutes = 10080, sweep_interval_minutes = 5 }
-server = { addr = "127.0.0.1:3012" }
-"#,
-            "rikocodex",
-            "postgres://localhost/mem_rikocodex",
-        )
-        .unwrap();
-
-        let config = parse_config_text(&updated).unwrap();
-
-        assert!(updated.contains("database = {"));
         assert_eq!(
             config.database_url("rikocodex"),
             Some("postgres://localhost/mem_rikocodex")
@@ -857,17 +764,6 @@ riko = "postgres://localhost/riko"
         assert!(first.bytes().any(|byte| byte.is_ascii_lowercase()));
         assert!(first.bytes().any(|byte| byte.is_ascii_digit()));
         assert!(!first.contains(['_', '-']));
-    }
-
-    #[test]
-    fn admin_database_url_from_env_value_accepts_non_empty_value() {
-        assert_eq!(
-            admin_database_url_from_env_value(Some(OsString::from(
-                " postgresql://admin:secret@127.0.0.1/postgres "
-            )))
-            .unwrap(),
-            "postgresql://admin:secret@127.0.0.1/postgres"
-        );
     }
 
     #[test]

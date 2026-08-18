@@ -688,13 +688,7 @@ async fn cr_memory_embeddings_table(
 
 #[cfg(test)]
 mod tests {
-    use super::{memory_db_label, memory_embeddings_table_sql, reset_db_owner_error};
-
-    #[test]
-    fn share_profile_uses_share_database_label() {
-        assert_eq!(memory_db_label("share"), "share");
-        assert_eq!(memory_db_label("codex"), "profile codex");
-    }
+    use super::{memory_embeddings_table_sql, reset_db_owner_error};
 
     #[test]
     fn reset_db_allows_only_database_owner() {

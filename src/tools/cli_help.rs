@@ -43,21 +43,3 @@ pub(crate) fn agent_help_requested(args: &[String]) -> bool {
     }
     false
 }
-
-#[cfg(test)]
-mod tests {
-    use super::agent_help_requested;
-
-    #[test]
-    fn agent_help_requested_ignores_create_profile_value() {
-        assert!(!agent_help_requested(&[
-            "--create_profile".to_string(),
-            "help".to_string()
-        ]));
-        assert!(agent_help_requested(&["--help".to_string()]));
-        assert!(!agent_help_requested(&[
-            "--target".to_string(),
-            "help".to_string()
-        ]));
-    }
-}

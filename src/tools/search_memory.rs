@@ -480,11 +480,10 @@ fn apply_rerank_results(
     for item in ranked {
         if let Some(slot) = remaining.get_mut(item.index)
             && let Some(mut candidate) = slot.take()
+            && item.score >= RERANK_MIN_SCORE
         {
-            if item.score >= RERANK_MIN_SCORE {
-                candidate.score = item.score;
-                results.push(candidate);
-            }
+            candidate.score = item.score;
+            results.push(candidate);
         }
     }
     results.extend(remaining.into_iter().flatten());

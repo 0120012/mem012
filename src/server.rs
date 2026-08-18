@@ -1,10 +1,16 @@
+use std::net::SocketAddr;
+
 pub async fn app_run(addr: &str, sweep_interval_minutes: u64) {
     tokio::spawn(trash_cleanup_worker(sweep_interval_minutes));
     let app = crate::api::router_list();
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     println!("server listening on {}", addr);
-    let _ = axum::serve(listener, app).await;
+    let _ = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await;
 }
 
 async fn trash_cleanup_worker(sweep_interval_minutes: u64) {

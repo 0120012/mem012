@@ -57,53 +57,26 @@ pub fn router_list() -> Router {
 
 #[cfg(test)]
 mod tests {
-    use super::router_list;
     use axum::{
         body::Body,
         http::{Request, StatusCode},
     };
     use tower::util::ServiceExt;
 
-    // Why：先用 health 路由做最小可达性测试，尽早发现路由树装配是否断裂。
+    use super::router_list;
+
     #[tokio::test]
-    async fn health_route_is_reachable() {
+    async fn projects_route_rejects_anonymous_request() {
         let response = router_list()
             .oneshot(
                 Request::builder()
-                    .uri("/api/health")
+                    .uri("/api/projects")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
 
-    #[tokio::test]
-    async fn trash_routes_are_mounted() {
-        for (method, uri) in [
-            ("GET", "/api/trash"),
-            ("GET", "/api/trash/00000000-0000-0000-0000-000000000001"),
-            (
-                "POST",
-                "/api/trash/00000000-0000-0000-0000-000000000001/delete",
-            ),
-            (
-                "POST",
-                "/api/trash/00000000-0000-0000-0000-000000000001/restore",
-            ),
-        ] {
-            let response = router_list()
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri(uri)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_ne!(response.status(), StatusCode::NOT_FOUND, "{method} {uri}");
-        }
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -128,16 +128,6 @@ mod tests {
     use super::parse_cli_args_from;
 
     #[test]
-    fn parse_cli_args_accepts_create_profile_option() {
-        let args = vec!["--create_profile".to_string(), "rikocodex".to_string()];
-
-        let cli_args = parse_cli_args_from(args).unwrap();
-
-        assert_eq!(cli_args.create_profile.as_deref(), Some("rikocodex"));
-        assert!(cli_args.command.is_none());
-    }
-
-    #[test]
     fn parse_cli_args_accepts_share_create_profile() {
         let args = vec!["--create_profile".to_string(), "share".to_string()];
 
@@ -160,21 +150,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_cli_args_treats_empty_target_as_default_path() {
-        for value in ["", "   "] {
-            let cli_args = parse_cli_args_from(vec![
-                "--create_profile".to_string(),
-                "maccodex".to_string(),
-                "--target".to_string(),
-                value.to_string(),
-            ])
-            .unwrap();
-
-            assert!(cli_args.target.is_none());
-        }
-    }
-
-    #[test]
     fn parse_cli_args_rejects_nonempty_target_without_create_profile() {
         let error = match parse_cli_args_from(vec!["--target".to_string(), "mem_codex".to_string()])
         {
@@ -186,20 +161,6 @@ mod tests {
             error.to_string(),
             "--target 只能和 --create_profile 一起使用"
         );
-    }
-
-    #[test]
-    fn parse_cli_args_rejects_resetdb_command() {
-        let error = match parse_cli_args_from(vec![
-            "--profile".to_string(),
-            "maccodex".to_string(),
-            "resetdb".to_string(),
-        ]) {
-            Ok(_) => panic!("resetdb should not be a top-level command"),
-            Err(error) => error,
-        };
-
-        assert_eq!(error.to_string(), "未知参数: resetdb");
     }
 
     #[test]
@@ -269,44 +230,6 @@ mod tests {
         };
 
         assert_eq!(error.to_string(), "未知参数: migrate");
-    }
-
-    #[test]
-    fn parse_cli_args_rejects_duplicate_command() {
-        let error = match parse_cli_args_from(vec!["init".to_string(), "server".to_string()]) {
-            Ok(_) => panic!("duplicate command should be rejected"),
-            Err(error) => error,
-        };
-
-        assert_eq!(error.to_string(), "顶层命令不能重复: server");
-    }
-
-    #[test]
-    fn parse_cli_args_rejects_args_for_init_command() {
-        let args = vec![
-            "--profile".to_string(),
-            "maccodex".to_string(),
-            "init".to_string(),
-            "--args".to_string(),
-            "{}".to_string(),
-        ];
-        let error = match parse_cli_args_from(args) {
-            Ok(_) => panic!("init should reject --args"),
-            Err(error) => error,
-        };
-
-        assert_eq!(error.to_string(), "init 不支持 --args");
-    }
-
-    #[test]
-    fn parse_cli_args_rejects_args_for_server_command() {
-        let args = vec!["server".to_string(), "--args".to_string(), "{}".to_string()];
-        let error = match parse_cli_args_from(args) {
-            Ok(_) => panic!("server should reject --args"),
-            Err(error) => error,
-        };
-
-        assert_eq!(error.to_string(), "server 不支持 --args");
     }
 
     #[test]

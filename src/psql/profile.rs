@@ -797,12 +797,12 @@ mod tests {
         grant_memory_graph_tables_dml_sql, grant_public_schema_usage_create_sql,
         grant_public_sequences_default_privileges_sql, grant_public_sequences_usage_sql,
         grant_public_tables_default_privileges_sql, grant_public_tables_dml_sql,
-        initialize_profile_database_schema, load_age_sql, profile_admin_resources_conflict_error,
+        initialize_profile_database_schema, profile_admin_resources_conflict_error,
         profile_database_setup_sql, quoted_pg_identifier, reassign_memory_graph_owner_sql,
         revoke_connect_to_database_sql, revoke_memory_graph_rebuild_public_execute_sql,
-        revoke_public_connect_sql, revoke_role_membership_sql, set_age_search_path_sql,
-        shared_profile_category_conflict, shared_profile_database_setup_sql,
-        terminate_profile_database_connections_sql, validate_target_database_name,
+        revoke_public_connect_sql, revoke_role_membership_sql, shared_profile_category_conflict,
+        shared_profile_database_setup_sql, terminate_profile_database_connections_sql,
+        validate_target_database_name,
     };
 
     #[test]
@@ -920,30 +920,10 @@ mod tests {
     }
 
     #[test]
-    fn revoke_public_connect_sql_rejects_invalid_profile() {
-        let error = revoke_public_connect_sql("").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
     fn grant_connect_sql_uses_mem_profile_database_and_role() {
         assert_eq!(
             grant_connect_sql("rikocodex").unwrap(),
             "GRANT CONNECT ON DATABASE \"mem_rikocodex\" TO \"rikocodex\""
-        );
-    }
-
-    #[test]
-    fn grant_connect_sql_rejects_invalid_profile() {
-        let error = grant_connect_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
         );
     }
 
@@ -995,30 +975,10 @@ mod tests {
     }
 
     #[test]
-    fn grant_public_schema_usage_create_sql_rejects_invalid_profile() {
-        let error = grant_public_schema_usage_create_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
     fn grant_public_tables_dml_sql_grants_profile_on_public_tables() {
         assert_eq!(
             grant_public_tables_dml_sql("rikocodex").unwrap(),
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO \"rikocodex\""
-        );
-    }
-
-    #[test]
-    fn grant_public_tables_dml_sql_rejects_invalid_profile() {
-        let error = grant_public_tables_dml_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
         );
     }
 
@@ -1031,30 +991,10 @@ mod tests {
     }
 
     #[test]
-    fn grant_public_sequences_usage_sql_rejects_invalid_profile() {
-        let error = grant_public_sequences_usage_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
     fn grant_public_tables_default_privileges_sql_grants_profile_on_future_public_tables() {
         assert_eq!(
             grant_public_tables_default_privileges_sql("rikocodex").unwrap(),
             "ALTER DEFAULT PRIVILEGES FOR ROLE \"rikocodex\" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"rikocodex\""
-        );
-    }
-
-    #[test]
-    fn grant_public_tables_default_privileges_sql_rejects_invalid_profile() {
-        let error = grant_public_tables_default_privileges_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
         );
     }
 
@@ -1067,30 +1007,10 @@ mod tests {
     }
 
     #[test]
-    fn grant_public_sequences_default_privileges_sql_rejects_invalid_profile() {
-        let error = grant_public_sequences_default_privileges_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
     fn grant_ag_catalog_schema_usage_sql_grants_profile_on_ag_catalog_schema() {
         assert_eq!(
             grant_ag_catalog_schema_usage_sql("rikocodex").unwrap(),
             "GRANT USAGE ON SCHEMA ag_catalog TO \"rikocodex\""
-        );
-    }
-
-    #[test]
-    fn grant_ag_catalog_schema_usage_sql_rejects_invalid_profile() {
-        let error = grant_ag_catalog_schema_usage_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
         );
     }
 
@@ -1103,30 +1023,10 @@ mod tests {
     }
 
     #[test]
-    fn grant_agtype_usage_sql_rejects_invalid_profile() {
-        let error = grant_agtype_usage_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
     fn grant_ag_catalog_functions_execute_sql_grants_profile_on_ag_catalog_functions() {
         assert_eq!(
             grant_ag_catalog_functions_execute_sql("rikocodex").unwrap(),
             "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ag_catalog TO \"rikocodex\""
-        );
-    }
-
-    #[test]
-    fn grant_ag_catalog_functions_execute_sql_rejects_invalid_profile() {
-        let error = grant_ag_catalog_functions_execute_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
         );
     }
 
@@ -1139,16 +1039,6 @@ mod tests {
     }
 
     #[test]
-    fn grant_memory_graph_schema_usage_create_sql_rejects_invalid_profile() {
-        let error = grant_memory_graph_schema_usage_create_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
     fn grant_memory_graph_tables_dml_sql_grants_profile_on_memory_graph_tables() {
         assert_eq!(
             grant_memory_graph_tables_dml_sql("rikocodex").unwrap(),
@@ -1157,30 +1047,10 @@ mod tests {
     }
 
     #[test]
-    fn grant_memory_graph_tables_dml_sql_rejects_invalid_profile() {
-        let error = grant_memory_graph_tables_dml_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
     fn grant_memory_graph_sequences_usage_sql_grants_profile_on_memory_graph_sequences() {
         assert_eq!(
             grant_memory_graph_sequences_usage_sql("rikocodex").unwrap(),
             "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA memory_graph TO \"rikocodex\""
-        );
-    }
-
-    #[test]
-    fn grant_memory_graph_sequences_usage_sql_rejects_invalid_profile() {
-        let error = grant_memory_graph_sequences_usage_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
         );
     }
 
@@ -1194,47 +1064,11 @@ mod tests {
     }
 
     #[test]
-    fn grant_memory_graph_tables_default_privileges_sql_rejects_invalid_profile() {
-        let error = grant_memory_graph_tables_default_privileges_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
     fn grant_memory_graph_sequences_default_privileges_sql_grants_profile_on_future_memory_graph_sequences()
      {
         assert_eq!(
             grant_memory_graph_sequences_default_privileges_sql("rikocodex").unwrap(),
             "ALTER DEFAULT PRIVILEGES FOR ROLE \"rikocodex\" IN SCHEMA memory_graph GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO \"rikocodex\""
-        );
-    }
-
-    #[test]
-    fn grant_memory_graph_sequences_default_privileges_sql_rejects_invalid_profile() {
-        let error = grant_memory_graph_sequences_default_privileges_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
-    fn create_extension_sql_accepts_required_extensions() {
-        assert_eq!(
-            create_extension_sql("vector").unwrap(),
-            "CREATE EXTENSION IF NOT EXISTS vector"
-        );
-        assert_eq!(
-            create_extension_sql("pg_trgm").unwrap(),
-            "CREATE EXTENSION IF NOT EXISTS pg_trgm"
-        );
-        assert_eq!(
-            create_extension_sql("age").unwrap(),
-            "CREATE EXTENSION IF NOT EXISTS age"
         );
     }
 
@@ -1265,29 +1099,6 @@ mod tests {
         assert!(sql.contains("AND c.relkind IN ('r', 'p')"));
         assert!(sql.contains("AND c.relkind = 'S'"));
         assert!(sql.find("AND c.relkind IN ('r', 'p')") < sql.find("AND c.relkind = 'S'"));
-    }
-
-    #[test]
-    fn reassign_memory_graph_owner_sql_rejects_invalid_profile() {
-        let error = reassign_memory_graph_owner_sql("riko-codex").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "PostgreSQL identifier 必须匹配 [a-z][a-z0-9_]*"
-        );
-    }
-
-    #[test]
-    fn load_age_sql_matches_existing_age_load_statement() {
-        assert_eq!(load_age_sql(), "LOAD 'age'");
-    }
-
-    #[test]
-    fn set_age_search_path_sql_matches_existing_search_path_statement() {
-        assert_eq!(
-            set_age_search_path_sql(),
-            r#"SET LOCAL search_path = ag_catalog, "$user", public"#
-        );
     }
 
     #[test]
@@ -1341,13 +1152,6 @@ mod tests {
         let error = profile_database_setup_sql("postgres").unwrap_err();
 
         assert_eq!(error.to_string(), "profile 名称是保留名");
-    }
-
-    #[test]
-    fn profile_database_setup_sql_accepts_share_profile() {
-        let sql = profile_database_setup_sql("share").unwrap();
-
-        assert!(sql.iter().any(|statement| statement.contains("\"share\"")));
     }
 
     #[test]

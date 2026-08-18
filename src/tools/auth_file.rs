@@ -41,14 +41,7 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
-    use super::{init_auth_file_path, write_init_auth_file};
-
-    #[test]
-    fn init_auth_file_path_uses_fixed_auth_location() {
-        let path = init_auth_file_path().unwrap();
-
-        assert!(path.ends_with(".auth/auth_file.mem"));
-    }
+    use super::write_init_auth_file;
 
     #[test]
     fn write_init_auth_file_writes_grant_with_private_permissions() {

@@ -1,10 +1,29 @@
-use axum::{Json, http::StatusCode};
+use axum::{
+    Json,
+    http::{HeaderMap, StatusCode},
+};
 use serde_json::{Value, json};
 
+use super::auth::{has_valid_session, unauthorized_error};
 use super::utils::{ApiError, api_response};
 
 // Why：项目列表必须来自配置白名单，避免前端枚举或伪造任意数据库名。
-pub async fn list() -> (StatusCode, Json<Value>) {
+pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    match has_valid_session(&headers) {
+        Ok(true) => {}
+        Ok(false) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                api_response(None, Some(unauthorized_error()), None),
+            );
+        }
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                api_response(None, Some(error), None),
+            );
+        }
+    }
     let config = match crate::config::load_config("config.toml") {
         Ok(config) => config,
         Err(error) => {
@@ -39,4 +58,20 @@ pub async fn list() -> (StatusCode, Json<Value>) {
 
     let response = api_response(Some(json!(projects)), None, None);
     (StatusCode::OK, response)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::HeaderMap;
+
+    use super::list;
+
+    #[tokio::test]
+    async fn list_rejects_anonymous_request() {
+        let (status, body) = list(HeaderMap::new()).await;
+
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["code"], "UNAUTHORIZED");
+        assert!(body["data"].is_null());
+    }
 }

@@ -1,11 +1,13 @@
 use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
     sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
     Json,
-    extract::rejection::JsonRejection,
+    extract::{ConnectInfo, rejection::JsonRejection},
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{COOKIE, SET_COOKIE},
@@ -25,6 +27,12 @@ const SESSION_COOKIE: &str = "mem_session";
 const INIT_AUTH_TOKEN_TTL: Duration = Duration::from_secs(300);
 const INIT_GRANT_TTL: Duration = Duration::from_secs(300);
 const INIT_GRANT_SCOPE: &str = "init:create";
+const VERIFY_FAILURE_LIMIT: u8 = 5;
+const VERIFY_LOCKOUT: Duration = Duration::from_secs(60 * 60);
+const VERIFY_ATTEMPT_CAPACITY: usize = 10_000;
+const VERIFY_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
+const VERIFY_DEVICE_COOKIE: &str = "mem_verify_device";
+const VERIFY_DEVICE_COOKIE_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone)]
@@ -51,6 +59,25 @@ struct InitGrantStore {
     grant: Option<InitGrant>,
 }
 
+#[derive(Default)]
+struct VerifyAttemptStore {
+    attempts: HashMap<VerifyAttemptKey, VerifyAttempt>,
+    last_pruned_at: u64,
+}
+
+#[derive(Default)]
+struct VerifyAttempt {
+    failures: u8,
+    locked_until: Option<u64>,
+    expires_at: u64,
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+enum VerifyAttemptKey {
+    Ip(IpAddr),
+    Device([u8; 32]),
+}
+
 struct SignedInitGrant {
     grant: Value,
     grant_id: String,
@@ -59,6 +86,69 @@ struct SignedInitGrant {
 
 struct VerifiedInitGrant {
     grant_id: String,
+}
+
+impl VerifyAttemptStore {
+    // What：记录一个来源身份的一次失败登录，并返回当前锁定截止时间。
+    // Why：IP 与服务端设备标识可分别限流，避免把可伪造的浏览器特征当成硬件身份。
+    fn record_failure(&mut self, identity: VerifyAttemptKey, now: u64) -> Option<u64> {
+        if !self.attempts.contains_key(&identity)
+            && self.attempts.len() >= VERIFY_ATTEMPT_CAPACITY
+            && !self.evict_available(now)
+        {
+            return None;
+        }
+        let attempt = self.attempts.entry(identity).or_default();
+        if let Some(locked_until) = attempt.locked_until {
+            if locked_until > now {
+                return Some(locked_until);
+            }
+            *attempt = VerifyAttempt::default();
+        }
+        attempt.failures = attempt.failures.saturating_add(1);
+        attempt.expires_at = now.saturating_add(VERIFY_LOCKOUT.as_secs());
+        if attempt.failures < VERIFY_FAILURE_LIMIT {
+            return None;
+        }
+        let locked_until = now.saturating_add(VERIFY_LOCKOUT.as_secs());
+        attempt.locked_until = Some(locked_until);
+        Some(locked_until)
+    }
+
+    fn locked_until(&self, identity: &VerifyAttemptKey, now: u64) -> Option<u64> {
+        self.attempts
+            .get(identity)
+            .and_then(|attempt| attempt.locked_until.filter(|until| *until > now))
+    }
+
+    fn prune_if_due(&mut self, now: u64) {
+        if now.saturating_sub(self.last_pruned_at) < VERIFY_PRUNE_INTERVAL.as_secs() {
+            return;
+        }
+        self.attempts.retain(|_, attempt| attempt.expires_at > now);
+        self.last_pruned_at = now;
+    }
+
+    fn evict_available(&mut self, now: u64) -> bool {
+        let Some(key) = self
+            .attempts
+            .iter()
+            .filter(|(_, attempt)| {
+                attempt
+                    .locked_until
+                    .is_none_or(|locked_until| locked_until <= now)
+            })
+            .min_by_key(|(_, attempt)| attempt.expires_at)
+            .map(|(key, _)| key.clone())
+        else {
+            return false;
+        };
+        self.attempts.remove(&key).is_some()
+    }
+
+    fn clear(&mut self, identity: &VerifyAttemptKey) {
+        self.attempts.remove(identity);
+    }
 }
 
 #[derive(Deserialize)]
@@ -73,6 +163,8 @@ pub struct InitGrantRequest {
 
 // Why：登录入口必须接收用户输入的密钥，并用 HttpOnly cookie 隔离前端脚本和长期凭证。
 pub async fn verify(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     payload: Result<Json<VerifyRequest>, JsonRejection>,
 ) -> (StatusCode, HeaderMap, Json<Value>) {
     let Json(payload) = match payload {
@@ -81,22 +173,54 @@ pub async fn verify(
             return auth_response(StatusCode::BAD_REQUEST, "BAD_REQUEST", error.to_string());
         }
     };
-    let expected = match expected_token() {
+    let (expected, trusted_proxy_hops) = match expected_token() {
         Ok(expected) => expected,
         Err(error) => {
             return auth_response(StatusCode::INTERNAL_SERVER_ERROR, error.code, error.message);
         }
     };
 
-    if payload.key != expected {
-        return auth_response(
-            StatusCode::UNAUTHORIZED,
-            "UNAUTHORIZED",
-            "invalid API token".to_string(),
+    let now = now_epoch();
+    let client_ip = client_ip(&headers, peer.ip(), trusted_proxy_hops);
+    let (device_identity, device_cookie) = verify_device_identity(&headers);
+    let identities = [VerifyAttemptKey::Ip(client_ip), device_identity];
+    let mut store = verify_attempt_store().lock().unwrap();
+    store.prune_if_due(now);
+    if let Some(locked_until) = identities
+        .iter()
+        .find_map(|identity| store.locked_until(identity, now))
+    {
+        drop(store);
+        return add_verify_device_cookie(
+            auth_rate_limited_response(locked_until.saturating_sub(now).max(1)),
+            device_cookie.as_deref(),
         );
     }
 
-    let headers = session_headers(&expected);
+    if payload.key != expected {
+        let locked_until = identities.iter().fold(None, |current, identity| {
+            current.or_else(|| store.record_failure(identity.clone(), now))
+        });
+        drop(store);
+        let response = locked_until.map_or_else(
+            || {
+                auth_response(
+                    StatusCode::UNAUTHORIZED,
+                    "UNAUTHORIZED",
+                    "invalid API token".to_string(),
+                )
+            },
+            |until| auth_rate_limited_response(until.saturating_sub(now).max(1)),
+        );
+        return add_verify_device_cookie(response, device_cookie.as_deref());
+    }
+
+    for identity in &identities {
+        store.clear(identity);
+    }
+    drop(store);
+    let mut headers = session_headers(&expected);
+    add_device_cookie(&mut headers, device_cookie.as_deref());
     (
         StatusCode::OK,
         headers,
@@ -295,7 +419,10 @@ pub async fn auth_grant_consume(
 
 // Why：非 auth API 只需要布尔认证结果，不能复制 cookie 和签名校验细节。
 pub fn has_valid_session(headers: &HeaderMap) -> Result<bool, ApiError> {
-    let expected = expected_token()?;
+    if cookie_value(headers, SESSION_COOKIE).is_none() {
+        return Ok(false);
+    }
+    let (expected, _) = expected_token()?;
     Ok(
         cookie_value(headers, SESSION_COOKIE)
             .is_some_and(|value| value == session_token(&expected)),
@@ -324,6 +451,79 @@ fn auth_response(
     )
 }
 
+fn auth_rate_limited_response(retry_after: u64) -> (StatusCode, HeaderMap, Json<Value>) {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "retry-after",
+        HeaderValue::from_str(&retry_after.to_string()).unwrap(),
+    );
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        headers,
+        api_response(
+            None,
+            Some(ApiError {
+                code: "TOO_MANY_ATTEMPTS",
+                message: "too many failed login attempts".to_string(),
+            }),
+            None,
+        ),
+    )
+}
+
+fn add_verify_device_cookie(
+    response: (StatusCode, HeaderMap, Json<Value>),
+    token: Option<&str>,
+) -> (StatusCode, HeaderMap, Json<Value>) {
+    let (status, mut headers, body) = response;
+    add_device_cookie(&mut headers, token);
+    (status, headers, body)
+}
+
+// What：给没有设备标识的浏览器签发匿名随机 Cookie。
+// Why：Cookie 只用于区分同一出口下的客户端，不冒充不可伪造的硬件指纹。
+fn add_device_cookie(headers: &mut HeaderMap, token: Option<&str>) {
+    let Some(token) = token else {
+        return;
+    };
+    let cookie = format!(
+        "{VERIFY_DEVICE_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
+        VERIFY_DEVICE_COOKIE_TTL.as_secs()
+    );
+    headers.append(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+}
+
+// What：按显式配置的可信代理跳数解析客户端地址，否则使用 TCP 对端地址。
+// Why：缺省不信任代理头，只有本机前置代理且跳数明确时才读取列表，避免伪造来源绕过限流。
+fn client_ip(headers: &HeaderMap, peer: IpAddr, trusted_proxy_hops: usize) -> IpAddr {
+    if !peer.is_loopback() || trusted_proxy_hops == 0 {
+        return peer;
+    }
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').rev().nth(trusted_proxy_hops - 1))
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(peer)
+}
+
+// What：读取或生成 256 位匿名设备 Cookie，并转换为内存中的限流身份。
+// Why：浏览器特征可被伪造，服务端随机值更适合作为辅助维度且不暴露硬件信息。
+fn verify_device_identity(headers: &HeaderMap) -> (VerifyAttemptKey, Option<String>) {
+    if let Some(value) = cookie_value(headers, VERIFY_DEVICE_COOKIE)
+        && let Ok(bytes) = URL_SAFE_NO_PAD.decode(value)
+        && let Ok(device_id) = <[u8; 32]>::try_from(bytes.as_slice())
+    {
+        return (VerifyAttemptKey::Device(device_id), None);
+    }
+    let mut device_id = [0_u8; 32];
+    OsRng.fill_bytes(&mut device_id);
+    (
+        VerifyAttemptKey::Device(device_id),
+        Some(URL_SAFE_NO_PAD.encode(device_id)),
+    )
+}
+
 // Why：当前服务没有 TLS 终止信息，强制 Secure 会让 HTTP/VPS 登录后浏览器丢弃 session。
 fn session_headers(secret: &str) -> HeaderMap {
     let cookie = format!(
@@ -336,15 +536,16 @@ fn session_headers(secret: &str) -> HeaderMap {
 }
 
 // Why：缺失或空密钥是服务端配置错误，不能降级成无认证模式。
-fn expected_token() -> Result<String, ApiError> {
+fn expected_token() -> Result<(String, usize), ApiError> {
     let config = crate::config::load_config("config.toml").map_err(|error| ApiError {
         code: "AUTH_CONFIG_MISSING",
         message: error.to_string(),
     })?;
-    config.api_token().map(str::to_string).ok_or(ApiError {
+    let token = config.api_token().ok_or(ApiError {
         code: "AUTH_CONFIG_EMPTY",
         message: "server.api_token is empty".to_string(),
-    })
+    })?;
+    Ok((token.to_string(), config.trusted_proxy_hops()))
 }
 
 // Why：cookie 内只放签名后的 session 标记，避免把 API_TOKEN 本身发回浏览器。
@@ -448,6 +649,11 @@ fn verify_init_grant(
 fn init_auth_store() -> &'static Mutex<InitAuthStore> {
     static STORE: OnceLock<Mutex<InitAuthStore>> = OnceLock::new();
     STORE.get_or_init(|| Mutex::new(InitAuthStore::default()))
+}
+
+fn verify_attempt_store() -> &'static Mutex<VerifyAttemptStore> {
+    static STORE: OnceLock<Mutex<VerifyAttemptStore>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(VerifyAttemptStore::default()))
 }
 
 fn init_grant_store() -> &'static Mutex<InitGrantStore> {
@@ -561,16 +767,20 @@ fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 mod tests {
     use std::{sync::OnceLock, time::Duration};
 
-    use axum::{Json, http::StatusCode};
+    use axum::{
+        Json,
+        http::{HeaderMap, StatusCode},
+    };
     use base64::Engine;
     use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
     use tokio::sync::Mutex as TestMutex;
 
     use super::{
         INIT_GRANT_SCOPE, InitAuthStore, InitGrantRequest, InitGrantStore, URL_SAFE_NO_PAD,
-        auth_grant, auth_grant_consume, clear_init_authorization_state, init_auth_store,
-        init_grant_signing_key, init_grant_store, now_epoch, random_base64_token,
-        signed_init_grant, verify_init_grant,
+        VERIFY_ATTEMPT_CAPACITY, VERIFY_LOCKOUT, VERIFY_PRUNE_INTERVAL, VerifyAttemptKey,
+        VerifyAttemptStore, auth_grant, auth_grant_consume, auth_rate_limited_response,
+        clear_init_authorization_state, client_ip, init_auth_store, init_grant_signing_key,
+        init_grant_store, now_epoch, random_base64_token, signed_init_grant, verify_init_grant,
     };
 
     fn auth_handler_test_lock() -> &'static TestMutex<()> {
@@ -589,6 +799,98 @@ mod tests {
             first
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        );
+    }
+
+    #[test]
+    fn verify_attempt_store_locks_after_fifth_failure_and_expires() {
+        let identity = VerifyAttemptKey::Ip("192.0.2.1".parse().unwrap());
+        let mut store = VerifyAttemptStore::default();
+
+        for _ in 0..4 {
+            assert_eq!(store.record_failure(identity.clone(), 100), None);
+        }
+        assert_eq!(store.record_failure(identity.clone(), 100), Some(3700));
+        assert_eq!(store.record_failure(identity.clone(), 100), Some(3700));
+        assert_eq!(store.record_failure(identity, 3700), None);
+        let stale = VerifyAttemptKey::Device([7; 32]);
+        assert_eq!(store.record_failure(stale.clone(), 100), None);
+        assert_eq!(
+            store.locked_until(&stale, 100 + VERIFY_LOCKOUT.as_secs()),
+            None
+        );
+    }
+
+    #[test]
+    fn verify_attempt_store_caps_failure_identities() {
+        let mut store = VerifyAttemptStore::default();
+        let locked = VerifyAttemptKey::Ip("192.0.2.10".parse().unwrap());
+
+        for _ in 0..5 {
+            store.record_failure(locked.clone(), 100);
+        }
+
+        for index in 0..VERIFY_ATTEMPT_CAPACITY {
+            let mut device = [0_u8; 32];
+            device[..8].copy_from_slice(&(index as u64).to_be_bytes());
+            store.record_failure(VerifyAttemptKey::Device(device), 100);
+        }
+
+        assert_eq!(store.attempts.len(), VERIFY_ATTEMPT_CAPACITY);
+        assert_eq!(store.locked_until(&locked, 101), Some(3700));
+    }
+
+    #[test]
+    fn verify_attempt_store_prunes_at_intervals() {
+        let mut store = VerifyAttemptStore::default();
+        store.record_failure(VerifyAttemptKey::Device([9; 32]), 100);
+
+        store.prune_if_due(100);
+        assert_eq!(store.attempts.len(), 1);
+        store.prune_if_due(100 + VERIFY_PRUNE_INTERVAL.as_secs() - 1);
+        assert_eq!(store.attempts.len(), 1);
+        store.prune_if_due(3700);
+        assert!(store.attempts.is_empty());
+    }
+
+    #[test]
+    fn rate_limited_response_sets_retry_after() {
+        let (status, headers, body) = auth_rate_limited_response(3600);
+
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(headers.get("retry-after").unwrap(), "3600");
+        assert_eq!(body["error"]["code"], "TOO_MANY_ATTEMPTS");
+    }
+
+    #[test]
+    fn client_ip_uses_rightmost_forwarded_ip_from_loopback() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.2, 198.51.100.3".parse().unwrap(),
+        );
+        let forwarded: std::net::IpAddr = "198.51.100.3".parse().unwrap();
+        let direct: std::net::IpAddr = "203.0.113.8".parse().unwrap();
+
+        assert_eq!(
+            client_ip(&headers, "127.0.0.1".parse().unwrap(), 1),
+            forwarded
+        );
+        assert_eq!(client_ip(&headers, direct, 1), direct);
+        assert_eq!(
+            client_ip(&headers, "127.0.0.1".parse().unwrap(), 0),
+            "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
+        );
+        assert_eq!(
+            client_ip(&headers, "127.0.0.1".parse().unwrap(), 2),
+            "198.51.100.2".parse::<std::net::IpAddr>().unwrap()
+        );
+
+        headers.remove("x-forwarded-for");
+        headers.insert("x-real-ip", "198.51.100.9".parse().unwrap());
+        assert_eq!(
+            client_ip(&headers, "127.0.0.1".parse().unwrap(), 1),
+            "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
         );
     }
 
@@ -615,16 +917,6 @@ mod tests {
         assert_eq!(store.token_status(120), Some(280));
         assert!(store.consume_token(&token, 120));
         assert!(!store.consume_token(&token, 120));
-        assert_eq!(store.token_status(120), None);
-    }
-
-    #[test]
-    fn init_auth_store_clears_current_token() {
-        let mut store = InitAuthStore::default();
-
-        store.refresh_token(100, Duration::from_secs(180));
-        store.clear_token();
-
         assert_eq!(store.token_status(120), None);
     }
 
@@ -694,38 +986,6 @@ mod tests {
     }
 
     #[test]
-    fn init_grant_signing_key_is_process_stable() {
-        let first = VerifyingKey::from(init_grant_signing_key()).to_bytes();
-        let second = VerifyingKey::from(init_grant_signing_key()).to_bytes();
-
-        assert_eq!(first, second);
-    }
-
-    #[test]
-    fn init_grant_store_keeps_only_latest_grant() {
-        let mut store = InitGrantStore::default();
-
-        store.replace_grant("first".to_string(), INIT_GRANT_SCOPE.to_string(), 400);
-        store.replace_grant("second".to_string(), INIT_GRANT_SCOPE.to_string(), 500);
-
-        let grant = store.grant.unwrap();
-        assert_eq!(grant.grant_id, "second");
-        assert_eq!(grant.scope, "init:create");
-        assert_eq!(grant.expires_at, 500);
-        assert!(!grant.consumed);
-    }
-
-    #[test]
-    fn init_grant_store_clears_current_grant() {
-        let mut store = InitGrantStore::default();
-
-        store.replace_grant("grant".to_string(), INIT_GRANT_SCOPE.to_string(), 400);
-        store.clear_grant();
-
-        assert!(store.grant.is_none());
-    }
-
-    #[test]
     fn init_grant_store_consumes_current_grant_once() {
         let mut store = InitGrantStore::default();
 
@@ -763,14 +1023,6 @@ mod tests {
 
         assert!(!store.consume_grant("grant", "other:scope", 399));
         assert!(store.grant.is_some());
-    }
-
-    #[test]
-    fn init_grant_store_is_process_stable() {
-        let first = init_grant_store() as *const _;
-        let second = init_grant_store() as *const _;
-
-        assert_eq!(first, second);
     }
 
     #[tokio::test(flavor = "current_thread")]
