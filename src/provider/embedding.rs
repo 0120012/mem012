@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde::Deserialize;
 use tokio::sync::Semaphore;
 
@@ -8,6 +10,24 @@ use super::http::{http_client, provider_endpoint};
 // What：限制进程内同时进行的 embedding 请求数为 2。
 // Why：避免批量审批在双核机器上并发压垮远程 provider。
 static EMBED_GATE: Semaphore = Semaphore::const_new(2);
+const EMBEDDING_RETRY_DELAYS: [u64; 3] = [5, 20, 60];
+
+#[derive(Debug)]
+struct PermanentEmbeddingError(String);
+
+impl std::fmt::Display for PermanentEmbeddingError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PermanentEmbeddingError {}
+
+// What：判断 embedding 错误是否来自本地可确定的响应问题。
+// Why：这类错误与网络无关，重试只会重复相同失败并占用 embedding 闸门。
+fn is_permanent(error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+    error.downcast_ref::<PermanentEmbeddingError>().is_some()
+}
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -72,8 +92,8 @@ pub async fn request_embedding(
     // 且结果仍是配置维度的单向量，与 pgvector 现有表结构兼容。
     let chunks = chunk_input(input);
     let mut vectors = Vec::with_capacity(chunks.len());
-    for chunk in chunks {
-        vectors.push(request_single_embedding(settings, chunk).await?);
+    for (chunk_index, chunk) in chunks.into_iter().enumerate() {
+        vectors.push(request_chunk_with_retry(settings, chunk_index, chunk).await?);
     }
     if vectors.len() == 1 {
         return Ok(vectors.remove(0));
@@ -89,6 +109,57 @@ pub async fn request_embedding(
         return Err("embedding 池化结果为零向量".into());
     }
     Ok(sum.into_iter().map(|value| value / norm).collect())
+}
+
+// What：给确定性错误补上块序号并保持永久标记。
+// Why：早退与末次失败两条路径都要这层包装，抽出来避免同一段文案重复。
+fn permanent_chunk_error(
+    chunk_index: usize,
+    error: &(dyn std::error::Error + Send + Sync + 'static),
+) -> Box<dyn std::error::Error + Send + Sync> {
+    PermanentEmbeddingError(format!(
+        "embedding 块 {} 确定性错误，跳过重试：{error}",
+        chunk_index + 1
+    ))
+    .into()
+}
+
+// What：对单个 embedding 块执行最多三次重试，并按递增间隔退避。
+// Why：每次请求返回后 permit 已在 request_single_embedding 内释放，退避不会占用闸门名额。
+async fn request_chunk_with_retry(
+    settings: &crate::config::EmbeddingSettings,
+    chunk_index: usize,
+    input: &str,
+) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
+    let attempts = EMBEDDING_RETRY_DELAYS.len() + 1;
+    for (retry, delay) in EMBEDDING_RETRY_DELAYS.iter().enumerate() {
+        match request_single_embedding(settings, input).await {
+            Ok(vector) => return Ok(vector),
+            Err(error) if is_permanent(error.as_ref()) => {
+                return Err(permanent_chunk_error(chunk_index, error.as_ref()));
+            }
+            Err(error) => {
+                eprintln!(
+                    "embedding 块 {} 第 {}/{attempts} 次尝试失败：{error}",
+                    chunk_index + 1,
+                    retry + 1
+                );
+                tokio::time::sleep(Duration::from_secs(*delay)).await;
+            }
+        }
+    }
+    // Why：末次失败要带上块序号和总次数向上传播，否则调用方日志只有 provider 原文，无法定位。
+    match request_single_embedding(settings, input).await {
+        Ok(vector) => Ok(vector),
+        Err(error) if is_permanent(error.as_ref()) => {
+            Err(permanent_chunk_error(chunk_index, error.as_ref()))
+        }
+        Err(error) => Err(format!(
+            "embedding 块 {} 连续 {attempts} 次尝试失败：{error}",
+            chunk_index + 1
+        )
+        .into()),
+    }
 }
 
 async fn request_single_embedding(
