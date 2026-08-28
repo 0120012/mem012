@@ -127,6 +127,16 @@ USING deleted_changes d
 WHERE u.uuid = d.memory_uuid
 "#;
 
+const LIST_EMBEDDING_BACKFILL_SQL: &str = r#"
+SELECT u.uuid::text
+FROM memory_units u
+LEFT JOIN memory_embeddings e ON e.memory_uuid = u.uuid
+WHERE u.status = 'active'
+    AND (e.memory_uuid IS NULL OR e.embedding_model <> $1 OR e.embedding_dimension <> $2)
+ORDER BY u.updated_at ASC, u.uuid ASC
+LIMIT 50
+"#;
+
 pub struct ApprovedEmbedding {
     pub model: String,
     pub dimension: i32,
@@ -385,6 +395,25 @@ pub async fn refresh_memory_embedding(
     upsert_approved_embedding(&mut tx, memory_uuid, embedding).await?;
     tx.commit().await?;
     Ok(())
+}
+
+// What：查询当前配置下缺失或元数据不匹配的 active memory embedding UUID。
+// Why：缺行即待办且限制批量，交给后续 worker 分批处理，避免一次性加载历史积压。
+pub async fn list_embedding_backfill_memory_uuids(
+    database_url: &str,
+    model: &str,
+    dimension: i32,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    let uuids = sqlx::query_scalar::<_, String>(LIST_EMBEDDING_BACKFILL_SQL)
+        .bind(model)
+        .bind(dimension)
+        .fetch_all(&pool)
+        .await?;
+    Ok(uuids)
 }
 
 // Why：拒绝必须在事务里恢复工作态和删除 change，避免出现半回滚状态。
