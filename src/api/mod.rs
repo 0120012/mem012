@@ -7,6 +7,8 @@ mod projects;
 mod trash;
 mod utils;
 
+pub(crate) use changes::generate_embedding_for_memory;
+
 use axum::{
     Router,
     routing::{get, patch, post},

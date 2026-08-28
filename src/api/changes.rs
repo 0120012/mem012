@@ -197,17 +197,29 @@ async fn embedding_for_approve(
     let Some(settings) = config.embedding_settings() else {
         return Ok(None);
     };
+    Ok(Some(
+        generate_embedding_for_memory(database_url, memory_uuid, &settings).await?,
+    ))
+}
+
+// What：根据当前 memory 工作态生成一条 embedding。
+// Why：approve 与 backfill 必须共用状态读取和输入拼接，避免两条路径生成不同向量。
+pub(crate) async fn generate_embedding_for_memory(
+    database_url: &str,
+    memory_uuid: &str,
+    settings: &crate::config::EmbeddingSettings,
+) -> Result<crate::psql::ApprovedEmbedding, ApiError> {
     let source_state = load_current_memory_state(database_url, memory_uuid).await?;
     let input = embedding_input_from_state(&source_state)?;
-    let values = crate::provider::embedding::request_embedding(&settings, &input)
+    let values = crate::provider::embedding::request_embedding(settings, &input)
         .await
         .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error))?;
-    Ok(Some(crate::psql::ApprovedEmbedding {
-        model: settings.model,
+    Ok(crate::psql::ApprovedEmbedding {
+        model: settings.model.clone(),
         dimension: settings.dimension as i32,
         values,
         source_state: source_state.to_string(),
-    }))
+    })
 }
 
 async fn load_current_memory_state(
