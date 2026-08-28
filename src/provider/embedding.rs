@@ -1,8 +1,13 @@
 use serde::Deserialize;
+use tokio::sync::Semaphore;
 
 use super::http::{http_client, provider_endpoint};
 
 // 备注：当前已接入 search_memory 保底召回；provider 协议细节仍需随模型返回格式迭代。
+
+// What：限制进程内同时进行的 embedding 请求数为 2。
+// Why：避免批量审批在双核机器上并发压垮远程 provider。
+static EMBED_GATE: Semaphore = Semaphore::const_new(2);
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -90,6 +95,7 @@ async fn request_single_embedding(
     settings: &crate::config::EmbeddingSettings,
     input: &str,
 ) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
+    let _permit = EMBED_GATE.acquire().await?;
     // Why：远程模型必须返回配置维度，和 pgvector 表结构保持硬一致。
     let endpoint = provider_endpoint(&settings.api, &settings.api_type)?;
     let request = http_client(settings.proxy.as_deref())?
