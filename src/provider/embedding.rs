@@ -190,16 +190,61 @@ async fn request_single_embedding(
     let response: EmbeddingResponse = request.send().await?.error_for_status()?.json().await?;
     let embedding = response
         .first_embedding()
-        .ok_or("embedding 响应为空或格式错误")?;
+        .ok_or_else(|| PermanentEmbeddingError("embedding 响应为空或格式错误".into()))?;
     if embedding.len() != settings.dimension {
-        return Err(format!("embedding 维度错误: {}", embedding.len()).into());
+        return Err(
+            PermanentEmbeddingError(format!("embedding 维度错误: {}", embedding.len())).into(),
+        );
     }
     Ok(embedding)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::EmbeddingResponse;
+    use super::{
+        EmbeddingResponse, MAX_EMBED_CHARS, MAX_EMBED_CHUNKS, PermanentEmbeddingError, chunk_input,
+        is_permanent, permanent_chunk_error,
+    };
+
+    #[test]
+    fn is_permanent_only_matches_permanent_error() {
+        let permanent = PermanentEmbeddingError("embedding 维度错误: 512".into());
+        assert!(is_permanent(&permanent));
+
+        let transient: Box<dyn std::error::Error + Send + Sync> = "timeout".into();
+        assert!(!is_permanent(transient.as_ref()));
+    }
+
+    // Why：包装后必须仍被判为永久错误，否则外层重试会重新把它当成可重试失败。
+    #[test]
+    fn permanent_chunk_error_keeps_marker_and_chunk_index() {
+        let source = PermanentEmbeddingError("embedding 响应为空或格式错误".into());
+        let wrapped = permanent_chunk_error(2, &source);
+        assert!(is_permanent(wrapped.as_ref()));
+        assert!(wrapped.to_string().contains("块 3"));
+    }
+
+    #[test]
+    fn chunk_input_keeps_all_chunks_within_limit() {
+        let input = "汉".repeat(MAX_EMBED_CHARS * 2 + 1);
+        let (chunks, discarded) = chunk_input(&input);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(discarded, 0);
+    }
+
+    // Why：恰好达到 MAX_EMBED_CHUNKS 时不得报告丢弃，这是 saturating_sub 最易写反的边界。
+    #[test]
+    fn chunk_input_reports_discarded_chunks_beyond_limit() {
+        let exact = "汉".repeat(MAX_EMBED_CHARS * MAX_EMBED_CHUNKS);
+        let (chunks, discarded) = chunk_input(&exact);
+        assert_eq!(chunks.len(), MAX_EMBED_CHUNKS);
+        assert_eq!(discarded, 0);
+
+        let overflow = "汉".repeat(MAX_EMBED_CHARS * (MAX_EMBED_CHUNKS + 2) + 1);
+        let (chunks, discarded) = chunk_input(&overflow);
+        assert_eq!(chunks.len(), MAX_EMBED_CHUNKS);
+        assert_eq!(discarded, 3);
+    }
 
     #[test]
     fn parses_current_bge_response() {
