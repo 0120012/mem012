@@ -68,8 +68,9 @@ const MAX_EMBED_CHARS: usize = 500;
 // 40 块 ≈ 2 万字远超正常记忆体量，超出部分放弃嵌入而不是让写入流程失败。
 const MAX_EMBED_CHUNKS: usize = 40;
 
-// What：按字符边界把输入切成不超过 MAX_EMBED_CHARS 的块。
-fn chunk_input(mut input: &str) -> Vec<&str> {
+// What：按字符边界把输入切成不超过 MAX_EMBED_CHARS 的块，
+// 返回保留的块与因超过 MAX_EMBED_CHUNKS 被丢弃的块数（未超限时为 0）。
+fn chunk_input(mut input: &str) -> (Vec<&str>, usize) {
     let mut chunks = Vec::new();
     while let Some((byte_index, _)) = input.char_indices().nth(MAX_EMBED_CHARS) {
         let (head, tail) = input.split_at(byte_index);
@@ -79,8 +80,9 @@ fn chunk_input(mut input: &str) -> Vec<&str> {
     if !input.is_empty() || chunks.is_empty() {
         chunks.push(input);
     }
+    let discarded_chunks = chunks.len().saturating_sub(MAX_EMBED_CHUNKS);
     chunks.truncate(MAX_EMBED_CHUNKS);
-    chunks
+    (chunks, discarded_chunks)
 }
 
 pub async fn request_embedding(
@@ -90,7 +92,15 @@ pub async fn request_embedding(
     // What：长输入逐块嵌入，再把块向量归一化平均池化成单一向量。
     // Why：模型一次容不下全文；块向量均值再归一化可保持余弦距离语义，
     // 且结果仍是配置维度的单向量，与 pgvector 现有表结构兼容。
-    let chunks = chunk_input(input);
+    let (chunks, discarded_chunks) = chunk_input(input);
+    if discarded_chunks > 0 {
+        eprintln!(
+            "embedding 输入过长：总计 {} 块，丢弃 {} 块，输入 {} 字符",
+            chunks.len() + discarded_chunks,
+            discarded_chunks,
+            input.chars().count()
+        );
+    }
     let mut vectors = Vec::with_capacity(chunks.len());
     for (chunk_index, chunk) in chunks.into_iter().enumerate() {
         vectors.push(request_chunk_with_retry(settings, chunk_index, chunk).await?);
