@@ -1,14 +1,70 @@
 use axum::{
     Json,
-    extract::{Path, rejection::JsonRejection},
+    extract::{
+        Path, Query,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::{HeaderMap, StatusCode},
 };
 use serde_json::Value;
 
 use super::utils::{ApiError, api_response, require_project};
 
+const DEFAULT_MEMORY_LIMIT: i64 = 12;
+const MAX_MEMORY_LIMIT: i64 = 100;
+
+#[derive(serde::Deserialize)]
+pub struct MemoryListQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    category: Option<String>,
+    filter: Option<String>,
+    date_field: Option<String>,
+    date_from: Option<String>,
+    date_to: Option<String>,
+}
+
 // Why：先让记忆列表入口经过统一门禁，避免后续真实查询绕过 session 和 project 白名单。
-pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
+pub async fn list(
+    query: Result<Query<MemoryListQuery>, QueryRejection>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    let Query(query) = match query {
+        Ok(query) => query,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                api_response(
+                    None,
+                    Some(ApiError {
+                        code: "INVALID_PAGINATION",
+                        message: error.to_string(),
+                    }),
+                    None,
+                ),
+            );
+        }
+    };
+    let category = memory_list_category(&query);
+    let filter = memory_list_text_filter(&query);
+    let (date_field, date_from, date_to) = match memory_list_dates(&query) {
+        Ok(dates) => dates,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                api_response(None, Some(error), None),
+            );
+        }
+    };
+    let (limit, offset) = match memory_list_pagination(&query) {
+        Ok(pagination) => pagination,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                api_response(None, Some(error), None),
+            );
+        }
+    };
     let project = match require_project(&headers) {
         Ok(project) => project,
         Err(error) => {
@@ -22,7 +78,18 @@ pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
         }
     };
 
-    let data = match load_memory_data(&project).await {
+    let data = match load_memory_data(
+        &project,
+        limit,
+        offset,
+        category,
+        filter.as_deref(),
+        date_field,
+        date_from,
+        date_to,
+    )
+    .await
+    {
         Ok(data) => data,
         Err(error) => {
             return (
@@ -196,7 +263,16 @@ pub async fn update(
 }
 
 // Why：handler 只按 project 选择数据源，真实列表 SQL 必须留在 psql 层统一维护。
-async fn load_memory_data(project: &str) -> Result<Value, ApiError> {
+async fn load_memory_data(
+    project: &str,
+    limit: i64,
+    offset: i64,
+    category: Option<&str>,
+    filter: Option<&str>,
+    date_field: Option<&str>,
+    date_from: Option<&str>,
+    date_to: Option<&str>,
+) -> Result<Value, ApiError> {
     let config = crate::config::load_config("config.toml").map_err(|error| ApiError {
         code: "CONFIG_LOAD_FAILED",
         message: error.to_string(),
@@ -205,12 +281,133 @@ async fn load_memory_data(project: &str) -> Result<Value, ApiError> {
         code: "PROJECT_NOT_FOUND",
         message: "project is not configured".to_string(),
     })?;
-    crate::psql::list_memories(database_url)
-        .await
-        .map_err(|error| ApiError {
-            code: "MEMORY_LIST_FAILED",
-            message: error.to_string(),
-        })
+    crate::psql::list_memories(
+        database_url,
+        limit,
+        offset,
+        category,
+        filter,
+        date_field,
+        date_from,
+        date_to,
+    )
+    .await
+    .map_err(|error| ApiError {
+        code: "MEMORY_LIST_FAILED",
+        message: error.to_string(),
+    })
+}
+
+fn memory_list_category(query: &MemoryListQuery) -> Option<&str> {
+    query
+        .category
+        .as_deref()
+        .map(str::trim)
+        .filter(|category| !category.is_empty())
+}
+
+fn memory_list_text_filter(query: &MemoryListQuery) -> Option<String> {
+    let filter = query
+        .filter
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let escaped = filter
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    Some(format!("%{escaped}%"))
+}
+
+fn memory_list_dates(
+    query: &MemoryListQuery,
+) -> Result<(Option<&str>, Option<&str>, Option<&str>), ApiError> {
+    let date_field = match query
+        .date_field
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        None => None,
+        Some("created_at") => Some("created_at"),
+        Some("updated_at") => Some("updated_at"),
+        Some(_) => return Err(invalid_date_filter("date_field is invalid")),
+    };
+    let date_from = validate_memory_date(query.date_from.as_deref(), "date_from")?;
+    let date_to = validate_memory_date(query.date_to.as_deref(), "date_to")?;
+    if let (Some(date_from), Some(date_to)) = (date_from, date_to) {
+        if date_from > date_to {
+            return Err(invalid_date_filter(
+                "date_from must not be later than date_to",
+            ));
+        }
+    }
+    let date_field = if date_from.is_some() || date_to.is_some() {
+        Some(date_field.unwrap_or("updated_at"))
+    } else {
+        date_field
+    };
+    Ok((date_field, date_from, date_to))
+}
+
+fn validate_memory_date<'a>(
+    value: Option<&'a str>,
+    field: &str,
+) -> Result<Option<&'a str>, ApiError> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let bytes = value.as_bytes();
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !bytes
+            .iter()
+            .enumerate()
+            .all(|(i, byte)| matches!(i, 4 | 7) || byte.is_ascii_digit())
+    {
+        return Err(invalid_date_filter(format!("{field} must use YYYY-MM-DD")));
+    }
+    let year = value[0..4]
+        .parse::<i32>()
+        .map_err(|_| invalid_date_filter(format!("{field} is invalid")))?;
+    let month = value[5..7]
+        .parse::<u32>()
+        .map_err(|_| invalid_date_filter(format!("{field} is invalid")))?;
+    let day = value[8..10]
+        .parse::<u32>()
+        .map_err(|_| invalid_date_filter(format!("{field} is invalid")))?;
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => 0,
+    };
+    if year < 1 || day == 0 || day > days {
+        return Err(invalid_date_filter(format!("{field} is invalid")));
+    }
+    Ok(Some(value))
+}
+
+fn invalid_date_filter(message: impl Into<String>) -> ApiError {
+    ApiError {
+        code: "INVALID_DATE_FILTER",
+        message: message.into(),
+    }
+}
+
+fn memory_list_pagination(query: &MemoryListQuery) -> Result<(i64, i64), ApiError> {
+    let limit = query.limit.unwrap_or(DEFAULT_MEMORY_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    if !(1..=MAX_MEMORY_LIMIT).contains(&limit) || offset < 0 {
+        return Err(ApiError {
+            code: "INVALID_PAGINATION",
+            message: "limit must be between 1 and 100 and offset must not be negative".to_string(),
+        });
+    }
+    Ok((limit, offset))
 }
 
 async fn create_memory_data(project: &str, payload: Value) -> Result<String, ApiError> {
@@ -343,7 +540,78 @@ fn is_uuid_text(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_memory_error, is_uuid_text};
+    use super::{
+        MemoryListQuery, create_memory_error, is_uuid_text, memory_list_dates,
+        memory_list_pagination, memory_list_text_filter,
+    };
+
+    fn empty_memory_list_query() -> MemoryListQuery {
+        MemoryListQuery {
+            limit: None,
+            offset: None,
+            category: None,
+            filter: None,
+            date_field: None,
+            date_from: None,
+            date_to: None,
+        }
+    }
+
+    #[test]
+    fn memory_list_defaults_to_twelve_items() {
+        assert_eq!(
+            memory_list_pagination(&empty_memory_list_query()).ok(),
+            Some((12, 0))
+        );
+    }
+
+    #[test]
+    fn memory_list_rejects_invalid_pagination() {
+        let mut query = empty_memory_list_query();
+        query.limit = Some(0);
+        assert_eq!(
+            memory_list_pagination(&query).unwrap_err().code,
+            "INVALID_PAGINATION"
+        );
+        query.limit = Some(12);
+        query.offset = Some(-1);
+        assert_eq!(
+            memory_list_pagination(&query).unwrap_err().code,
+            "INVALID_PAGINATION"
+        );
+    }
+
+    #[test]
+    fn memory_list_text_filter_escapes_like_tokens() {
+        let mut query = empty_memory_list_query();
+        query.filter = Some(r"  50%_\  ".to_string());
+        assert_eq!(
+            memory_list_text_filter(&query),
+            Some("%50\\%\\_\\\\%".to_string())
+        );
+    }
+
+    #[test]
+    fn memory_list_dates_validates_range_and_field() {
+        let mut query = empty_memory_list_query();
+        query.date_field = Some("created_at".to_string());
+        query.date_from = Some("2024-02-29".to_string());
+        query.date_to = Some("2024-03-01".to_string());
+        assert_eq!(
+            memory_list_dates(&query).ok(),
+            Some((Some("created_at"), Some("2024-02-29"), Some("2024-03-01")))
+        );
+        query.date_to = Some("2024-02-28".to_string());
+        assert_eq!(
+            memory_list_dates(&query).unwrap_err().code,
+            "INVALID_DATE_FILTER"
+        );
+        query.date_to = Some("2024-02-30".to_string());
+        assert_eq!(
+            memory_list_dates(&query).unwrap_err().code,
+            "INVALID_DATE_FILTER"
+        );
+    }
 
     #[test]
     fn unconfigured_category_is_bad_request() {

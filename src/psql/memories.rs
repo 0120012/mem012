@@ -30,13 +30,27 @@ SELECT COALESCE(
             'created_at', u.created_at::text,
             'updated_at', u.updated_at::text
         )
-        ORDER BY u.updated_at DESC
+        ORDER BY u.updated_at DESC, u.uuid DESC
     ),
     '[]'::jsonb
 )::text
 FROM memory_units u
 LEFT JOIN memory_changes c ON c.memory_uuid = u.uuid
 WHERE u.status = 'active'
+    AND u.uuid IN (
+        SELECT m.uuid
+        FROM memory_units m
+        LEFT JOIN memory_search_index s ON s.memory_uuid = m.uuid
+        WHERE m.status = 'active'
+            AND ($1::text IS NULL OR m.category = $1)
+            AND ($2::text IS NULL OR (s.status = 'active' AND s.all_text ILIKE $2 ESCAPE E'\\'))
+            AND ($4::date IS NULL OR
+                CASE WHEN $3 = 'created_at' THEN m.created_at ELSE m.updated_at END >= $4::date)
+            AND ($5::date IS NULL OR
+                CASE WHEN $3 = 'created_at' THEN m.created_at ELSE m.updated_at END < $5::date + INTERVAL '1 day')
+        ORDER BY m.updated_at DESC, m.uuid DESC
+        LIMIT $6 OFFSET $7
+    )
 "#;
 
 const LIST_MEMORY_CATEGORY_KEYWORDS_SQL: &str = r#"
@@ -62,12 +76,26 @@ END
 // Why：列表展示查询放在 psql 层，避免 HTTP handler 持有 memory_changes 派生规则。
 pub async fn list_memories(
     database_url: &str,
+    limit: i64,
+    offset: i64,
+    category: Option<&str>,
+    filter: Option<&str>,
+    date_field: Option<&str>,
+    date_from: Option<&str>,
+    date_to: Option<&str>,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(database_url)
         .await?;
     let rows: String = sqlx::query_scalar(LIST_MEMORIES_SQL)
+        .bind(category)
+        .bind(filter)
+        .bind(date_field)
+        .bind(date_from)
+        .bind(date_to)
+        .bind(limit)
+        .bind(offset)
         .fetch_one(&pool)
         .await?;
     Ok(serde_json::from_str(&rows)?)
@@ -238,7 +266,15 @@ fn normalize_keywords(
 
 #[cfg(test)]
 mod tests {
-    use super::UPDATE_DUPLICATE_CHECK_SQL;
+    use super::{LIST_MEMORIES_SQL, UPDATE_DUPLICATE_CHECK_SQL};
+
+    #[test]
+    fn list_memories_sql_filters_before_pagination_aggregation() {
+        assert!(LIST_MEMORIES_SQL.contains("memory_search_index"));
+        assert!(LIST_MEMORIES_SQL.contains("LIMIT $6 OFFSET $7"));
+        assert!(LIST_MEMORIES_SQL.contains("$4::date"));
+        assert!(LIST_MEMORIES_SQL.contains("$5::date"));
+    }
 
     #[test]
     fn update_duplicate_check_covers_user_edit_fields() {

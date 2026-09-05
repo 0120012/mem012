@@ -77,6 +77,20 @@ function MemoryContentEditor({ readOnly, value, onChange }: { readOnly: boolean;
 }
 
 type MemoryDateField = "created_at" | "updated_at"
+type MemoryListRequest = {
+  page: number
+  category: string
+  filter: string
+  dateField: MemoryDateField
+  dateFrom: string
+  dateTo: string
+}
+const MEMORY_PAGE_SIZE = 12
+
+function parseMemoryPage(value: string | null) {
+  const page = Number.parseInt(value || "", 10)
+  return Number.isSafeInteger(page) && page > 0 ? page : 1
+}
 
 function memoryMatchesDateRange(memory: MemoryItem, field: MemoryDateField, from: string, to: string) {
   const memoryTime = new Date(memory[field]).getTime()
@@ -120,15 +134,18 @@ export function MemoriesPage() {
   const memoryFilterComposingRef = useRef(false)
   const [composingMemoryFilter, setComposingMemoryFilter] = useState<string | null>(null)
   const categoryFilter = searchParams.get("category")?.trim() || ""
+  const filterQuery = searchParams.get("filter")?.trim() || ""
   const memoryFilterInput = (composingMemoryFilter ?? searchParams.get("filter")) || ""
   const memoryFilter = memoryFilterInput.trim().toLocaleLowerCase("zh-CN")
+  const [debouncedFilter, setDebouncedFilter] = useState(filterQuery)
   const dateField: MemoryDateField = searchParams.get("date_field") === "created_at" ? "created_at" : "updated_at"
   const dateFieldLabel = dateField === "created_at" ? "创建时间" : "更新时间"
   const dateFrom = searchParams.get("date_from")?.trim() || ""
   const dateTo = searchParams.get("date_to")?.trim() || ""
+  const page = parseMemoryPage(searchParams.get("page"))
   const projectPrefix = activeProject ? `/${encodeURIComponent(activeProject.project_id)}` : ""
   const categoryOptions = (activeProject?.categories || []).filter((category) => category !== "init")
-  const categories = Array.from(new Set(memories.map((m) => m.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"))
+  const categories = Array.from(new Set([...categoryOptions, ...memories.map((m) => m.category).filter(Boolean)])).sort((a, b) => a.localeCompare(b, "zh-CN"))
   const visibleMemories = memories.filter((m) => {
     if (categoryFilter && m.category !== categoryFilter) return false
     if ((dateFrom || dateTo) && !memoryMatchesDateRange(m, dateField, dateFrom, dateTo)) return false
@@ -138,12 +155,26 @@ export function MemoriesPage() {
     )
   })
   const selectedMemory = visibleMemories.find((m) => m.memory_uuid === selectedUuid) || null
+  const canGoNext = memories.length === MEMORY_PAGE_SIZE
 
-  const fetchMemories = useCallback(async () => {
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedFilter(filterQuery), 250)
+    return () => window.clearTimeout(timer)
+  }, [filterQuery])
+
+  const fetchMemories = useCallback(async (request: MemoryListRequest) => {
     setLoading(true)
     setError("")
     try {
-      const data = await api.memories.list()
+      const data = await api.memories.list({
+        limit: MEMORY_PAGE_SIZE,
+        offset: (request.page - 1) * MEMORY_PAGE_SIZE,
+        category: request.category || undefined,
+        filter: request.filter || undefined,
+        dateField: request.dateField,
+        dateFrom: request.dateFrom || undefined,
+        dateTo: request.dateTo || undefined,
+      })
       setMemories(data || [])
     } catch (e) {
       setMemories([])
@@ -158,6 +189,7 @@ export function MemoriesPage() {
     if (filter) params.set("filter", filter)
     else params.delete("filter")
     params.delete("keyword")
+    params.delete("page")
     setSearchParams(params, { replace: true })
   }
 
@@ -190,6 +222,7 @@ export function MemoriesPage() {
     params.delete("date_from")
     params.delete("date_to")
     params.delete("date_field")
+    params.delete("page")
     if (category) params.set("category", category)
     else params.delete("category")
     setSearchParams(params, { replace: true })
@@ -199,21 +232,33 @@ export function MemoriesPage() {
     const params = new URLSearchParams(searchParams)
     if (value) params.set(key, value)
     else params.delete(key)
+    params.delete("page")
     setSearchParams(params, { replace: true })
   }
 
   const updateDateField = (field: MemoryDateField) => {
     const params = new URLSearchParams(searchParams)
     params.set("date_field", field)
+    params.delete("page")
     setSearchParams(params, { replace: true })
+  }
+
+  const updatePage = (nextPage: number) => {
+    const params = new URLSearchParams(searchParams)
+    if (nextPage <= 1) params.delete("page")
+    else params.set("page", String(nextPage))
+    setSearchParams(params, { replace: true })
+    setSelectedUuid(null)
   }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void fetchMemories()
+      void fetchMemories({ page, category: categoryFilter, filter: debouncedFilter, dateField, dateFrom, dateTo })
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [activeProject, fetchMemories])
+  }, [activeProject, categoryFilter, dateField, dateFrom, dateTo, debouncedFilter, fetchMemories, page])
+
+  const fetchCurrentMemories = () => fetchMemories({ page, category: categoryFilter, filter: debouncedFilter, dateField, dateFrom, dateTo })
 
   const resetEditorState = (memory: MemoryItem | null) => {
     setIsEditing(false)
@@ -299,7 +344,7 @@ export function MemoriesPage() {
         content: contentDraft,
         keywords: editorKeywords,
       })
-      await fetchMemories()
+      await fetchCurrentMemories()
       setIsEditing(false)
     } catch (error) {
       if (error instanceof ApiError && error.code === "MEMORY_UPDATE_CONFLICT") {
@@ -337,7 +382,7 @@ export function MemoriesPage() {
       formElement.reset()
       setCreateOpen(false)
       window.dispatchEvent(new Event("changes-updated"))
-      await fetchMemories()
+      await fetchCurrentMemories()
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : "创建失败")
     } finally {
@@ -353,7 +398,7 @@ export function MemoriesPage() {
           <Button variant="outline" size="sm" onClick={() => { setCreateError(""); setCreateOpen(true) }}>
             <Plus className="h-4 w-4" />新建
           </Button>
-          <Button variant="outline" size="sm" onClick={fetchMemories} disabled={loading}>刷新</Button>
+          <Button variant="outline" size="sm" onClick={fetchCurrentMemories} disabled={loading}>刷新</Button>
         </div>
       </div>
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -513,7 +558,7 @@ export function MemoriesPage() {
             </div>
           </div>
           <div className="text-xs text-muted-foreground sm:col-span-2 lg:col-span-1 lg:self-end lg:text-right">
-            当前结果 {visibleMemories.length} / 全部记忆 {memories.length}
+            当前页结果 {visibleMemories.length} 条 · 第 {page} 页
           </div>
           {(memoryFilterInput.trim() || dateFrom || dateTo) && (
             <div className="flex min-h-6 flex-wrap gap-2 sm:col-span-2 lg:col-span-3">
@@ -531,7 +576,7 @@ export function MemoriesPage() {
       ) : error ? (
         <div className="text-center py-12">
           <p className="text-destructive mb-3">{error}</p>
-          <Button variant="outline" size="sm" onClick={fetchMemories}>重试</Button>
+          <Button variant="outline" size="sm" onClick={fetchCurrentMemories}>重试</Button>
         </div>
       ) : memories.length === 0 ? (
         <p className="text-muted-foreground text-center py-12">暂无记忆</p>
@@ -588,6 +633,13 @@ export function MemoriesPage() {
               </div>
             )
           })}
+        </div>
+      )}
+      {(page > 1 || canGoNext) && (
+        <div className="flex items-center justify-center gap-3 pt-4">
+          <Button variant="outline" size="sm" onClick={() => updatePage(page - 1)} disabled={loading || page <= 1}>上一页</Button>
+          <span className="text-xs text-muted-foreground">第 {page} 页</span>
+          <Button variant="outline" size="sm" onClick={() => updatePage(page + 1)} disabled={loading || !canGoNext}>下一页</Button>
         </div>
       )}
       {selectedMemory && (

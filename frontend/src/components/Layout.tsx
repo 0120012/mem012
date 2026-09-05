@@ -142,6 +142,7 @@ export function Layout() {
     params.delete("date_from")
     params.delete("date_to")
     params.delete("date_field")
+    params.delete("page")
     params.set("category", category)
     const search = params.toString()
     return `${projectPrefix}/memories${search ? `?${search}` : ""}`

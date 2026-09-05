@@ -30,6 +30,16 @@ export interface MemoryItem {
   updated_at: string
 }
 
+export interface MemoryListParams {
+  limit?: number
+  offset?: number
+  category?: string
+  filter?: string
+  dateField?: "created_at" | "updated_at"
+  dateFrom?: string
+  dateTo?: string
+}
+
 export interface MemoryUpdateInput {
   expected_revision: number
   title_norm: string
@@ -214,7 +224,18 @@ export const api = {
     list: () => request<ProjectInfo[]>("/projects"),
   },
   memories: {
-    list: () => request<MemoryItem[]>("/memories"),
+    list: (params?: MemoryListParams) => {
+      const query = new URLSearchParams()
+      if (params?.limit !== undefined) query.set("limit", String(params.limit))
+      if (params?.offset !== undefined) query.set("offset", String(params.offset))
+      if (params?.category) query.set("category", params.category)
+      if (params?.filter) query.set("filter", params.filter)
+      if (params?.dateField) query.set("date_field", params.dateField)
+      if (params?.dateFrom) query.set("date_from", params.dateFrom)
+      if (params?.dateTo) query.set("date_to", params.dateTo)
+      const suffix = query.toString() ? `?${query.toString()}` : ""
+      return request<MemoryItem[]>(`/memories${suffix}`)
+    },
     categoryKeywords: (category: string) => request<string[]>(`/memories/categories/${encodeURIComponent(category)}/keywords`),
     create: (body: MemoryCreateInput) =>
       request<MemoryCreateResult>("/create_memory", {
