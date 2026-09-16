@@ -78,7 +78,9 @@ mem012 --profile {profile} --args '{"tool":"search_memory","params":{"limit":10,
 ```
 
 - 可用 `filters` 只有 `title`、`summary`、`keywords`、`content`、`recall_when`。
-- `terms.include`、`terms.exclude` 必须同时传数组，且至少一个数组非空。`include` 表示至少命中一个，`exclude` 表示全部不能命中。
+- `terms.include`、`terms.exclude` 必须同时传数组，且至少一个数组非空。
+- `terms.include` 中的关键词必须全部命中（AND）；`terms.exclude` 中的关键词必须全部不能命中（NOT）。
+- 基础搜索负责宽泛的自然语言/任意词召回；高级搜索不提供 `any` 或 `exact` 参数。
 
 ## delete_memory -- 删除记忆
 

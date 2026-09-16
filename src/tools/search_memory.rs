@@ -201,17 +201,17 @@ fn build_search_plan(
 
     let query = request.query.unwrap_or_default();
     let terms = SearchTermsPlan {
-        all: Vec::new(),
+        all: terms
+            .include
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .collect(),
         none: terms
             .exclude
             .into_iter()
             .map(|value| value.trim().to_string())
             .collect(),
-        any: terms
-            .include
-            .into_iter()
-            .map(|value| value.trim().to_string())
-            .collect(),
+        any: Vec::new(),
     };
     let semantic_query = build_semantic_query(&query, &terms);
 
