@@ -61,6 +61,8 @@ mem012 --profile {profile} --args '{"tool":"create_memory","params":{"category":
 
 ## search_memory -- 搜索记忆
 
+搜索顺序：优先使用高级搜索寻找精准结果；高级搜索无结果时，再使用基础搜索扩大召回。
+
 ### 基础搜索
 
 只传 `query` 和可选 `limit`。
