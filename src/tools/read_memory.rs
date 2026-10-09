@@ -100,7 +100,6 @@ fn read_memory_response(
             "memory_uuid": memory_uuid,
             "memory": state.get("memory").ok_or("memory state 缺少 memory")?,
             "keywords": state.get("keywords").ok_or("memory state 缺少 keywords")?,
-            "relations": state.get("relations").ok_or("memory state 缺少 relations")?,
         },
         "error": null,
         "profile": profile
