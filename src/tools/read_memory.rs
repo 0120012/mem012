@@ -90,14 +90,13 @@ async fn load_memory_state(
 
 fn read_memory_response(
     profile: &str,
-    memory_uuid: &str,
+    _memory_uuid: &str,
     state: &serde_json::Value,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     Ok(serde_json::json!({
         "state": "success",
         "tool": "read_memory",
         "data": {
-            "memory_uuid": memory_uuid,
             "memory": state.get("memory").ok_or("memory state 缺少 memory")?,
             "keywords": state.get("keywords").ok_or("memory state 缺少 keywords")?,
         },
