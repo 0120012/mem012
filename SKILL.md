@@ -61,19 +61,11 @@ mem012 --profile {profile} --args '{"tool":"create_memory","params":{"category":
 
 ## search_memory -- 搜索记忆
 
-搜索顺序：优先使用高级搜索寻找精准结果；高级搜索无结果时，再使用基础搜索扩大召回。
-
-### 基础搜索
-
-只传 `query` 和可选 `limit`。
-
-```bash
-mem012 --profile {profile} --args '{"tool":"search_memory","params":{"query":"关键词","limit":10}}'
-```
+只使用高级搜索；`query` 普通搜索入口已关闭。
 
 ### 高级搜索
 
-必须同时传 `terms` 和 `filters`，不传 `query`。高级搜索先做 `terms` + `filters` 字面筛选，再用 `terms.include` 作为语义输入执行 embedding fallback 或 rerank。
+必须同时传 `terms` 和 `filters`，不得传 `query`。高级搜索先做 `terms` + `filters` 字面筛选，再用 `terms.include` 作为语义输入执行 embedding fallback 或 rerank。
 
 ```bash
 mem012 --profile {profile} --args '{"tool":"search_memory","params":{"limit":10,"terms":{"include":["word1","word2"],"exclude":["word3"]},"filters":["summary","keywords","content","recall_when"]}}'
@@ -82,7 +74,7 @@ mem012 --profile {profile} --args '{"tool":"search_memory","params":{"limit":10,
 - 可用 `filters` 只有 `title`、`summary`、`keywords`、`content`、`recall_when`。
 - `terms.include`、`terms.exclude` 必须同时传数组，且至少一个数组非空。
 - `terms.include` 中的关键词必须全部命中（AND）；`terms.exclude` 中的关键词必须全部不能命中（NOT）。
-- 基础搜索负责宽泛的自然语言/任意词召回；高级搜索不提供 `any` 或 `exact` 参数。
+- 高级搜索不提供 `any` 或 `exact` 参数。
 
 ## delete_memory -- 删除记忆
 

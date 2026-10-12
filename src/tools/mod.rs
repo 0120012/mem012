@@ -107,7 +107,13 @@ pub async fn dispatch_tool_request(
         "delete_memory" => delete_memory::run(context, args).await,
         "import_memory" => import_memory::run(context, args).await,
         "read_memory" | "read_memory_hash" => read_memory::run(context, tool, args).await,
-        "search_memory" => search_memory::run(context, args).await,
+        "search_memory" => {
+            // query 普通搜索入口暂时关闭，统一使用 terms + filters 高级搜索。
+            if args.get("query").is_some() {
+                return Err("query 搜索已关闭，请使用高级搜索".into());
+            }
+            search_memory::run(context, args).await
+        }
         "update_memory_replace"
         | "update_memory_patch_content"
         | "update_memory_append"
