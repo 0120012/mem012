@@ -34,9 +34,9 @@ mem012 --profile {profile} init
 MEM012_ADMIN_DATABASE_URL="postgresql://{admin_user}:{admin_password}@{host}:{port}/postgres" mem012 --create_profile {profile}
 ```
 
-## auth -- 授权 init 写入
+## auth -- 授权 init 操作
 
-仅当用户明确提供`auth_token` 后执行。`--auth` 必须同时带 `--profile`；成功后会写入本机短期授权文件 `~/.auth/auth_file.mem`。
+对init类别的记忆操作(新建、删除、修改、追加、修补)都需要授权，需要用户从前端获取`auth_token`，并提供`auth_token` 后执行。`--auth` 必须同时带 `--profile`；成功后会写入本机短期授权文件 `~/.auth/auth_file.mem`。
 
 ```bash
 mem012 --profile {profile} --auth {auth_token}
