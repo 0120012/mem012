@@ -60,13 +60,10 @@ impl EmbeddingResponse {
     }
 }
 
-// Why：bge-base 硬上限 512 token，超限时 llama.cpp 直接返回 500 而非截断；
-// WordPiece 分词下 token 数不超过字符数（实测 510 个汉字 = 512 token 恰好达界），
-// 取 500 字符/块为 CLS/SEP 与混合文本留出余量。
-const MAX_EMBED_CHARS: usize = 500;
-// Why：单块嵌入在当前 2 核 VPS 上实测约 30s，必须为异常超长输入设上界；
-// 40 块 ≈ 2 万字远超正常记忆体量，超出部分放弃嵌入而不是让写入流程失败。
-const MAX_EMBED_CHUNKS: usize = 40;
+// Why：BAAI/bge-m3 上限是 8192 token，而字符数不等于 token 数；取 6000 字符为中英混合、代码和特殊符号留出余量。
+const MAX_EMBED_CHARS: usize = 6000;
+// Why：超长输入仍需设上界；10 块约 6 万字符既覆盖完整记忆，又避免一次写入触发过多远程调用。
+const MAX_EMBED_CHUNKS: usize = 10;
 
 // What：按字符边界把输入切成不超过 MAX_EMBED_CHARS 的块，
 // 返回保留的块与因超过 MAX_EMBED_CHUNKS 被丢弃的块数（未超限时为 0）。
@@ -179,15 +176,29 @@ async fn request_single_embedding(
     let _permit = EMBED_GATE.acquire().await?;
     // Why：远程模型必须返回配置维度，和 pgvector 表结构保持硬一致。
     let endpoint = provider_endpoint(&settings.api, &settings.api_type)?;
+    let body = if settings.model.starts_with("Qwen/Qwen3") {
+        serde_json::json!({ "model": settings.model, "input": input, "dimensions": settings.dimension })
+    } else {
+        serde_json::json!({ "model": settings.model, "input": input })
+    };
     let request = http_client(settings.proxy.as_deref())?
         .post(endpoint)
-        .json(&serde_json::json!({ "model": settings.model, "input": input }));
+        .json(&body);
     let request = if settings.key.trim().is_empty() {
         request
     } else {
         request.bearer_auth(&settings.key)
     };
-    let response: EmbeddingResponse = request.send().await?.error_for_status()?.json().await?;
+    let response = request.send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        let message = format!("embedding API {status}: {}", response.text().await?.trim());
+        if matches!(status.as_u16(), 400 | 401 | 403 | 404) {
+            return Err(PermanentEmbeddingError(message).into());
+        }
+        return Err(message.into());
+    }
+    let response: EmbeddingResponse = response.json().await?;
     let embedding = response
         .first_embedding()
         .ok_or_else(|| PermanentEmbeddingError("embedding 响应为空或格式错误".into()))?;

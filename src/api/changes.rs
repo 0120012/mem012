@@ -274,12 +274,10 @@ fn embedding_input_from_state(state: &Value) -> Result<String, ApiError> {
         }
     }
     let input = parts.join("\n");
-    (!input.is_empty())
-        .then(|| input.chars().take(12_000).collect::<String>())
-        .ok_or(ApiError {
-            code: "EMBEDDING_INPUT_MISSING",
-            message: "embedding input is empty".to_string(),
-        })
+    (!input.is_empty()).then_some(input).ok_or(ApiError {
+        code: "EMBEDDING_INPUT_MISSING",
+        message: "embedding input is empty".to_string(),
+    })
 }
 
 fn reviewed_change(change: &Value) -> Option<(&str, &str)> {
