@@ -1,7 +1,7 @@
 # Why：把 PostgreSQL 扩展固定在项目镜像里，避免运行容器缺 pgvector / AGE 时临时手工修。
 ARG PG_MAJOR=18
-ARG PGVECTOR_REF=v0.8.2
-ARG AGE_REF=PG18/v1.7.0-rc0
+ARG PGVECTOR_REF=v0.8.7
+ARG AGE_REF=PG18/v1.8.0-rc0
 
 FROM postgres:${PG_MAJOR}-bookworm AS builder
 
