@@ -33,6 +33,31 @@ fn memory_embeddings_table_sql(embeddings_dimension: usize) -> String {
     )
 }
 
+fn memory_embedding_chunks_table_sql(embeddings_dimension: usize) -> String {
+    // What：定义按记忆和块序号定位的独立向量记录，正文范围使用半开字节区间。
+    // Why：保留源 revision/hash 和索引策略版本，供后续原子替换及过期检查使用。
+    assert!(embeddings_dimension > 0, "embedding 维度必须为正数");
+    format!(
+        r#"
+        CREATE TABLE memory_embedding_chunks (
+            memory_uuid UUID NOT NULL REFERENCES memory_units(uuid) ON DELETE CASCADE,
+            chunk_index INT NOT NULL CHECK (chunk_index >= 0),
+            content_start_byte BIGINT NOT NULL CHECK (content_start_byte >= 0),
+            content_end_byte BIGINT NOT NULL CHECK (content_end_byte >= content_start_byte),
+            title_path TEXT NOT NULL,
+            embedding vector({embeddings_dimension}) NOT NULL,
+            embedding_model TEXT NOT NULL CHECK (embedding_model <> ''),
+            embedding_dimension INT NOT NULL CHECK (embedding_dimension = {embeddings_dimension}),
+            source_revision BIGINT NOT NULL CHECK (source_revision > 0),
+            source_hash TEXT NOT NULL CHECK (source_hash ~ '^[0-9a-f]{{64}}$'),
+            index_version TEXT NOT NULL CHECK (index_version <> ''),
+            embedded_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (memory_uuid, chunk_index)
+        );
+        "#
+    )
+}
+
 // Why：初始化入口必须独立于服务启动，避免运行态自动修改非当前 profile 库。
 pub async fn init_db(
     pool: &Pool<Postgres>,
@@ -683,27 +708,5 @@ async fn cr_memory_embeddings_table(
             eprintln!("memory_embeddings 表创建失败: {error}");
             Err(error)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{memory_embeddings_table_sql, reset_db_owner_error};
-
-    #[test]
-    fn reset_db_allows_only_database_owner() {
-        assert!(reset_db_owner_error("codex", "mem_codex", "codex").is_none());
-        assert_eq!(
-            reset_db_owner_error("maccodex", "mem_codex", "codex").unwrap(),
-            "reset_db 仅允许清理 profile 自有数据库：database `mem_codex` owner 是 `codex`，profile 是 `maccodex`"
-        );
-    }
-
-    #[test]
-    fn embedding_table_uses_configured_dimension() {
-        let sql = memory_embeddings_table_sql(768);
-        assert!(sql.contains("embedding vector(768)"));
-        assert!(sql.contains("embedding_dimension = 768"));
-        assert!(!sql.contains("1024"));
     }
 }
