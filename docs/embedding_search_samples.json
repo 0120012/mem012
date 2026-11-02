@@ -1,0 +1,756 @@
+{
+  "description": "P0 合成离线标注样本，仅用于隔离评测。",
+  "profile": "embedding_eval",
+  "annotation_status": "synthetic_labels_not_verified_by_search",
+  "notes": [
+    "这些资料和项目均为合成内容，不代表真实产品、用户记忆或生产数据。",
+    "记忆和 case 的 profile 缺省时继承顶层 profile；身份键为 profile 与 memory_uuid 的组合。",
+    "加载前将 content 中的 content_expansions 标记替换为 text 重复 repeat 次的全文，禁止把标记本身当作正文。",
+    "cases 比较结果集合；仅在 expected_order 存在时校验顺序。evidence 是标注依据，不要求公开接口返回片段。",
+    "未单列 expected_hard_match_memory_uuids 时，硬条件命中集合等于 expected_memory_uuids；低相关样本单独列出硬命中集合。",
+    "pipeline_cases 的路由候选、模型状态和预算条件是后续隔离 harness 的受控输入，不是新增 API 参数或真实模型响应。",
+    "pipeline_cases 中候选 UUID 可重复，以模拟多个块命中；最终每条记忆只输出一次。",
+    "expected_outcome 是行为标注：success 可有空结果，degraded 表示故障或预算不足，invalid_request 表示参数拒绝；不预设线上的错误码或响应结构。",
+    "当前只验证样本数据；tokenizer、模型窗口、配额、旧流程基线和真实检索质量仍须单独核验。"
+  ],
+  "split_policy": {
+    "tune": "仅此组可用于选择预算、候选数和阈值。",
+    "holdout": "参数固定后再执行；不得用此组标签反复调参。与 tune 不复用正例记忆身份。",
+    "contract": "非法输入、纯过滤和确定性边界检查；不参与相关性阈值调参。",
+    "limitations": "这是预先划分的小规模合成回归集，不能替代人工复核的真实资料质量评测。"
+  },
+  "content_expansions": {
+    "{{LONG_BODY}}": {
+      "text": "合成背景资料仅用于验证连续正文覆盖，不包含其他样本的检索词。\n",
+      "repeat": 2400
+    },
+    "{{LONG_TITLE}}": {
+      "text": "合成路径层级",
+      "repeat": 600
+    },
+    "{{LONG_CODE}}": {
+      "text": "sample_value = 1\n",
+      "repeat": 1600
+    }
+  },
+  "memories": [
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000001",
+      "status": "active",
+      "title": "合成 Trending 合集：终端工具与网页导出",
+      "summary": "两个合成项目的功能记录。",
+      "content": "# 合成 Trending 合集\n\n## 项目 A\n用于终端日志检索，支持按级别过滤。\n\n## 项目 B\n可离线把网页转换为 Markdown，并保留代码块。",
+      "keywords": [
+        "合成",
+        "Trending"
+      ],
+      "recall_when": "查找合成 Trending 项目的具体功能时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000002",
+      "status": "active",
+      "title": "合成项目 C：网页截图",
+      "summary": "合成的截图工具记录。",
+      "content": "## 项目 C\n保存网页为 PNG，可离线查看截图。",
+      "keywords": [
+        "合成",
+        "截图"
+      ],
+      "recall_when": "查找合成截图工具时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000003",
+      "status": "active",
+      "title": "合成资料整理 skill",
+      "summary": "合成的资料整理流程说明。",
+      "content": "# 合成资料整理 skill\n\n## 用途\n将给定资料整理为便于回读的笔记，保留原始来源、章节和关键描述，不添加资料之外的判断。\n\n## 输入\n输入由正文和来源标识组成；同一批资料按既有顺序处理，保留不同条目的边界。\n\n## 输出\n结果包含主题、要点和来源对应关系。遇到无法核实的内容，在相应条目中标记疑问，不自行补全。\n\n## 执行约束\n逐段检查原文和整理结果，保留代码围栏及列表结构，确认引用内容没有跨条目拼接。\n\n## 收尾条款\n归档前必须附上校验清单，并取得用户确认。",
+      "keywords": [
+        "合成",
+        "skill"
+      ],
+      "recall_when": "查找合成资料整理规则时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000004",
+      "status": "active",
+      "title": "合成资料归档 prompt",
+      "summary": "合成的归档流程说明。",
+      "content": "# 合成资料归档 prompt\n\n## 收尾条款\n归档前必须取得用户确认，并记录存放位置。",
+      "keywords": [
+        "合成",
+        "prompt"
+      ],
+      "recall_when": "查找合成资料归档规则时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000005",
+      "status": "active",
+      "title": "合成故障短节点",
+      "summary": "合成的队列排障结论。",
+      "content": "## 排障结论\n任务停滞的原因是重建队列暂停；恢复队列后再重试。",
+      "keywords": [
+        "合成",
+        "短节点"
+      ],
+      "recall_when": "查找合成队列故障的短记录时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000006",
+      "status": "active",
+      "title": "合成项目 page-loom",
+      "summary": "虚构的网页导出工具。",
+      "content": "# page-loom\n\n## 功能\n逐页提取网页正文并导出 Markdown，保留来源链接。",
+      "keywords": ["合成", "page-loom"],
+      "recall_when": "查找合成网页导出工具时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000007",
+      "status": "active",
+      "title": "合成项目 image-loom",
+      "summary": "虚构的截图工具。",
+      "content": "## 功能\n仅保存网页截图，不提取结构化正文。",
+      "keywords": ["合成", "截图"],
+      "recall_when": "查找合成截图项目时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000008",
+      "status": "active",
+      "title": "合成工具 note-harbor",
+      "summary": "虚构的书签整理工具。",
+      "content": "# note-harbor\n\n## 用途\n整理浏览器书签为资料卡片，并保留标签层级与原始网址。",
+      "keywords": ["合成", "note-harbor"],
+      "recall_when": "查找合成书签整理工具时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000009",
+      "status": "active",
+      "title": "合成蓝桥部署交接",
+      "summary": "虚构的交接约束。",
+      "content": "# 交接记录\n\n## 运行约束\n投放前需要双人复核，记录变更编号。",
+      "keywords": ["合成", "离线签核"],
+      "recall_when": "查找合成交接要求时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000010",
+      "status": "active",
+      "title": "合成观察节点",
+      "summary": "晨雾计划已进入观察阶段。",
+      "content": "## 当前节点\n先观察资源变化，再记录结论。",
+      "keywords": ["合成", "观察"],
+      "recall_when": "检查夜间回收条件时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000011",
+      "status": "active",
+      "title": "合成部署操作手册",
+      "summary": "虚构的接入与回退说明。",
+      "content": "# 部署手册\n\n## 接入\n先启用星舟网关，再验证入口。\n\n## 回滚\n发生异常时执行镜像回退，不清理操作日志。",
+      "keywords": ["合成", "手册"],
+      "recall_when": "查找合成部署步骤时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000012",
+      "status": "active",
+      "title": "合成超长分块资料",
+      "summary": "用于全文覆盖、续块、标题路径与围栏边界。",
+      "content": "# 合成超长分块资料\n\n## 超长章节\n起点标记：启用长航模式后开始整理。\n{{LONG_BODY}}\n结束标记：必须执行末尾核验。\n\n### {{LONG_TITLE}}\n路径标记：每个续块携带章节路径。\n\n## 代码示例\n```python\n{{LONG_CODE}}fence_end = \"合成围栏结束\"\n```\n\n## 最终条款\n最终保留尾部锚点：纸舟终点。",
+      "keywords": ["合成", "长文"],
+      "recall_when": "检查合成长文的完整索引时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000013",
+      "status": "active",
+      "title": "合成导出工具 river-kit",
+      "summary": "虚构的免费导出工具。",
+      "content": "## 功能\nriver-kit 支持静态导出与批量归档，使用免费方案。",
+      "keywords": ["合成", "river-kit"],
+      "recall_when": "查找合成导出方案时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000014",
+      "status": "active",
+      "title": "合成 river-kit 托管版",
+      "summary": "虚构的托管工具。",
+      "content": "## 功能\nriver-kit 支持静态导出与批量归档。\n{{LONG_BODY}}\n## 许可\n高级功能需要付费订阅。",
+      "keywords": ["合成", "托管"],
+      "recall_when": "查找合成托管工具时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000015",
+      "status": "active",
+      "title": "合成 stream-kit",
+      "summary": "stream-kit 支持静态导出。",
+      "content": "## 许可\n套餐需要付费订阅。",
+      "keywords": ["合成", "付费"],
+      "recall_when": "查看合成导出工具说明时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000016",
+      "status": "active",
+      "title": "合成环境隔离记录",
+      "summary": "主评测环境副本。",
+      "content": "## 范围\n棱镜档案仅用于本评测环境。",
+      "keywords": ["合成", "隔离"],
+      "recall_when": "检查合成环境隔离时"
+    },
+    {
+      "profile": "embedding_eval_other",
+      "memory_uuid": "00000000-0000-4000-8000-000000000016",
+      "status": "active",
+      "title": "合成环境隔离记录",
+      "summary": "另一评测环境副本。",
+      "content": "## 范围\n棱镜档案仅用于本评测环境。",
+      "keywords": ["合成", "隔离"],
+      "recall_when": "检查合成环境隔离时"
+    },
+    {
+      "profile": "embedding_eval_other",
+      "memory_uuid": "00000000-0000-4000-8000-000000000017",
+      "status": "active",
+      "title": "合成异域独有记录",
+      "summary": "仅在另一个评测环境存在。",
+      "content": "## 范围\n异域守则仅属于另一评测环境。",
+      "keywords": ["合成", "独有"],
+      "recall_when": "检查合成跨环境查询时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000018",
+      "status": "active",
+      "title": "合成双生记录甲",
+      "summary": "相同正文的第一条独立记忆。",
+      "content": "## 说明\n双生档案保留独立身份。",
+      "keywords": ["合成", "双生"],
+      "recall_when": "检查合成相同正文的不同记忆时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000019",
+      "status": "active",
+      "title": "合成双生记录乙",
+      "summary": "相同正文的第二条独立记忆。",
+      "content": "## 说明\n双生档案保留独立身份。",
+      "keywords": ["合成", "双生"],
+      "recall_when": "检查合成相同正文的不同记忆时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000020",
+      "status": "active",
+      "title": "合成状态记录甲",
+      "summary": "可见的已确认工作态。",
+      "content": "## 状态样本\n状态探针用于验证可见范围。",
+      "keywords": ["合成", "状态样本"],
+      "recall_when": "检查合成状态可见性时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000021",
+      "status": "pending",
+      "title": "合成状态记录乙",
+      "summary": "可见的待审核工作态。",
+      "content": "## 状态样本\n状态探针用于验证可见范围。",
+      "keywords": ["合成", "状态样本"],
+      "recall_when": "检查合成状态可见性时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000022",
+      "status": "trashed",
+      "title": "合成状态记录丙",
+      "summary": "应排除的回收站工作态。",
+      "content": "## 状态样本\n状态探针用于验证可见范围。",
+      "keywords": ["合成", "状态样本"],
+      "recall_when": "检查合成状态可见性时"
+    },
+    {
+      "memory_uuid": "00000000-0000-4000-8000-000000000023",
+      "status": "active",
+      "title": "合成随机词表",
+      "summary": "没有操作步骤的随机词表。",
+      "content": "## 随机词条\n冷杉、归档、授权。以上仅为随机词表，没有操作步骤或产品介绍。",
+      "keywords": ["合成", "词表"],
+      "recall_when": "检查合成低相关候选时"
+    }
+  ],
+  "cases": [
+    {
+      "id": "trending-project-detail-001",
+      "split": "tune",
+      "request": {
+        "tool": "search_memory",
+        "params": {
+          "terms": {
+            "include": [
+              "离线",
+              "网页",
+              "Markdown"
+            ],
+            "exclude": []
+          },
+          "filters": [
+            "content"
+          ],
+          "limit": 5
+        }
+      },
+      "expected_memory_uuids": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "evidence": [
+        {
+          "memory_uuid": "00000000-0000-4000-8000-000000000001",
+          "field": "content",
+          "section": "项目 B",
+          "text": "可离线把网页转换为 Markdown，并保留代码块。"
+        }
+      ]
+    },
+    {
+      "id": "skill-final-clause-001",
+      "split": "tune",
+      "request": {
+        "tool": "search_memory",
+        "params": {
+          "terms": {
+            "include": [
+              "归档",
+              "校验清单",
+              "用户确认"
+            ],
+            "exclude": []
+          },
+          "filters": [
+            "content"
+          ],
+          "limit": 5
+        }
+      },
+      "expected_memory_uuids": [
+        "00000000-0000-4000-8000-000000000003"
+      ],
+      "evidence": [
+        {
+          "memory_uuid": "00000000-0000-4000-8000-000000000003",
+          "field": "content",
+          "section": "收尾条款",
+          "text": "归档前必须附上校验清单，并取得用户确认。"
+        }
+      ]
+    },
+    {
+      "id": "short-node-001",
+      "split": "tune",
+      "request": {
+        "tool": "search_memory",
+        "params": {
+          "terms": {
+            "include": [
+              "重建队列",
+              "暂停"
+            ],
+            "exclude": []
+          },
+          "filters": [
+            "content"
+          ],
+          "limit": 5
+        }
+      },
+      "expected_memory_uuids": [
+        "00000000-0000-4000-8000-000000000005"
+      ],
+      "evidence": [
+        {
+          "memory_uuid": "00000000-0000-4000-8000-000000000005",
+          "field": "content",
+          "section": "排障结论",
+          "text": "任务停滞的原因是重建队列暂停；恢复队列后再重试。"
+        }
+      ]
+    },
+    {
+      "id": "exact-name-001",
+      "split": "tune",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["page-loom"], "exclude": []}, "filters": ["title"], "limit": 5}},
+      "expected_include_text": "page-loom",
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000006"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000006", "field": "title", "text": "合成项目 page-loom"}]
+    },
+    {
+      "id": "usage-description-001",
+      "split": "tune",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["提取网页正文", "来源链接"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000006"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000006", "field": "content", "section": "功能", "text": "逐页提取网页正文并导出 Markdown，保留来源链接。"}]
+    },
+    {
+      "id": "exact-name-holdout-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["note-harbor"], "exclude": []}, "filters": ["title"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000008"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000008", "field": "title", "text": "合成工具 note-harbor"}]
+    },
+    {
+      "id": "usage-description-holdout-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["书签", "资料卡片", "标签层级"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000008"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000008", "field": "content", "section": "用途", "text": "整理浏览器书签为资料卡片，并保留标签层级与原始网址。"}]
+    },
+    {
+      "id": "cross-field-and-001",
+      "split": "tune",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["蓝桥", "离线签核", "双人复核"], "exclude": []}, "filters": ["title", "keywords", "content"], "limit": 5}},
+      "expected_include_text": "蓝桥 离线签核 双人复核",
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000009"],
+      "evidence": [
+        {"memory_uuid": "00000000-0000-4000-8000-000000000009", "field": "title", "text": "合成蓝桥部署交接"},
+        {"memory_uuid": "00000000-0000-4000-8000-000000000009", "field": "keywords", "text": "离线签核"},
+        {"memory_uuid": "00000000-0000-4000-8000-000000000009", "field": "content", "section": "运行约束", "text": "投放前需要双人复核，记录变更编号。"}
+      ]
+    },
+    {
+      "id": "summary-recall-and-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["晨雾计划", "夜间回收"], "exclude": []}, "filters": ["summary", "recall_when"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000010"],
+      "evidence": [
+        {"memory_uuid": "00000000-0000-4000-8000-000000000010", "field": "summary", "text": "晨雾计划已进入观察阶段。"},
+        {"memory_uuid": "00000000-0000-4000-8000-000000000010", "field": "recall_when", "text": "检查夜间回收条件时"}
+      ]
+    },
+    {
+      "id": "cross-section-and-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["星舟网关", "镜像回退"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000011"],
+      "evidence": [
+        {"memory_uuid": "00000000-0000-4000-8000-000000000011", "field": "content", "section": "接入", "text": "先启用星舟网关，再验证入口。"},
+        {"memory_uuid": "00000000-0000-4000-8000-000000000011", "field": "content", "section": "回滚", "text": "发生异常时执行镜像回退，不清理操作日志。"}
+      ]
+    },
+    {
+      "id": "cross-chunk-and-001",
+      "split": "tune",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["长航模式", "末尾核验"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000012"],
+      "evidence": [
+        {"memory_uuid": "00000000-0000-4000-8000-000000000012", "field": "content", "section": "超长章节", "text": "起点标记：启用长航模式后开始整理。"},
+        {"memory_uuid": "00000000-0000-4000-8000-000000000012", "field": "content", "section": "超长章节", "text": "结束标记：必须执行末尾核验。"}
+      ]
+    },
+    {
+      "id": "tail-after-old-cap-001",
+      "split": "tune",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["纸舟终点"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000012"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000012", "field": "content", "section": "最终条款", "text": "最终保留尾部锚点：纸舟终点。"}]
+    },
+    {
+      "id": "code-fence-detail-001",
+      "split": "tune",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["合成围栏结束"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000012"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000012", "field": "content", "section": "代码示例", "text": "fence_end = \"合成围栏结束\""}]
+    },
+    {
+      "id": "cross-chunk-exclude-001",
+      "split": "tune",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["river-kit", "静态导出"], "exclude": ["付费"]}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000013"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000013", "field": "content", "section": "功能", "text": "river-kit 支持静态导出与批量归档，使用免费方案。"}],
+      "exclusion_evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000014", "field": "content", "section": "许可", "text": "高级功能需要付费订阅。"}]
+    },
+    {
+      "id": "exclude-outside-fields-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["stream-kit", "静态导出"], "exclude": ["付费"]}, "filters": ["title", "summary"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000015"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000015", "field": "summary", "text": "stream-kit 支持静态导出。"}],
+      "reason": "正文与关键词中的排除词不在本次选定字段中。"
+    },
+    {
+      "id": "all-fields-exclude-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["stream-kit", "静态导出"], "exclude": ["付费"]}, "filters": [], "limit": 5}},
+      "expected_memory_uuids": [],
+      "evidence": [],
+      "reason": "filters 为空表示全部五个可搜索字段，正文与关键词中的排除词生效。"
+    },
+    {
+      "id": "field-restriction-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["夜间回收"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": [],
+      "evidence": [],
+      "reason": "检索词只在 recall_when 中，不能越过 content 字段范围。"
+    },
+    {
+      "id": "profile-local-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["棱镜档案"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000016"],
+      "expected_readback_summary": "主评测环境副本。",
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000016", "field": "content", "section": "范围", "text": "棱镜档案仅用于本评测环境。"}]
+    },
+    {
+      "id": "profile-other-001",
+      "split": "holdout",
+      "profile": "embedding_eval_other",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["棱镜档案"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000016"],
+      "expected_readback_summary": "另一评测环境副本。",
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000016", "field": "content", "section": "范围", "text": "棱镜档案仅用于本评测环境。"}]
+    },
+    {
+      "id": "profile-foreign-only-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["异域守则"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": [],
+      "evidence": [],
+      "reason": "唯一含词资料属于另一个 profile，不能成为候选。"
+    },
+    {
+      "id": "profile-foreign-positive-001",
+      "split": "holdout",
+      "profile": "embedding_eval_other",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["异域守则"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000017"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000017", "field": "content", "section": "范围", "text": "异域守则仅属于另一评测环境。"}]
+    },
+    {
+      "id": "duplicate-identity-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["双生档案"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000019"],
+      "evidence": [
+        {"memory_uuid": "00000000-0000-4000-8000-000000000018", "field": "content", "section": "说明", "text": "双生档案保留独立身份。"},
+        {"memory_uuid": "00000000-0000-4000-8000-000000000019", "field": "content", "section": "说明", "text": "双生档案保留独立身份。"}
+      ],
+      "reason": "正文相同但 UUID 不同的两条记忆不能合并。"
+    },
+    {
+      "id": "state-boundary-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["状态探针"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000020", "00000000-0000-4000-8000-000000000021"],
+      "evidence": [
+        {"memory_uuid": "00000000-0000-4000-8000-000000000020", "field": "content", "section": "状态样本", "text": "状态探针用于验证可见范围。"},
+        {"memory_uuid": "00000000-0000-4000-8000-000000000021", "field": "content", "section": "状态样本", "text": "状态探针用于验证可见范围。"}
+      ],
+      "reason": "active 与 pending 工作态可见；相同正文的 trashed 记忆必须排除。"
+    },
+    {
+      "id": "status-not-text-001",
+      "split": "contract",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["pending"], "exclude": []}, "filters": [], "limit": 5}},
+      "expected_memory_uuids": [],
+      "evidence": [],
+      "reason": "状态列不属于五个可搜索字段。"
+    },
+    {
+      "id": "unrelated-query-001",
+      "split": "holdout",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["火星矿场", "产量预测"], "exclude": []}, "filters": [], "limit": 5}},
+      "expected_memory_uuids": [],
+      "evidence": [],
+      "reason": "没有满足 include AND 的记忆，不得因语义接近放宽硬条件。"
+    },
+    {
+      "id": "low-relevance-001",
+      "split": "tune",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["冷杉", "归档", "授权"], "exclude": []}, "filters": ["content"], "limit": 5}},
+      "expected_hard_match_memory_uuids": ["00000000-0000-4000-8000-000000000023"],
+      "expected_memory_uuids": [],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000023", "field": "content", "section": "随机词条", "text": "冷杉、归档、授权。以上仅为随机词表，没有操作步骤或产品介绍。"}],
+      "reason": "合成相关性标签：随机并列词表没有可用的主题事实，期望相关性阶段判空；真实模型是否能做到仍待评测。"
+    },
+    {
+      "id": "exclude-only-001",
+      "split": "contract",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": [], "exclude": ["合成"]}, "filters": ["title"], "limit": 5}},
+      "expected_memory_uuids": [],
+      "expected_model_calls": {"embedding": 0, "rerank": 0},
+      "evidence": [],
+      "reason": "全部标题包含排除词；仅做纯过滤，不调用语义服务。"
+    },
+    {
+      "id": "include-normalization-001",
+      "split": "contract",
+      "request": {"tool": "search_memory", "params": {"terms": {"include": ["  page-loom  "], "exclude": []}, "filters": ["title"], "limit": 5}},
+      "expected_include_text": "page-loom",
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000006"],
+      "evidence": [{"memory_uuid": "00000000-0000-4000-8000-000000000006", "field": "title", "text": "合成项目 page-loom"}]
+    }
+  ],
+  "index_cases": [
+    {
+      "id": "long-section-continuation-001",
+      "memory_uuid": "00000000-0000-4000-8000-000000000012",
+      "split": "tune",
+      "source_assertions": {"min_content_characters": 60001, "anchor_distance_over": 60000, "anchors": ["长航模式", "末尾核验"]},
+      "expected_behavior": ["正文范围完整覆盖且不静默截尾", "超长章节继续拆分，每块独立向量", "每个续块携带计入实际 token 预算的精简标题路径", "块数和 token 预算在真实 tokenizer 核验后验收"]
+    },
+    {
+      "id": "long-heading-budget-001",
+      "memory_uuid": "00000000-0000-4000-8000-000000000012",
+      "split": "tune",
+      "source_assertions": {"heading_expansion": "{{LONG_TITLE}}", "min_heading_characters": 3000},
+      "expected_behavior": ["过长标题路径不能挤占全部正文预算", "精简后的路径与正文合计不超过模型 token 窗口", "精简上下文不修改或丢失原始正文"]
+    },
+    {
+      "id": "code-fence-boundary-001",
+      "memory_uuid": "00000000-0000-4000-8000-000000000012",
+      "split": "tune",
+      "source_assertions": {"fence_start": "```python", "fence_end": "```", "inside_fence": "fence_end = \"合成围栏结束\""},
+      "expected_behavior": ["代码围栏及代码末行均有源范围可追溯", "代码过长需要继续拆分时仍覆盖完整内容", "证据保留自然正文与 Markdown，不替换成分词串"]
+    },
+    {
+      "id": "tail-coverage-001",
+      "memory_uuid": "00000000-0000-4000-8000-000000000012",
+      "split": "tune",
+      "source_assertions": {"tail_text": "最终保留尾部锚点：纸舟终点。", "tail_offset_over": 60000},
+      "expected_behavior": ["末尾锚点进入完整块索引", "tail-after-old-cap-001 能按硬条件找回目标记忆"]
+    }
+  ],
+  "pipeline_cases": [
+    {
+      "id": "parallel-dedup-and-limit-001",
+      "base_case_id": "duplicate-identity-001",
+      "literal_memory_uuids": ["00000000-0000-4000-8000-000000000018"],
+      "vector_memory_uuids": ["00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000019", "00000000-0000-4000-8000-000000000019"],
+      "rerank_order": ["00000000-0000-4000-8000-000000000019", "00000000-0000-4000-8000-000000000018"],
+      "expected_rerank_document_count": 2,
+      "variants": [
+        {"condition": "complete_rerank", "expected_outcome": "success", "expected_memory_uuids": ["00000000-0000-4000-8000-000000000019", "00000000-0000-4000-8000-000000000018"], "expected_order": ["00000000-0000-4000-8000-000000000019", "00000000-0000-4000-8000-000000000018"]},
+        {"condition": "complete_rerank_limit_one", "limit_override": 1, "expected_outcome": "success", "expected_memory_uuids": ["00000000-0000-4000-8000-000000000019"], "expected_order": ["00000000-0000-4000-8000-000000000019"]},
+        {"condition": "vector_error", "expected_outcome": "degraded", "expected_memory_uuids": ["00000000-0000-4000-8000-000000000018"], "expected_rerank_document_count": 1}
+      ],
+      "expected_behavior": ["两路并行召回", "先按记忆去重再重排，每条记忆一份文档和一个分数", "字面与向量原始分数不直接相加", "相关性过滤和排序后才应用 limit"]
+    },
+    {
+      "id": "rerank-unusable-001",
+      "base_case_id": "duplicate-identity-001",
+      "literal_memory_uuids": ["00000000-0000-4000-8000-000000000018"],
+      "vector_memory_uuids": ["00000000-0000-4000-8000-000000000019"],
+      "conditions": ["rerank_error", "rerank_empty_response", "rerank_partial_response", "rerank_duplicate_index", "rerank_unknown_index", "rerank_invalid_score"],
+      "expected_outcome": "degraded",
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000018"],
+      "expected_behavior": ["仅保留字面路已召回且满足硬条件的记忆", "不得追加未经完整相关性判断的向量独有候选"]
+    },
+    {
+      "id": "vector-only-rerank-failure-001",
+      "base_case_id": "short-node-001",
+      "literal_memory_uuids": [],
+      "vector_memory_uuids": ["00000000-0000-4000-8000-000000000005"],
+      "conditions": ["rerank_error", "rerank_empty_response", "rerank_partial_response"],
+      "expected_outcome": "degraded",
+      "expected_memory_uuids": [],
+      "expected_behavior": ["无可保留的字面候选时故障降级为空", "响应或诊断可区分该故障与正常零相关结果"]
+    },
+    {
+      "id": "exact-name-rerank-failure-001",
+      "base_case_id": "exact-name-001",
+      "literal_memory_uuids": ["00000000-0000-4000-8000-000000000006"],
+      "vector_memory_uuids": ["00000000-0000-4000-8000-000000000006"],
+      "conditions": ["rerank_error", "rerank_empty_response", "rerank_partial_response"],
+      "expected_outcome": "degraded",
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000006"],
+      "expected_behavior": ["精确名称已由字面路召回且满足硬条件时按既定降级规则保留"]
+    },
+    {
+      "id": "single-candidate-relevance-001",
+      "base_case_id": "short-node-001",
+      "literal_memory_uuids": ["00000000-0000-4000-8000-000000000005"],
+      "vector_memory_uuids": [],
+      "conditions": ["complete_relevant_rerank"],
+      "expected_outcome": "success",
+      "expected_rerank_document_count": 1,
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000005"],
+      "expected_behavior": ["单候选也执行重排和相关性判定"]
+    },
+    {
+      "id": "single-candidate-irrelevant-001",
+      "base_case_id": "low-relevance-001",
+      "literal_memory_uuids": ["00000000-0000-4000-8000-000000000023"],
+      "vector_memory_uuids": [],
+      "conditions": ["complete_irrelevant_rerank"],
+      "expected_outcome": "success",
+      "expected_rerank_document_count": 1,
+      "expected_memory_uuids": [],
+      "expected_behavior": ["正常低相关判空，不按 limit 补齐数量", "与故障或空模型响应区分"]
+    },
+    {
+      "id": "overlapping-evidence-001",
+      "base_case_id": "skill-final-clause-001",
+      "literal_memory_uuids": ["00000000-0000-4000-8000-000000000003"],
+      "vector_memory_uuids": ["00000000-0000-4000-8000-000000000003"],
+      "conditions": ["overlapping_match_contexts"],
+      "expected_outcome": "success",
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000003"],
+      "expected_rerank_document_count": 1,
+      "expected_behavior": ["三个近邻命中的重叠上下文合并", "全部 include 原文依据保留且重复原文不重复拼接", "保留 content 字段名与收尾条款章节路径"]
+    },
+    {
+      "id": "cross-field-evidence-budget-001",
+      "base_case_id": "cross-field-and-001",
+      "literal_memory_uuids": ["00000000-0000-4000-8000-000000000009"],
+      "vector_memory_uuids": ["00000000-0000-4000-8000-000000000009"],
+      "conditions": ["budget_requires_context_trimming"],
+      "expected_outcome": "success",
+      "expected_memory_uuids": ["00000000-0000-4000-8000-000000000009"],
+      "expected_rerank_document_count": 1,
+      "expected_behavior": ["先缩短外围上下文，保留全部 include 依据", "标题、关键词与正文合为一份证据", "字段名和运行约束章节路径保留"]
+    },
+    {
+      "id": "incomplete-evidence-budget-001",
+      "base_case_id": "cross-chunk-and-001",
+      "vector_memory_uuids": ["00000000-0000-4000-8000-000000000012"],
+      "expected_rerank_document_count": 0,
+      "variants": [
+        {"condition": "budget_cannot_cover_all_terms", "literal_memory_uuids": ["00000000-0000-4000-8000-000000000012"], "expected_outcome": "degraded", "expected_memory_uuids": ["00000000-0000-4000-8000-000000000012"]},
+        {"condition": "budget_cannot_cover_all_terms_vector_only", "literal_memory_uuids": [], "expected_outcome": "degraded", "expected_memory_uuids": []}
+      ],
+      "expected_behavior": ["不提交缺少部分 include 依据的重排文档", "按已定降级边界处理，不设置固定最多两个块的限制", "预算按实际 tokenizer 验收，不把字符数视为 token 数"]
+    }
+  ],
+  "invalid_request_cases": [
+    {"id": "query-only", "params": {"query": "page-loom"}, "reason": "目标契约删除普通搜索入口"},
+    {"id": "query-with-advanced", "params": {"query": "page-loom", "terms": {"include": ["page-loom"], "exclude": []}, "filters": []}, "reason": "高级搜索不接受 query"},
+    {"id": "missing-terms", "params": {"filters": ["content"]}, "reason": "terms 与 filters 必须同时提供"},
+    {"id": "missing-filters", "params": {"terms": {"include": ["page-loom"], "exclude": []}}, "reason": "terms 与 filters 必须同时提供"},
+    {"id": "missing-include", "params": {"terms": {"exclude": ["付费"]}, "filters": []}, "reason": "include 与 exclude 必须都提供"},
+    {"id": "missing-exclude", "params": {"terms": {"include": ["page-loom"]}, "filters": []}, "reason": "include 与 exclude 必须都提供"},
+    {"id": "both-empty", "params": {"terms": {"include": [], "exclude": []}, "filters": []}, "reason": "两组至少一组非空"},
+    {"id": "blank-include", "params": {"terms": {"include": ["  "], "exclude": []}, "filters": []}, "reason": "空白关键词非法"},
+    {"id": "blank-exclude", "params": {"terms": {"include": [], "exclude": [""]}, "filters": []}, "reason": "空关键词非法"},
+    {"id": "wrong-terms-type", "params": {"terms": [], "filters": []}, "reason": "terms 必须是对象"},
+    {"id": "wrong-include-type", "params": {"terms": {"include": "page-loom", "exclude": []}, "filters": []}, "reason": "include 必须是字符串数组"},
+    {"id": "wrong-term-element", "params": {"terms": {"include": [1], "exclude": []}, "filters": []}, "reason": "关键词元素必须是字符串"},
+    {"id": "wrong-filters-type", "params": {"terms": {"include": ["page-loom"], "exclude": []}, "filters": "title"}, "reason": "filters 必须是数组"},
+    {"id": "unknown-filter", "params": {"terms": {"include": ["page-loom"], "exclude": []}, "filters": ["status"]}, "reason": "状态列不属于可搜索字段"},
+    {"id": "unknown-term", "params": {"terms": {"include": ["page-loom"], "exclude": [], "any": ["合成"]}, "filters": []}, "reason": "不接受未定义的 terms 参数"},
+    {"id": "zero-limit", "params": {"terms": {"include": ["page-loom"], "exclude": []}, "filters": [], "limit": 0}, "reason": "limit 必须大于零"},
+    {"id": "wrong-limit-type", "params": {"terms": {"include": ["page-loom"], "exclude": []}, "filters": [], "limit": "5"}, "reason": "limit 必须是整数"},
+    {"id": "unknown-parameter", "params": {"terms": {"include": ["page-loom"], "exclude": []}, "filters": [], "status": "active"}, "reason": "不开放状态参数"}
+  ],
+  "invalid_request_expectations": {
+    "expected_outcome": "invalid_request",
+    "expected_model_calls": {"embedding": 0, "rerank": 0},
+    "expected_database_search_calls": 0
+  },
+  "coverage": {
+    "Trending 项目细节": ["trending-project-detail-001"],
+    "skill/prompt 末尾": ["skill-final-clause-001"],
+    "短记录": ["short-node-001", "single-candidate-relevance-001"],
+    "准确名称": ["exact-name-001", "exact-name-holdout-001", "exact-name-rerank-failure-001"],
+    "用途描述": ["usage-description-001", "usage-description-holdout-001"],
+    "无关与空结果": ["unrelated-query-001", "low-relevance-001", "single-candidate-irrelevant-001"],
+    "跨字段 AND": ["cross-field-and-001", "summary-recall-and-001", "cross-field-evidence-budget-001"],
+    "跨章节与跨块 AND": ["cross-section-and-001", "cross-chunk-and-001"],
+    "排除与字段范围": ["cross-chunk-exclude-001", "exclude-outside-fields-001", "all-fields-exclude-001", "field-restriction-001"],
+    "profile 隔离": ["profile-local-001", "profile-other-001", "profile-foreign-only-001", "profile-foreign-positive-001"],
+    "状态边界": ["state-boundary-001", "status-not-text-001"],
+    "按记忆去重与最后 limit": ["duplicate-identity-001", "parallel-dedup-and-limit-001"],
+    "证据合并与预算不足": ["overlapping-evidence-001", "cross-field-evidence-budget-001", "incomplete-evidence-budget-001"],
+    "续块、长标题、代码围栏与尾部": ["long-section-continuation-001", "long-heading-budget-001", "code-fence-boundary-001", "tail-coverage-001", "tail-after-old-cap-001", "code-fence-detail-001"],
+    "单路与重排失败": ["parallel-dedup-and-limit-001", "rerank-unusable-001", "vector-only-rerank-failure-001", "exact-name-rerank-failure-001"],
+    "高级参数与纯过滤": ["exclude-only-001", "include-normalization-001", "query-only", "both-empty", "unknown-filter"]
+  }
+}

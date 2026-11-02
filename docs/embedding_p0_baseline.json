@@ -1,0 +1,1982 @@
+{
+  "recorded_at": "2026-11-02T11:10:10.764201+00:00",
+  "kind": "python_reference_with_actual_legacy_sql",
+  "isolation": "connection-private TEMP tables; empty vector table; no persistent writes",
+  "source_hashes": {
+    "docs/embedding_search_samples.json": "e8191773faf433cd59afb619fa705107568c4a3721f53bbc04325e22368bb208",
+    "docs/EMBEDDING_P0_CONTRACT.md": "8fdbbf41df97c811c122a9ca1205cdfc7dae10b73af9acdfc6b424df5a8072a6",
+    "src/tools/search_memory.rs": "07ed9290fd07dcd8b23a33b160561ed2fe2a0e0233c23c73543941c483a2a7ec",
+    "src/tools/mod.rs": "3fc91d027e3ab05eae360cb5136a4255037f10d3d831d4095e36688bc455a091",
+    "scripts/embedding_p0.py": "b167f727866eb91f550cbc6fc2178ed9b601c4c55b65035fed9c5421497e6341",
+    "src/provider/embedding.rs": "f9f568bf1ba77414b035f6d3c7d0684b9d5b15c67a5d1270cb630a4a87449112",
+    "src/provider/rerank.rs": "94a68128d63ccf2b0375924e46ca408091c0b321eb07b8bcfc98c09430842b5d"
+  },
+  "git_commit": "7ab9b13ab6d840d3690a6988440330060b13992d",
+  "git_status": [
+    " M docs/EMBEDDING_ITERATION_PLAN.md",
+    "?? docs/EMBEDDING_P0_CONTRACT.md",
+    "?? docs/embedding_p0_baseline.json",
+    "?? docs/embedding_p0_model_limits.json",
+    "?? docs/embedding_search_samples.json",
+    "?? scripts/__pycache__/",
+    "?? scripts/embedding_p0.py",
+    "?? scripts/load_embedding_samples.py",
+    "?? scripts/p0_requirements.txt",
+    "?? scripts/preview_chunk_embeddings.py",
+    "?? scripts/probe_embedding_limits.py",
+    "?? scripts/rag_result.txt",
+    "?? scripts/test.txt"
+  ],
+  "models": {
+    "embedding": "BAAI/bge-m3",
+    "dimension": 1024,
+    "rerank": "BAAI/bge-reranker-v2-m3",
+    "rerank_enabled": true
+  },
+  "command": [
+    "python3",
+    "scripts/embedding_p0.py",
+    "--live"
+  ],
+  "fixture_validation": {
+    "memory_identities": 24,
+    "cases": 28,
+    "splits": {
+      "tune": 11,
+      "holdout": 14,
+      "contract": 3
+    },
+    "invalid_requests": 18,
+    "index_scenarios": 4,
+    "pipeline_conditions": 21
+  },
+  "summary": {
+    "cases": 28,
+    "passed": 27,
+    "precision": 0.9583333333333334,
+    "recall": 1.0,
+    "expected_empty_cases": 7,
+    "correct_empty_cases": 6,
+    "hard_filter_violations": 0,
+    "duplicates": 0,
+    "latency_ms": {
+      "p50": 1020.1591909972194,
+      "p95": 4531.410120001965,
+      "max": 4660.390770997765
+    }
+  },
+  "splits": {
+    "tune": {
+      "cases": 11,
+      "passed": 10,
+      "precision": 0.9090909090909091,
+      "recall": 1.0,
+      "expected_empty_cases": 1,
+      "correct_empty_cases": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "latency_ms": {
+        "p50": 1480.1602870029456,
+        "p95": 4510.736732998339,
+        "max": 4510.736732998339
+      }
+    },
+    "holdout": {
+      "cases": 14,
+      "passed": 14,
+      "precision": 1.0,
+      "recall": 1.0,
+      "expected_empty_cases": 4,
+      "correct_empty_cases": 4,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "latency_ms": {
+        "p50": 1020.1591909972194,
+        "p95": 4660.390770997765,
+        "max": 4660.390770997765
+      }
+    },
+    "contract": {
+      "cases": 3,
+      "passed": 3,
+      "precision": 1.0,
+      "recall": 1.0,
+      "expected_empty_cases": 2,
+      "correct_empty_cases": 2,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "latency_ms": {
+        "p50": 972.3045570026443,
+        "p95": 4531.410120001965,
+        "max": 4531.410120001965
+      }
+    }
+  },
+  "invalid_requests": {
+    "checked": 18,
+    "kind": "target_contract_oracle_only",
+    "note": "不代表实际 Rust 参数解析器的全量行为；公开 query 拒绝另有源码路径证据。"
+  },
+  "model_calls": [
+    {
+      "model_type": "embeddings",
+      "started_epoch_ms": 1793617785166.966,
+      "model": "BAAI/bge-m3",
+      "input_count": 1,
+      "rate_limit_headers": {},
+      "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 0,
+        "total_tokens": 10
+      },
+      "meta": null,
+      "http_status": 200,
+      "elapsed_ms": 246.75271800151677
+    },
+    {
+      "model_type": "embeddings",
+      "started_epoch_ms": 1793617789277.587,
+      "model": "BAAI/bge-m3",
+      "input_count": 1,
+      "rate_limit_headers": {},
+      "usage": {
+        "prompt_tokens": 6,
+        "completion_tokens": 0,
+        "total_tokens": 6
+      },
+      "meta": null,
+      "http_status": 200,
+      "elapsed_ms": 232.17643500174745
+    },
+    {
+      "model_type": "embeddings",
+      "started_epoch_ms": 1793617792535.1428,
+      "model": "BAAI/bge-m3",
+      "input_count": 1,
+      "rate_limit_headers": {},
+      "usage": {
+        "prompt_tokens": 7,
+        "completion_tokens": 0,
+        "total_tokens": 7
+      },
+      "meta": null,
+      "http_status": 200,
+      "elapsed_ms": 230.86145500201383
+    },
+    {
+      "model_type": "rerank",
+      "started_epoch_ms": 1793617799220.8718,
+      "model": "BAAI/bge-reranker-v2-m3",
+      "input_count": 2,
+      "rate_limit_headers": {},
+      "usage": null,
+      "meta": {
+        "tokens": {
+          "input_tokens": 47,
+          "output_tokens": 0,
+          "image_tokens": 0
+        },
+        "billed_units": {
+          "input_tokens": 47,
+          "output_tokens": 0,
+          "image_tokens": 0,
+          "search_units": 0,
+          "classifications": 0
+        }
+      },
+      "http_status": 200,
+      "elapsed_ms": 194.45393099886132
+    },
+    {
+      "model_type": "rerank",
+      "started_epoch_ms": 1793617800222.396,
+      "model": "BAAI/bge-reranker-v2-m3",
+      "input_count": 2,
+      "rate_limit_headers": {},
+      "usage": null,
+      "meta": {
+        "tokens": {
+          "input_tokens": 42,
+          "output_tokens": 0,
+          "image_tokens": 0
+        },
+        "billed_units": {
+          "input_tokens": 42,
+          "output_tokens": 0,
+          "image_tokens": 0,
+          "search_units": 0,
+          "classifications": 0
+        }
+      },
+      "http_status": 200,
+      "elapsed_ms": 208.87464200131944
+    },
+    {
+      "model_type": "embeddings",
+      "started_epoch_ms": 1793617802598.687,
+      "model": "BAAI/bge-m3",
+      "input_count": 1,
+      "rate_limit_headers": {},
+      "usage": {
+        "prompt_tokens": 4,
+        "completion_tokens": 0,
+        "total_tokens": 4
+      },
+      "meta": null,
+      "http_status": 200,
+      "elapsed_ms": 214.9780149993603
+    },
+    {
+      "model_type": "embeddings",
+      "started_epoch_ms": 1793617805221.8982,
+      "model": "BAAI/bge-m3",
+      "input_count": 1,
+      "rate_limit_headers": {},
+      "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 0,
+        "total_tokens": 10
+      },
+      "meta": null,
+      "http_status": 200,
+      "elapsed_ms": 213.14552200055914
+    }
+  ],
+  "cases": [
+    {
+      "id": "trending-project-detail-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000001",
+                "title_norm": "合成 Trending 合集：终端工具与网页导出",
+                "status": "active",
+                "summary": "两个合成项目的功能记录。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "离线 网页 Markdown",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        "elapsed_ms": 2533.0256490015017,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "skill-final-clause-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000003"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000003"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000003",
+                "title_norm": "合成资料整理 skill",
+                "status": "active",
+                "summary": "合成的资料整理流程说明。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "归档 校验清单 用户确认",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000003"
+          ]
+        },
+        "elapsed_ms": 1480.1602870029456,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "short-node-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000005"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000005"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000005",
+                "title_norm": "合成故障短节点",
+                "status": "active",
+                "summary": "合成的队列排障结论。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "重建队列 暂停",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000005"
+          ]
+        },
+        "elapsed_ms": 4510.736732998339,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "exact-name-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000006"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000006"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000006",
+                "title_norm": "合成项目 page-loom",
+                "status": "active",
+                "summary": "虚构的网页导出工具。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "page-loom",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000006"
+          ]
+        },
+        "elapsed_ms": 2405.5385360006767,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "usage-description-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000006"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000006"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000006",
+                "title_norm": "合成项目 page-loom",
+                "status": "active",
+                "summary": "虚构的网页导出工具。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "提取网页正文 来源链接",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000006"
+          ]
+        },
+        "elapsed_ms": 1484.0441240012296,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "exact-name-holdout-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000008"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000008"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000008",
+                "title_norm": "合成工具 note-harbor",
+                "status": "active",
+                "summary": "虚构的书签整理工具。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "note-harbor",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000008"
+          ]
+        },
+        "elapsed_ms": 1020.1591909972194,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "usage-description-holdout-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000008"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000008"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000008",
+                "title_norm": "合成工具 note-harbor",
+                "status": "active",
+                "summary": "虚构的书签整理工具。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "书签 资料卡片 标签层级",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000008"
+          ]
+        },
+        "elapsed_ms": 791.3361889986845,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "cross-field-and-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000009"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000009"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000009",
+                "title_norm": "合成蓝桥部署交接",
+                "status": "active",
+                "summary": "虚构的交接约束。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "蓝桥 离线签核 双人复核",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000009"
+          ]
+        },
+        "elapsed_ms": 809.3392259979737,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "summary-recall-and-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000010"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000010"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000010",
+                "title_norm": "合成观察节点",
+                "status": "active",
+                "summary": "晨雾计划已进入观察阶段。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "晨雾计划 夜间回收",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000010"
+          ]
+        },
+        "elapsed_ms": 1093.5084369994001,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "cross-section-and-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000011"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000011"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000011",
+                "title_norm": "合成部署操作手册",
+                "status": "active",
+                "summary": "虚构的接入与回退说明。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "星舟网关 镜像回退",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000011"
+          ]
+        },
+        "elapsed_ms": 294.495926998934,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "cross-chunk-and-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000012"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000012"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000012",
+                "title_norm": "合成超长分块资料",
+                "status": "active",
+                "summary": "用于全文覆盖、续块、标题路径与围栏边界。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "长航模式 末尾核验",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000012"
+          ]
+        },
+        "elapsed_ms": 405.8744590001879,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "tail-after-old-cap-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000012"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000012"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000012",
+                "title_norm": "合成超长分块资料",
+                "status": "active",
+                "summary": "用于全文覆盖、续块、标题路径与围栏边界。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "纸舟终点",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000012"
+          ]
+        },
+        "elapsed_ms": 321.8295490005403,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "code-fence-detail-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000012"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000012"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000012",
+                "title_norm": "合成超长分块资料",
+                "status": "active",
+                "summary": "用于全文覆盖、续块、标题路径与围栏边界。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "合成围栏结束",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000012"
+          ]
+        },
+        "elapsed_ms": 369.21247700229287,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "cross-chunk-exclude-001",
+      "split": "tune",
+      "expected": [
+        "00000000-0000-4000-8000-000000000013"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000013"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000013",
+                "title_norm": "合成导出工具 river-kit",
+                "status": "active",
+                "summary": "虚构的免费导出工具。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "river-kit 静态导出",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000013"
+          ]
+        },
+        "elapsed_ms": 260.9402679991035,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "exclude-outside-fields-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000015"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000015"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000015",
+                "title_norm": "合成 stream-kit",
+                "status": "active",
+                "summary": "stream-kit 支持静态导出。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "stream-kit 静态导出",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000015"
+          ]
+        },
+        "elapsed_ms": 873.0547650011431,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "all-fields-exclude-001",
+      "split": "holdout",
+      "expected": [],
+      "actual": [],
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [],
+            "strategy": {
+              "embedding_fallback": true,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "stream-kit 静态导出",
+        "error": null,
+        "database_search_calls": 2,
+        "diagnostics": {
+          "literal_memory_uuids": []
+        },
+        "elapsed_ms": 4660.390770997765,
+        "model_calls": [
+          {
+            "model_type": "embeddings",
+            "started_epoch_ms": 1793617785166.966,
+            "model": "BAAI/bge-m3",
+            "input_count": 1,
+            "rate_limit_headers": {},
+            "usage": {
+              "prompt_tokens": 10,
+              "completion_tokens": 0,
+              "total_tokens": 10
+            },
+            "meta": null,
+            "http_status": 200,
+            "elapsed_ms": 246.75271800151677
+          }
+        ]
+      }
+    },
+    {
+      "id": "field-restriction-001",
+      "split": "holdout",
+      "expected": [],
+      "actual": [],
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [],
+            "strategy": {
+              "embedding_fallback": true,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "夜间回收",
+        "error": null,
+        "database_search_calls": 2,
+        "diagnostics": {
+          "literal_memory_uuids": []
+        },
+        "elapsed_ms": 2470.459170999675,
+        "model_calls": [
+          {
+            "model_type": "embeddings",
+            "started_epoch_ms": 1793617789277.587,
+            "model": "BAAI/bge-m3",
+            "input_count": 1,
+            "rate_limit_headers": {},
+            "usage": {
+              "prompt_tokens": 6,
+              "completion_tokens": 0,
+              "total_tokens": 6
+            },
+            "meta": null,
+            "http_status": 200,
+            "elapsed_ms": 232.17643500174745
+          }
+        ]
+      }
+    },
+    {
+      "id": "profile-local-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000016"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000016"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true,
+        "readback_summary": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000016",
+                "title_norm": "合成环境隔离记录",
+                "status": "active",
+                "summary": "主评测环境副本。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "棱镜档案",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000016"
+          ]
+        },
+        "elapsed_ms": 259.76453999828664,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "profile-other-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000016"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000016"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true,
+        "readback_summary": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval_other",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000016",
+                "title_norm": "合成环境隔离记录",
+                "status": "active",
+                "summary": "另一评测环境副本。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "棱镜档案",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000016"
+          ]
+        },
+        "elapsed_ms": 577.8137000015704,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "profile-foreign-only-001",
+      "split": "holdout",
+      "expected": [],
+      "actual": [],
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [],
+            "strategy": {
+              "embedding_fallback": true,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "异域守则",
+        "error": null,
+        "database_search_calls": 2,
+        "diagnostics": {
+          "literal_memory_uuids": []
+        },
+        "elapsed_ms": 4487.8742290020455,
+        "model_calls": [
+          {
+            "model_type": "embeddings",
+            "started_epoch_ms": 1793617792535.1428,
+            "model": "BAAI/bge-m3",
+            "input_count": 1,
+            "rate_limit_headers": {},
+            "usage": {
+              "prompt_tokens": 7,
+              "completion_tokens": 0,
+              "total_tokens": 7
+            },
+            "meta": null,
+            "http_status": 200,
+            "elapsed_ms": 230.86145500201383
+          }
+        ]
+      }
+    },
+    {
+      "id": "profile-foreign-positive-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000017"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000017"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval_other",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000017",
+                "title_norm": "合成异域独有记录",
+                "status": "active",
+                "summary": "仅在另一个评测环境存在。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "异域守则",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000017"
+          ]
+        },
+        "elapsed_ms": 1275.216707999789,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "duplicate-identity-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000018",
+        "00000000-0000-4000-8000-000000000019"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000018",
+        "00000000-0000-4000-8000-000000000019"
+      ],
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000018",
+                "title_norm": "合成双生记录甲",
+                "status": "active",
+                "summary": "相同正文的第一条独立记忆。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.3817135989665985
+              },
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000019",
+                "title_norm": "合成双生记录乙",
+                "status": "active",
+                "summary": "相同正文的第二条独立记忆。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.3722318410873413
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": true
+            }
+          }
+        },
+        "include_text": "双生档案",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000019",
+            "00000000-0000-4000-8000-000000000018"
+          ],
+          "rerank_documents": [
+            {
+              "memory_uuid": "00000000-0000-4000-8000-000000000019",
+              "text": "合成双生记录乙\n相同正文的第二条独立记忆。"
+            },
+            {
+              "memory_uuid": "00000000-0000-4000-8000-000000000018",
+              "text": "合成双生记录甲\n相同正文的第一条独立记忆。"
+            }
+          ],
+          "rerank_results": [
+            {
+              "index": 1,
+              "document": null,
+              "relevance_score": 0.3817135989665985
+            },
+            {
+              "index": 0,
+              "document": null,
+              "relevance_score": 0.3722318410873413
+            }
+          ]
+        },
+        "elapsed_ms": 1376.261298002646,
+        "model_calls": [
+          {
+            "model_type": "rerank",
+            "started_epoch_ms": 1793617799220.8718,
+            "model": "BAAI/bge-reranker-v2-m3",
+            "input_count": 2,
+            "rate_limit_headers": {},
+            "usage": null,
+            "meta": {
+              "tokens": {
+                "input_tokens": 47,
+                "output_tokens": 0,
+                "image_tokens": 0
+              },
+              "billed_units": {
+                "input_tokens": 47,
+                "output_tokens": 0,
+                "image_tokens": 0,
+                "search_units": 0,
+                "classifications": 0
+              }
+            },
+            "http_status": 200,
+            "elapsed_ms": 194.45393099886132
+          }
+        ]
+      }
+    },
+    {
+      "id": "state-boundary-001",
+      "split": "holdout",
+      "expected": [
+        "00000000-0000-4000-8000-000000000020",
+        "00000000-0000-4000-8000-000000000021"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000020",
+        "00000000-0000-4000-8000-000000000021"
+      ],
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000020",
+                "title_norm": "合成状态记录甲",
+                "status": "active",
+                "summary": "可见的已确认工作态。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.13110315799713135
+              },
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000021",
+                "title_norm": "合成状态记录乙",
+                "status": "pending",
+                "summary": "可见的待审核工作态。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.10009411722421646
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": true
+            }
+          }
+        },
+        "include_text": "状态探针",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000021",
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "rerank_documents": [
+            {
+              "memory_uuid": "00000000-0000-4000-8000-000000000021",
+              "text": "合成状态记录乙\n可见的待审核工作态。"
+            },
+            {
+              "memory_uuid": "00000000-0000-4000-8000-000000000020",
+              "text": "合成状态记录甲\n可见的已确认工作态。"
+            }
+          ],
+          "rerank_results": [
+            {
+              "index": 1,
+              "document": null,
+              "relevance_score": 0.13110315799713135
+            },
+            {
+              "index": 0,
+              "document": null,
+              "relevance_score": 0.10009411722421646
+            }
+          ]
+        },
+        "elapsed_ms": 1015.8897100009199,
+        "model_calls": [
+          {
+            "model_type": "rerank",
+            "started_epoch_ms": 1793617800222.396,
+            "model": "BAAI/bge-reranker-v2-m3",
+            "input_count": 2,
+            "rate_limit_headers": {},
+            "usage": null,
+            "meta": {
+              "tokens": {
+                "input_tokens": 42,
+                "output_tokens": 0,
+                "image_tokens": 0
+              },
+              "billed_units": {
+                "input_tokens": 42,
+                "output_tokens": 0,
+                "image_tokens": 0,
+                "search_units": 0,
+                "classifications": 0
+              }
+            },
+            "http_status": 200,
+            "elapsed_ms": 208.87464200131944
+          }
+        ]
+      }
+    },
+    {
+      "id": "status-not-text-001",
+      "split": "contract",
+      "expected": [],
+      "actual": [],
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [],
+            "strategy": {
+              "embedding_fallback": true,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "pending",
+        "error": null,
+        "database_search_calls": 2,
+        "diagnostics": {
+          "literal_memory_uuids": []
+        },
+        "elapsed_ms": 4531.410120001965,
+        "model_calls": [
+          {
+            "model_type": "embeddings",
+            "started_epoch_ms": 1793617802598.687,
+            "model": "BAAI/bge-m3",
+            "input_count": 1,
+            "rate_limit_headers": {},
+            "usage": {
+              "prompt_tokens": 4,
+              "completion_tokens": 0,
+              "total_tokens": 4
+            },
+            "meta": null,
+            "http_status": 200,
+            "elapsed_ms": 214.9780149993603
+          }
+        ]
+      }
+    },
+    {
+      "id": "unrelated-query-001",
+      "split": "holdout",
+      "expected": [],
+      "actual": [],
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [],
+            "strategy": {
+              "embedding_fallback": true,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "火星矿场 产量预测",
+        "error": null,
+        "database_search_calls": 2,
+        "diagnostics": {
+          "literal_memory_uuids": []
+        },
+        "elapsed_ms": 2799.5948789975955,
+        "model_calls": [
+          {
+            "model_type": "embeddings",
+            "started_epoch_ms": 1793617805221.8982,
+            "model": "BAAI/bge-m3",
+            "input_count": 1,
+            "rate_limit_headers": {},
+            "usage": {
+              "prompt_tokens": 10,
+              "completion_tokens": 0,
+              "total_tokens": 10
+            },
+            "meta": null,
+            "http_status": 200,
+            "elapsed_ms": 213.14552200055914
+          }
+        ]
+      }
+    },
+    {
+      "id": "low-relevance-001",
+      "split": "tune",
+      "expected": [],
+      "actual": [
+        "00000000-0000-4000-8000-000000000023"
+      ],
+      "tp": 0,
+      "fp": 1,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": false,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": false,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000023",
+                "title_norm": "合成随机词表",
+                "status": "active",
+                "summary": "没有操作步骤的随机词表。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "冷杉 归档 授权",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000023"
+          ]
+        },
+        "elapsed_ms": 1732.3292279979796,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "exclude-only-001",
+      "split": "contract",
+      "expected": [],
+      "actual": [],
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true,
+        "model_calls": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": []
+        },
+        "elapsed_ms": 257.90700699872104,
+        "model_calls": []
+      }
+    },
+    {
+      "id": "include-normalization-001",
+      "split": "contract",
+      "expected": [
+        "00000000-0000-4000-8000-000000000006"
+      ],
+      "actual": [
+        "00000000-0000-4000-8000-000000000006"
+      ],
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "hard_filter_violations": 0,
+      "duplicates": 0,
+      "checks": {
+        "result_set": true,
+        "no_duplicates": true,
+        "hard_filters": true,
+        "limit": true,
+        "profile": true,
+        "include_text": true,
+        "execution": true,
+        "source_identity": true
+      },
+      "passed": true,
+      "observed": {
+        "response": {
+          "profile": "embedding_eval",
+          "data": {
+            "results": [
+              {
+                "memory_uuid": "00000000-0000-4000-8000-000000000006",
+                "title_norm": "合成项目 page-loom",
+                "status": "active",
+                "summary": "虚构的网页导出工具。",
+                "content_preview": null,
+                "matched_fields": [],
+                "score": 0.0
+              }
+            ],
+            "strategy": {
+              "embedding_fallback": false,
+              "rerank": false
+            }
+          }
+        },
+        "include_text": "page-loom",
+        "error": null,
+        "database_search_calls": 1,
+        "diagnostics": {
+          "literal_memory_uuids": [
+            "00000000-0000-4000-8000-000000000006"
+          ]
+        },
+        "elapsed_ms": 972.3045570026443,
+        "model_calls": []
+      }
+    }
+  ],
+  "limitations": [
+    "合成语料与小样本单次测量；不评价生产容量或 ANN 索引质量。",
+    "耗时包含评测保护所设的模型请求起始间隔，不能作为 Rust 程序性能结论。",
+    "故障/证据与分块场景当前仅固定可验证预期，行为实现留在 P1–P3。",
+    "readback_summary 校验工具返回的摘要与源标注一致，未调用线上 read_memory。",
+    "Python 参考流程执行原始 SQL，未执行完整 Rust CLI/provider；不复刻 Rust 重试/f32/连接池开销。",
+    "参数非法由目标契约 oracle 校验，现有 Rust 单元测试和源码路径证据另行记录。"
+  ]
+}
