@@ -107,16 +107,21 @@ trashed
 语义召回派生表。embedding 不属于记忆本体，可以重建，也可以在未来换维度时独立迁移。
 
 ```text
-memory_uuid uuid primary key references memory_units(uuid) on delete cascade
+memory_uuid uuid not null references memory_units(uuid) on delete cascade
+chunk_index int not null
+content_start_byte bigint not null
+content_end_byte bigint not null
 embedding vector(1024) not null
 embedding_model text not null
 embedding_dimension int not null
+source_revision bigint not null
 embedded_at timestamptz not null
 ```
 
 约束：
 
 ```text
+primary key (memory_uuid, chunk_index)
 embedding_dimension = 1024
 ```
 
@@ -500,7 +505,7 @@ created_at text
 (category, status)
 memory_units(status, updated_at)
 memory_units(category, title_norm) unique where status in ('pending', 'active')
-memory_embeddings(memory_uuid) primary key btree
+memory_embeddings(memory_uuid, chunk_index) primary key btree
 memory_embeddings(embedding) HNSW cosine
 memory_embeddings(embedded_at)
 memory_search_index(memory_uuid) primary key btree
