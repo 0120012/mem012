@@ -14,7 +14,7 @@ pub use changes::{
     refresh_memory_embedding, reject_change, restore_trash,
 };
 pub use graph_meta::{get_memory_graph_status, mark_memory_graph_dirty};
-pub use init_db::init_db;
+pub use init_db::{create_memory_embeddings_next, init_db};
 pub(crate) use init_db::init_profile_memory_tables;
 pub use memories::{
     MemoryUpdateInput, list_memories, list_memory_category_keywords, update_memory,

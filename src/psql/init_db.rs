@@ -56,6 +56,20 @@ fn memory_embeddings_next_table_sql(embeddings_dimension: usize) -> String {
     )
 }
 
+pub async fn create_memory_embeddings_next(
+    pool: &Pool<Postgres>,
+    embeddings_dimension: usize,
+) -> Result<(), sqlx::Error> {
+    // What：显式创建目标维度的下一代分块向量表。
+    // Why：升级准备与现有表初始化分离，保留旧向量；已有下一代表时直接报错。
+    if embeddings_dimension == 0 {
+        return Err(sqlx::Error::protocol("embedding 维度必须为正数"));
+    }
+    let create_sql = memory_embeddings_next_table_sql(embeddings_dimension);
+    sqlx::query(&create_sql).execute(pool).await?;
+    Ok(())
+}
+
 // Why：初始化入口必须独立于服务启动，避免运行态自动修改非当前 profile 库。
 pub async fn init_db(
     pool: &Pool<Postgres>,
