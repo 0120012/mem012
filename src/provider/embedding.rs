@@ -60,6 +60,26 @@ impl EmbeddingResponse {
     }
 }
 
+pub(crate) struct ContentChunk<'a> {
+    pub chunk_index: usize,
+    pub content_start_byte: usize,
+    pub content_end_byte: usize,
+    pub title_path: &'a str,
+    pub content: &'a str,
+}
+
+pub(crate) fn single_content_chunk<'a>(content: &'a str, title_path: &'a str) -> ContentChunk<'a> {
+    // What：将已确认可放入单块的正文封装为第 0 块。
+    // Why：正文定位采用 UTF-8 字节偏移，标题路径独立保存，避免拼接上下文后偏移失真。
+    ContentChunk {
+        chunk_index: 0,
+        content_start_byte: 0,
+        content_end_byte: content.len(),
+        title_path,
+        content,
+    }
+}
+
 // Why：BAAI/bge-m3 上限是 8192 token，而字符数不等于 token 数；取 6000 字符为中英混合、代码和特殊符号留出余量。
 const MAX_EMBED_CHARS: usize = 6000;
 // Why：超长输入仍需设上界；10 块约 6 万字符既覆盖完整记忆，又避免一次写入触发过多远程调用。
