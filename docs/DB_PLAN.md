@@ -136,20 +136,22 @@ embedding_dimension = 1024
 - 本地 fallback 必须选择 1024 维模型；如果本机资源不足，可以作为非常驻重建任务运行。
 - 只有 title_norm / summary / content / keywords 变化时才重算 embedding；usage 变更不重算。
 - 如需关系候选，可以临时生成 embedding，但不得把临时结果写入 `memory_embeddings`。
-- 未来更换维度时，新建下一代表，回填完成并建好 HNSW 后再切换查询。
+- 更换模型或维度时，以固定迁移流程准备目标索引，限速回填并建好 HNSW 后再切换查询；首版目标维度限定为 1～2000。
 - `memory_changes` 不记录 `memory_embeddings`；embedding 是派生索引，由写入流程或重建任务生成。
 
-维度升级流程：
+固定迁移流程（待实现，详见 `EMBEDDING_DIMENSION_UPGRADE_PLAN.md`）：
 
 ```text
-1. 创建 memory_embeddings_next，使用新的 vector(N)
-2. 用新模型回填 active memory
-3. 为 memory_embeddings_next 建 HNSW cosine index
-4. 切换查询配置 active_embedding_table = memory_embeddings_next
-5. 验证召回结果和性能
-6. 旧 memory_embeddings 改名备份或删除
-7. memory_embeddings_next 改名为 memory_embeddings
+1. 指定目标模型及其支持的维度 N（1～2000），登记或恢复 profile 迁移任务
+2. 准备非活动索引槽位，使用新的 vector(N)，保留当前索引继续查询
+3. 按 RPM/TPM 和任务预算限速回填 active memory，可暂停和续跑
+4. 校验完整块、源 revision 和目标配置，补齐变化后建立 HNSW cosine index
+5. 在一致的切换边界内复核，并原子切换当前模型、维度、检索阈值及索引表
+6. 验证召回和性能，保留上一代用于恢复
+7. 下一次迁移经核验后复用非活动槽位，重复同一流程
 ```
+
+服务共享上限为用户提供的 RPM 2000、TPM 500000；迁移采用更低的可调额度和单并发，不一次加载全部向量。当前只实现了准备空表的命令，完整任务循环、限流及切换尚待接入。
 
 ### memory_keywords
 

@@ -62,8 +62,8 @@ pub async fn create_memory_embeddings_next(
 ) -> Result<(), sqlx::Error> {
     // What：显式创建目标维度的下一代分块向量表。
     // Why：升级准备与现有表初始化分离，保留旧向量；已有下一代表时直接报错。
-    if embeddings_dimension == 0 {
-        return Err(sqlx::Error::protocol("embedding 维度必须为正数"));
+    if !(1..=2000).contains(&embeddings_dimension) {
+        return Err(sqlx::Error::protocol("embedding 维度必须在 1..=2000 范围内"));
     }
     let create_sql = memory_embeddings_next_table_sql(embeddings_dimension);
     sqlx::query(&create_sql).execute(pool).await?;
