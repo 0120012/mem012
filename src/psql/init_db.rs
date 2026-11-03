@@ -33,13 +33,13 @@ fn memory_embeddings_table_sql(embeddings_dimension: usize) -> String {
     )
 }
 
-fn memory_embedding_chunks_table_sql(embeddings_dimension: usize) -> String {
+fn memory_embeddings_next_table_sql(embeddings_dimension: usize) -> String {
     // What：定义按记忆和块序号定位的独立向量记录，正文范围使用半开字节区间。
-    // Why：分块复用 memory_embeddings，仅保留 source_revision 标识源版本。
+    // Why：先在下一代表准备新维度块索引，保留旧表供回填期间查询及切换验证。
     assert!(embeddings_dimension > 0, "embedding 维度必须为正数");
     format!(
         r#"
-        CREATE TABLE memory_embeddings (
+        CREATE TABLE memory_embeddings_next (
             memory_uuid UUID NOT NULL REFERENCES memory_units(uuid) ON DELETE CASCADE,
             chunk_index INT NOT NULL CHECK (chunk_index >= 0),
             content_start_byte BIGINT NOT NULL CHECK (content_start_byte >= 0),
