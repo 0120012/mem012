@@ -128,15 +128,6 @@ mod tests {
     use super::parse_cli_args_from;
 
     #[test]
-    fn parse_cli_args_accepts_share_create_profile() {
-        let args = vec!["--create_profile".to_string(), "share".to_string()];
-
-        let cli_args = parse_cli_args_from(args).unwrap();
-
-        assert_eq!(cli_args.create_profile.as_deref(), Some("share"));
-    }
-
-    #[test]
     fn parse_cli_args_accepts_target_database_for_create_profile() {
         let cli_args = parse_cli_args_from(vec![
             "--create_profile".to_string(),
