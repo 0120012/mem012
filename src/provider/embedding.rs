@@ -271,6 +271,31 @@ async fn request_chunk_with_retry(
     }
 }
 
+pub(crate) async fn request_limited_embedding_with_retry(
+    settings: &crate::config::EmbeddingSettings,
+    input: &str,
+    recent: &mut std::collections::VecDeque<(std::time::Instant, u32)>,
+    rpm: u32,
+    tpm: u32,
+    tokens: u32,
+) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
+    // What：迁移块请求沿用既有退避间隔，每次尝试重新经过 RPM/TPM 闸门。
+    // Why：失败请求也消耗 provider 额度；不能只对整个重试流程登记一次。
+    if tokens > tpm {
+        return Err("单次请求 token 数超过 TPM，无法发送".into());
+    }
+    for attempt in 0..=EMBEDDING_RETRY_DELAYS.len() {
+        match request_limited_embedding_attempt(settings, input, recent, rpm, tpm, tokens).await {
+            Ok(vector) => return Ok(vector),
+            Err(error) if is_permanent(error.as_ref()) || attempt == EMBEDDING_RETRY_DELAYS.len() => {
+                return Err(error);
+            }
+            Err(_) => tokio::time::sleep(Duration::from_secs(EMBEDDING_RETRY_DELAYS[attempt])).await,
+        }
+    }
+    unreachable!("最后一次尝试必定返回")
+}
+
 pub(crate) async fn request_limited_embedding_attempt(settings: &crate::config::EmbeddingSettings, input: &str, recent: &mut std::collections::VecDeque<(std::time::Instant, u32)>, rpm: u32, tpm: u32, tokens: u32) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
     // What：等待迁移额度后发出一次请求，失败尝试也保留计数。
     // Why：每次尝试独立经过闸门，等待期间不持有 HTTP permit，不把重试藏进一次计数。

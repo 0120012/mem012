@@ -1,0 +1,114 @@
+use std::collections::VecDeque;
+
+use crate::provider::embedding::{fitting_content_end, load_bge_m3_tokenizer, request_limited_embedding_with_retry};
+use sqlx::{Pool, Postgres};
+
+type MigrationError = Box<dyn std::error::Error + Send + Sync>;
+type Source = (String, i64, String, String);
+struct GeneratedChunk {
+    start: usize,
+    end: usize,
+    vector: Vec<f32>,
+}
+
+pub(super) async fn run(
+    pool: &Pool<Postgres>,
+    settings: &crate::config::EmbeddingSettings,
+    rpm: u32,
+    tpm: u32,
+) -> Result<(), MigrationError> {
+    // What：串行回填本轮 active 记忆，进程内共享额度队列并逐条输出结果。
+    // Why：整轮互斥防止另一准备命令清空目标表；单条失败继续处理，但整轮返回失败。
+    if rpm == 0 || tpm == 0 || settings.model != "BAAI/bge-m3" {
+        return Err("RPM/TPM 必须为正数；当前迁移分词仅支持 BAAI/bge-m3".into());
+    }
+    let tokenizer = load_bge_m3_tokenizer(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("models/bge-m3/tokenizer.json"))?;
+    let mut guard = pool.begin().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended('mem012:embedding_migration', 0))")
+        .fetch_one(&mut *guard).await?;
+    if !locked { return Err("当前 profile 已有迁移任务运行".into()); }
+    crate::psql::create_memory_embeddings_next(pool, settings.dimension).await?;
+    sqlx::query("LOCK TABLE memory_embeddings_next IN ACCESS SHARE MODE").execute(&mut *guard).await?;
+    let mut recent = VecDeque::new();
+    let mut cursor: Option<String> = None;
+    let mut failed = false;
+    loop {
+        let source: Option<Source> = sqlx::query_as(r#"
+            SELECT u.uuid::text, u.revision, u.content,
+                concat_ws(E'\n', u.title_norm, u.summary, u.recall_when,
+                    (SELECT string_agg(k.keyword_norm, ' ' ORDER BY k.keyword_norm)
+                     FROM memory_keywords k WHERE k.memory_uuid = u.uuid))
+            FROM memory_units u WHERE u.status = 'active' AND ($1::uuid IS NULL OR u.uuid > $1::uuid)
+            ORDER BY u.uuid LIMIT 1
+        "#).bind(cursor.as_deref()).fetch_optional(pool).await?;
+        let Some(source) = source else { break; };
+        cursor = Some(source.0.clone());
+        let result = match generate_chunks(&source, settings, &tokenizer, &mut recent, rpm, tpm).await {
+            Ok(chunks) => store_chunks(pool, &source, settings, &chunks).await,
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(()) => println!("{}", serde_json::json!({"state":"success","tool":"prepare_embedding_next","memory_uuid":source.0})),
+            Err(error) => {
+                failed = true;
+                println!("{}", serde_json::json!({"state":"error","tool":"prepare_embedding_next","memory_uuid":source.0,"error":error.to_string()}));
+            }
+        }
+    }
+    guard.commit().await?;
+    if failed { return Err("部分记忆回填失败，未建索引或切换；重新执行将从头生成".into()); }
+    Ok(())
+}
+
+async fn generate_chunks(
+    source: &Source,
+    settings: &crate::config::EmbeddingSettings,
+    tokenizer: &tokenizers::Tokenizer,
+    recent: &mut VecDeque<(std::time::Instant, u32)>,
+    rpm: u32,
+    tpm: u32,
+) -> Result<Vec<GeneratedChunk>, MigrationError> {
+    // What：按完整请求 token 预算切出原文前缀，逐块限流请求，不截断正文。
+    // Why：在锁源记忆之前完成网络请求，保留一条记忆的结果以便整体原子写入。
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    loop {
+        let rest = &source.2[start..];
+        let end = start + fitting_content_end(rest, "", &source.3, tokenizer)?;
+        let input = format!("{}\n\n{}", source.3, &source.2[start..end]);
+        let tokens = u32::try_from(tokenizer.encode(input.as_str(), true)?.len())?;
+        let vector = request_limited_embedding_with_retry(settings, &input, recent, rpm, tpm, tokens).await?;
+        if vector.iter().any(|value| !value.is_finite()) || vector.iter().all(|value| *value == 0.0) {
+            return Err("embedding 向量包含非有限值或全零，拒绝写入".into());
+        }
+        chunks.push(GeneratedChunk { start, end, vector });
+        start = end;
+        if start == source.2.len() { break; }
+    }
+    Ok(chunks)
+}
+
+async fn store_chunks(
+    pool: &Pool<Postgres>,
+    source: &Source,
+    settings: &crate::config::EmbeddingSettings,
+    chunks: &[GeneratedChunk],
+) -> Result<(), MigrationError> {
+    // What：核对 active 状态和源 revision 后，在一个事务中写入整套块。
+    // Why：源内容在请求期间可能改变；任何块失败都回滚，避免发布不完整集合。
+    let mut tx = pool.begin().await?;
+    let revision: Option<i64> = sqlx::query_scalar("SELECT revision FROM memory_units WHERE uuid=$1::uuid AND status='active' FOR SHARE")
+        .bind(&source.0).fetch_optional(&mut *tx).await?;
+    if revision != Some(source.1) { return Err("源记忆已变化或不再 active，拒绝过期结果".into()); }
+    for (index, chunk) in chunks.iter().enumerate() {
+        let vector = format!("[{}]", chunk.vector.iter().map(f32::to_string).collect::<Vec<_>>().join(","));
+        sqlx::query(r#"INSERT INTO memory_embeddings_next
+            (memory_uuid,chunk_index,content_start_byte,content_end_byte,title_path,embedding,embedding_model,embedding_dimension,source_revision,embedded_at)
+            VALUES ($1::uuid,$2,$3,$4,'',$5::vector,$6,$7,$8,now())"#)
+            .bind(&source.0).bind(i32::try_from(index)?).bind(i64::try_from(chunk.start)?)
+            .bind(i64::try_from(chunk.end)?).bind(vector).bind(&settings.model)
+            .bind(i32::try_from(settings.dimension)?).bind(source.1).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}

@@ -81,9 +81,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if cli_args.command.as_deref() == Some("prepare-embedding-next") {
+        let mut settings = config.embedding_settings().ok_or("请先配置 embedding 模型和 API")?;
+        settings.dimension = cli_args.embedding_dimension.expect("准备命令已校验目标维度");
         tools::dispatch_prepare_embedding_next_command(
             &profile_pool,
-            cli_args.embedding_dimension.expect("准备命令已校验目标维度"),
+            &settings,
+            cli_args.embedding_rpm.expect("准备命令已校验 RPM"),
+            cli_args.embedding_tpm.expect("准备命令已校验 TPM"),
         )
         .await?;
         return Ok(());

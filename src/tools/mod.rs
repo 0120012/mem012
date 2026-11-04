@@ -5,6 +5,7 @@ pub(crate) mod cli_help;
 pub(crate) mod create_memory;
 mod create_profile;
 mod delete_memory;
+mod embedding_migration;
 mod import_memory;
 mod read_memory;
 mod search_memory;
@@ -46,11 +47,14 @@ pub async fn dispatch_create_profile_command(
 
 pub async fn dispatch_prepare_embedding_next_command(
     pool: &sqlx::Pool<sqlx::Postgres>,
-    embedding_dimension: usize,
+    settings: &crate::config::EmbeddingSettings,
+    rpm: u32,
+    tpm: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // What：按传入的目标维度创建下一代表，并输出实际建表维度。
-    // Why：目标维度独立于仍服务旧表的运行配置，建表失败时不输出成功。
-    crate::psql::create_memory_embeddings_next(pool, embedding_dimension).await?;
+    // What：准备目标表并串行限流回填，逐条结果后输出本轮完成状态。
+    // Why：只有全部条目成功才报告回填完成，建索引及切换仍由后续阶段实现。
+    embedding_migration::run(pool, settings, rpm, tpm).await
+        .map_err(|error| -> Box<dyn std::error::Error> { error })?;
     println!(
         "{}",
         serde_json::json!({
@@ -58,7 +62,8 @@ pub async fn dispatch_prepare_embedding_next_command(
             "tool": "prepare_embedding_next",
             "data": {
                 "table": "memory_embeddings_next",
-                "embedding_dimension": embedding_dimension
+                "embedding_dimension": settings.dimension,
+                "phase": "backfill_complete"
             },
             "error": null
         })
