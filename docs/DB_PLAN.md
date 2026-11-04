@@ -142,7 +142,7 @@ embedding_dimension = 1024
 固定迁移流程（待实现，详见 `EMBEDDING_DIMENSION_UPGRADE_PLAN.md`）：
 
 ```text
-1. 指定目标模型及其支持的维度 N（1～2000），核验已有下一代表并扫描恢复；本阶段不新增 profile 代记录或迁移阶段表
+1. 从 config.toml 读取用户配置的目标模型，命令指定其支持的维度 N（1～2000），核验已有下一代表并扫描恢复；本阶段不新增 profile 代记录或迁移阶段表
 2. 准备非活动索引槽位，使用新的 vector(N)，保留当前索引继续查询
 3. 按 RPM/TPM 和任务预算限速回填 active memory，可暂停和续跑
 4. 校验完整块、源 revision 和目标配置，补齐变化后建立 HNSW cosine index
