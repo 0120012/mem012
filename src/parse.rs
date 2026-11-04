@@ -79,6 +79,9 @@ fn parse_cli_args_from(
     if (embedding_rpm.is_some() || embedding_tpm.is_some()) && !preparing {
         return Err("--rpm/--tpm 只能和 prepare-embedding-next 一起使用".into());
     }
+    if preparing && (embedding_rpm.is_none() || embedding_tpm.is_none()) {
+        return Err("请同时提供 --rpm 和 --tpm，例如 --rpm 50 --tpm 500000".into());
+    }
     if embedding_dimension.is_some() && command.as_deref() != Some("prepare-embedding-next") {
         return Err("--dimension 只能和 prepare-embedding-next 一起使用".into());
     }
@@ -123,8 +126,8 @@ fn parse_cli_args_from(
         }),
         args_json,
         embedding_dimension,
-        embedding_rpm: preparing.then_some(embedding_rpm.unwrap_or(50)),
-        embedding_tpm: preparing.then_some(embedding_tpm.unwrap_or(500_000)),
+        embedding_rpm,
+        embedding_tpm,
         auth_token,
     })
 }
