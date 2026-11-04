@@ -106,6 +106,39 @@ pub(crate) fn single_content_chunk<'a>(
     }))
 }
 
+pub(crate) fn fitting_content_end(
+    content: &str,
+    title_path: &str,
+    metadata: &str,
+    tokenizer: &tokenizers::Tokenizer,
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    // What：按完整请求预算定位一个可发送的正文前缀，返回其 UTF-8 字节终点。
+    // Why：直接使用原文字节偏移并复核截取后的 token 数，避免解码改写原文或切开多字节字符。
+    let prefix = [metadata, title_path, ""].join("\n");
+    let input = format!("{prefix}{content}");
+    let encoding = tokenizer.encode(input.as_str(), true)?;
+    if encoding.len() <= 8192 {
+        return Ok(content.len());
+    }
+    let cut = encoding.get_offsets()[..8191]
+        .iter()
+        .map(|p| p.1)
+        .max()
+        .unwrap_or(0);
+    let mut end = cut.saturating_sub(prefix.len()).min(content.len());
+    while !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    while end > 0 {
+        let input = format!("{prefix}{}", &content[..end]);
+        if single_content_chunk(&content[..end], title_path, &input, tokenizer)?.is_some() {
+            return Ok(end);
+        }
+        end = content[..end].char_indices().next_back().unwrap().0;
+    }
+    Err("元信息或单个正文字符超出 BGE-M3 token 预算".into())
+}
+
 // Why：BAAI/bge-m3 上限是 8192 token，而字符数不等于 token 数；取 6000 字符为中英混合、代码和特殊符号留出余量。
 const MAX_EMBED_CHARS: usize = 6000;
 // Why：超长输入仍需设上界；10 块约 6 万字符既覆盖完整记忆，又避免一次写入触发过多远程调用。
