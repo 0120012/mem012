@@ -271,6 +271,17 @@ async fn request_chunk_with_retry(
     }
 }
 
+pub(crate) async fn request_limited_embedding_attempt(settings: &crate::config::EmbeddingSettings, input: &str, recent: &mut std::collections::VecDeque<(std::time::Instant, u32)>, rpm: u32, tpm: u32, tokens: u32) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
+    // What：等待迁移额度后发出一次请求，失败尝试也保留计数。
+    // Why：每次尝试独立经过闸门，等待期间不持有 HTTP permit，不把重试藏进一次计数。
+    loop {
+        let wait = embedding_request_wait(recent, rpm, tpm, tokens, std::time::Instant::now())?;
+        if wait.is_zero() { break; }
+        tokio::time::sleep(wait).await;
+    }
+    request_single_embedding(settings, input).await
+}
+
 async fn request_single_embedding(
     settings: &crate::config::EmbeddingSettings,
     input: &str,
@@ -314,6 +325,21 @@ async fn request_single_embedding(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    #[ignore = "由 Python 本地模拟服务启动"]
+    async fn limited_attempt_waits_and_counts_failures() {
+        let settings = crate::config::EmbeddingSettings { api: std::env::var("MEM012_RATE_MOCK_URL").expect("需要 Python 模拟服务"), api_type: "embeddings".into(), key: String::new(), model: "test".into(), dimension: 2, fallback_max_distance: 1.0, proxy: None };
+        let started = std::time::Instant::now();
+        let mut recent = std::collections::VecDeque::from([(started - super::Duration::from_millis(59_950), 4)]);
+        assert!(super::request_limited_embedding_attempt(&settings, "test", &mut recent, 1, 10, 4).await.is_err());
+        assert!(started.elapsed() >= super::Duration::from_millis(50));
+        assert_eq!(recent.len(), 1);
+        assert_eq!(super::request_limited_embedding_attempt(&settings, "test", &mut recent, 2, 10, 4).await.unwrap(), vec![0.1, 0.2]);
+        assert_eq!(recent.len(), 2);
+        assert!(super::request_limited_embedding_attempt(&settings, "test", &mut recent, 2, 10, 11).await.is_err());
+        assert_eq!(recent.len(), 2);
+    }
+
     #[test]
     fn migration_rate_window_reserves_only_when_allowed() {
         let now = std::time::Instant::now();
