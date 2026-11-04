@@ -14,6 +14,8 @@ fn parse_cli_args_from(
     let mut create_profile = None;
     let mut target = None;
     let mut embedding_dimension = None;
+    let mut embedding_rpm = None;
+    let mut embedding_tpm = None;
     let mut args_json = None;
     let mut auth_token = None;
     let mut args = args.into_iter();
@@ -27,6 +29,16 @@ fn parse_cli_args_from(
                 command = Some(arg);
             }
             "--profile" => profile = Some(args.next().ok_or("--profile 缺少 profile 名称")?),
+            "--rpm" | "--tpm" => {
+                let slot = if arg == "--rpm" { &mut embedding_rpm } else { &mut embedding_tpm };
+                if slot.is_some() {
+                    return Err(format!("{arg} 不能重复使用").into());
+                }
+                let value = args.next().ok_or_else(|| format!("{arg} 缺少限速值"))?;
+                let limit = value.parse::<u32>().ok().filter(|value| *value > 0)
+                    .ok_or_else(|| format!("{arg} 必须为正整数"))?;
+                *slot = Some(limit);
+            }
             "--dimension" => {
                 if embedding_dimension.is_some() {
                     return Err("--dimension 不能重复使用".into());
@@ -63,6 +75,10 @@ fn parse_cli_args_from(
         }
     }
 
+    let preparing = command.as_deref() == Some("prepare-embedding-next");
+    if (embedding_rpm.is_some() || embedding_tpm.is_some()) && !preparing {
+        return Err("--rpm/--tpm 只能和 prepare-embedding-next 一起使用".into());
+    }
     if embedding_dimension.is_some() && command.as_deref() != Some("prepare-embedding-next") {
         return Err("--dimension 只能和 prepare-embedding-next 一起使用".into());
     }
@@ -107,6 +123,8 @@ fn parse_cli_args_from(
         }),
         args_json,
         embedding_dimension,
+        embedding_rpm: preparing.then_some(embedding_rpm.unwrap_or(50)),
+        embedding_tpm: preparing.then_some(embedding_tpm.unwrap_or(500_000)),
         auth_token,
     })
 }

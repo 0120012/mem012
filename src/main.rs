@@ -14,6 +14,8 @@ struct CliArgs {
     create_profile: Option<String>,
     target: Option<String>,
     embedding_dimension: Option<usize>,
+    embedding_rpm: Option<u32>,
+    embedding_tpm: Option<u32>,
     args_json: Option<String>,
     auth_token: Option<String>,
 }
