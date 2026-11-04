@@ -60,6 +60,24 @@ impl EmbeddingResponse {
     }
 }
 
+pub(crate) fn load_bge_m3_tokenizer(
+    path: &std::path::Path,
+) -> Result<tokenizers::Tokenizer, Box<dyn std::error::Error + Send + Sync>> {
+    // What：加载并校验固定版本的 BGE-M3 分词文件，关闭截断和填充。
+    // Why：预算必须统计完整输入，避免文件漂移或自动截断掩盖超出模型窗口的内容。
+    use sha2::{Digest, Sha256};
+
+    let data = std::fs::read(path)?;
+    let hash = format!("{:x}", Sha256::digest(&data));
+    if hash != "21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08" {
+        return Err("BGE-M3 tokenizer SHA256 校验失败".into());
+    }
+    let mut tokenizer = tokenizers::Tokenizer::from_bytes(&data)?;
+    tokenizer.with_truncation(None)?;
+    tokenizer.with_padding(None);
+    Ok(tokenizer)
+}
+
 pub(crate) struct ContentChunk<'a> {
     pub chunk_index: usize,
     pub content_start_byte: usize,
