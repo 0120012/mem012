@@ -32,13 +32,15 @@ mem012 --profile riko --args '<json_object>'
 mem012 --profile riko init
 ```
 
-为本次 `BAAI/bge-m3`、1024 维升级创建下一代分块向量表：
+按目标维度创建下一代分块向量表（本次目标为 `BAAI/bge-m3`、1024 维）：
 
 ```bash
-mem012 --profile riko prepare-embedding-next
+mem012 --profile riko prepare-embedding-next --dimension 1024
 ```
 
 该命令创建 `memory_embeddings_next`，已有同名表时报错。原表保留供当前查询使用；向量回填、HNSW 索引和查询切换尚待后续接入。
+
+`--dimension` 仅用于该命令，范围为 `1..=2000`，省略时使用 1024；建表不会改变当前查询配置或转换旧向量。
 
 规则：
 

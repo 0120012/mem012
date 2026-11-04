@@ -13,6 +13,7 @@ struct CliArgs {
     profile: Option<String>,
     create_profile: Option<String>,
     target: Option<String>,
+    embedding_dimension: Option<usize>,
     args_json: Option<String>,
     auth_token: Option<String>,
 }
@@ -73,7 +74,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if cli_args.command.as_deref() == Some("prepare-embedding-next") {
-        tools::dispatch_prepare_embedding_next_command(&profile_pool, 1024).await?;
+        tools::dispatch_prepare_embedding_next_command(
+            &profile_pool,
+            cli_args.embedding_dimension.unwrap_or(1024),
+        )
+        .await?;
         return Ok(());
     }
 

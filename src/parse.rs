@@ -13,6 +13,7 @@ fn parse_cli_args_from(
     let mut profile = None;
     let mut create_profile = None;
     let mut target = None;
+    let mut embedding_dimension = None;
     let mut args_json = None;
     let mut auth_token = None;
     let mut args = args.into_iter();
@@ -26,6 +27,17 @@ fn parse_cli_args_from(
                 command = Some(arg);
             }
             "--profile" => profile = Some(args.next().ok_or("--profile 缺少 profile 名称")?),
+            "--dimension" => {
+                if embedding_dimension.is_some() {
+                    return Err("--dimension 不能重复使用".into());
+                }
+                let value = args.next().ok_or("--dimension 缺少目标维度")?;
+                let dimension = value.parse::<usize>().map_err(|_| "--dimension 必须为整数")?;
+                if !(1..=2000).contains(&dimension) {
+                    return Err("--dimension 必须在 1..=2000 范围内".into());
+                }
+                embedding_dimension = Some(dimension);
+            }
             "--create_profile" => {
                 if create_profile.is_some() {
                     return Err("--create_profile 不能重复使用".into());
@@ -51,6 +63,9 @@ fn parse_cli_args_from(
         }
     }
 
+    if embedding_dimension.is_some() && command.as_deref() != Some("prepare-embedding-next") {
+        return Err("--dimension 只能和 prepare-embedding-next 一起使用".into());
+    }
     if let Some(command) = command.as_deref().filter(|_| args_json.is_some()) {
         return Err(format!("{command} 不支持 --args").into());
     }
@@ -91,6 +106,7 @@ fn parse_cli_args_from(
             (!value.is_empty()).then(|| value.to_string())
         }),
         args_json,
+        embedding_dimension,
         auth_token,
     })
 }
