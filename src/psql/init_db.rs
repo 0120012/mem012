@@ -91,22 +91,28 @@ pub async fn create_memory_embeddings_next(
     pool: &Pool<Postgres>,
     embeddings_dimension: usize,
 ) -> Result<(), sqlx::Error> {
-    // What：显式创建目标维度的下一代表，或核验并复用已有空表。
-    // Why：事务锁串行化准备操作，确保已存在的表通过核验后才复用，失败时回滚。
+    // What：仅在维度变化时清理并重建当前表所在 schema 的下一代表。
+    // Why：保留服务中的旧表，事务内重建非活动槽位；同维度无需换表，失败整体回滚。
     if !(1..=2000).contains(&embeddings_dimension) {
         return Err(sqlx::Error::protocol("embedding 维度必须在 1..=2000 范围内"));
     }
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('mem012:memory_embeddings_next', 0))")
         .execute(&mut *tx).await?;
-    let exists: bool = sqlx::query_scalar("SELECT to_regclass('memory_embeddings_next') IS NOT NULL")
-        .fetch_one(&mut *tx).await?;
-    if exists {
-        ensure_empty_memory_embeddings_next(&mut tx, embeddings_dimension).await?;
-    } else {
-        let create_sql = memory_embeddings_next_table_sql(embeddings_dimension);
-        sqlx::query(&create_sql).execute(&mut *tx).await?;
+    sqlx::query("LOCK TABLE memory_embeddings IN ACCESS SHARE MODE").execute(&mut *tx).await?;
+    let (current_dimension, next_table): (i32, String) = sqlx::query_as(r#"
+        SELECT a.atttypmod, quote_ident(n.nspname) || '.memory_embeddings_next'
+        FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.oid = 'memory_embeddings'::regclass AND c.relkind = 'r' AND a.attname = 'embedding'
+          AND a.atttypid = 'vector'::regtype AND a.atttypmod > 0 AND NOT a.attisdropped
+    "#).fetch_one(&mut *tx).await?;
+    if current_dimension == embeddings_dimension as i32 {
+        return Err(sqlx::Error::protocol("目标维度与当前维度相同，无需换表"));
     }
+    sqlx::query(&format!("DROP TABLE IF EXISTS {next_table}")).execute(&mut *tx).await?;
+    let create_sql = memory_embeddings_next_table_sql(embeddings_dimension)
+        .replacen("CREATE TABLE memory_embeddings_next", &format!("CREATE TABLE {next_table}"), 1);
+    sqlx::query(&create_sql).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
