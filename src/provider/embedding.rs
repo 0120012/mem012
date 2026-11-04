@@ -86,16 +86,24 @@ pub(crate) struct ContentChunk<'a> {
     pub content: &'a str,
 }
 
-pub(crate) fn single_content_chunk<'a>(content: &'a str, title_path: &'a str) -> ContentChunk<'a> {
-    // What：将已确认可放入单块的正文封装为第 0 块。
-    // Why：正文定位采用 UTF-8 字节偏移，标题路径独立保存，避免拼接上下文后偏移失真。
-    ContentChunk {
+pub(crate) fn single_content_chunk<'a>(
+    content: &'a str,
+    title_path: &'a str,
+    embedding_input: &str,
+    tokenizer: &tokenizers::Tokenizer,
+) -> Result<Option<ContentChunk<'a>>, Box<dyn std::error::Error + Send + Sync>> {
+    // What：完整请求含特殊 token 不超过 BGE-M3 窗口时返回单块，超限返回 None。
+    // Why：使用已关闭截断和填充的分词器统计元信息，正文范围仍取原文 UTF-8 字节，避免漏算或偏移失真。
+    if tokenizer.encode(embedding_input, true)?.len() > 8192 {
+        return Ok(None);
+    }
+    Ok(Some(ContentChunk {
         chunk_index: 0,
         content_start_byte: 0,
         content_end_byte: content.len(),
         title_path,
         content,
-    }
+    }))
 }
 
 // Why：BAAI/bge-m3 上限是 8192 token，而字符数不等于 token 数；取 6000 字符为中英混合、代码和特殊符号留出余量。
