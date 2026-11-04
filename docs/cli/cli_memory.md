@@ -35,7 +35,7 @@ mem012 --profile riko init
 为本次 `BAAI/bge-m3`、1024 维升级创建下一代分块向量表：
 
 ```bash
-mem012 --profile riko prepare-embedding-upgrade
+mem012 --profile riko prepare-embedding-next
 ```
 
 该命令创建 `memory_embeddings_next`，已有同名表时报错。原表保留供当前查询使用；向量回填、HNSW 索引和查询切换尚待后续接入。
@@ -44,7 +44,7 @@ mem012 --profile riko prepare-embedding-upgrade
 
 - `--profile` 必填。
 - JSON 工具请求必须传 `--args`。
-- `init`、`prepare-embedding-upgrade` 命令不传 `--args`。
+- `init`、`prepare-embedding-next` 命令不传 `--args`。
 - `--args` 必须是完整 JSON object。
 - JSON 外层必须用 shell 引号包住。
 - `profile` 只能来自启动参数，不能放进 JSON args。

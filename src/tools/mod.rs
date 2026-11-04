@@ -44,7 +44,7 @@ pub async fn dispatch_create_profile_command(
     create_profile::run(config, profile, target).await
 }
 
-pub async fn dispatch_prepare_embedding_upgrade_command(
+pub async fn dispatch_prepare_embedding_next_command(
     pool: &sqlx::Pool<sqlx::Postgres>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // What：为本次 768 → 1024 维升级创建下一代表并输出命令结果。
@@ -54,7 +54,7 @@ pub async fn dispatch_prepare_embedding_upgrade_command(
         "{}",
         serde_json::json!({
             "state": "success",
-            "tool": "prepare_embedding_upgrade",
+            "tool": "prepare_embedding_next",
             "data": {
                 "table": "memory_embeddings_next",
                 "embedding_dimension": 1024

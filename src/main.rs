@@ -72,8 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tools::dispatch_init_command(&profile_pool).await?;
         return Ok(());
     }
-    if cli_args.command.as_deref() == Some("prepare-embedding-upgrade") {
-        tools::dispatch_prepare_embedding_upgrade_command(&profile_pool).await?;
+    if cli_args.command.as_deref() == Some("prepare-embedding-next") {
+        tools::dispatch_prepare_embedding_next_command(&profile_pool).await?;
         return Ok(());
     }
 

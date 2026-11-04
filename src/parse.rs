@@ -19,7 +19,7 @@ fn parse_cli_args_from(
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "server" | "init" | "prepare-embedding-upgrade" => {
+            "server" | "init" | "prepare-embedding-next" => {
                 if command.is_some() {
                     return Err(format!("顶层命令不能重复: {arg}").into());
                 }
