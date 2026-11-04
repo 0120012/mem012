@@ -12,6 +12,29 @@ use super::http::{http_client, provider_endpoint};
 static EMBED_GATE: Semaphore = Semaphore::const_new(2);
 const EMBEDDING_RETRY_DELAYS: [u64; 3] = [5, 20, 60];
 
+pub(crate) fn embedding_request_wait(recent: &mut std::collections::VecDeque<(std::time::Instant, u32)>, rpm: u32, tpm: u32, tokens: u32, now: std::time::Instant) -> Result<Duration, &'static str> {
+    // What：核对最近 60 秒的请求和 token 额度，允许时登记，否则返回等待时长。
+    // Why：使用滑动窗口避免分钟边界突发；等待不扣额度，每次实际尝试均需调用。
+    assert!(rpm > 0 && tpm > 0);
+    if tokens > tpm { return Err("单次请求 token 数超过 TPM，无法发送"); }
+    let window = Duration::from_secs(60);
+    while recent.front().is_some_and(|(at, _)| now.duration_since(*at) >= window) {
+        recent.pop_front();
+    }
+    let mut count = recent.len() as u64;
+    let mut total = recent.iter().map(|(_, used)| u64::from(*used)).sum::<u64>() + u64::from(tokens);
+    if count < u64::from(rpm) && total <= u64::from(tpm) {
+        recent.push_back((now, tokens));
+        return Ok(Duration::ZERO);
+    }
+    for (at, used) in recent.iter() {
+        count -= 1;
+        total -= u64::from(*used);
+        if count < u64::from(rpm) && total <= u64::from(tpm) { return Ok(window - now.duration_since(*at)); }
+    }
+    unreachable!("窗口清空后必能容纳不超过 TPM 的单次请求")
+}
+
 #[derive(Debug)]
 struct PermanentEmbeddingError(String);
 
@@ -291,6 +314,16 @@ async fn request_single_embedding(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn migration_rate_window_reserves_only_when_allowed() {
+        let now = std::time::Instant::now();
+        let mut recent = std::collections::VecDeque::new();
+        for (offset, tokens, expected) in [(0, 4, Ok(0)), (1, 6, Ok(0)), (2, 0, Ok(58)), (2, 1, Ok(58)), (60, 4, Ok(0)), (61, 10, Ok(59)), (120, 10, Ok(0)), (121, 11, Err("单次请求 token 数超过 TPM，无法发送"))] {
+            assert_eq!(super::embedding_request_wait(&mut recent, 2, 10, tokens, now + super::Duration::from_secs(offset)).map(|wait| wait.as_secs()), expected);
+        }
+        assert_eq!(recent.len(), 1);
+    }
+
     use super::{
         EmbeddingResponse, MAX_EMBED_CHARS, MAX_EMBED_CHUNKS, PermanentEmbeddingError, chunk_input,
         is_permanent, permanent_chunk_error,
