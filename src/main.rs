@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if cli_args.command.as_deref() == Some("prepare-embedding-next") {
-        tools::dispatch_prepare_embedding_next_command(&profile_pool).await?;
+        tools::dispatch_prepare_embedding_next_command(&profile_pool, 1024).await?;
         return Ok(());
     }
 

@@ -46,10 +46,11 @@ pub async fn dispatch_create_profile_command(
 
 pub async fn dispatch_prepare_embedding_next_command(
     pool: &sqlx::Pool<sqlx::Postgres>,
+    embedding_dimension: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // What：为本次 768 → 1024 维升级创建下一代表并输出命令结果。
+    // What：按传入的目标维度创建下一代表，并输出实际建表维度。
     // Why：目标维度独立于仍服务旧表的运行配置，建表失败时不输出成功。
-    crate::psql::create_memory_embeddings_next(pool, 1024).await?;
+    crate::psql::create_memory_embeddings_next(pool, embedding_dimension).await?;
     println!(
         "{}",
         serde_json::json!({
@@ -57,7 +58,7 @@ pub async fn dispatch_prepare_embedding_next_command(
             "tool": "prepare_embedding_next",
             "data": {
                 "table": "memory_embeddings_next",
-                "embedding_dimension": 1024
+                "embedding_dimension": embedding_dimension
             },
             "error": null
         })
