@@ -56,6 +56,37 @@ fn memory_embeddings_next_table_sql(embeddings_dimension: usize) -> String {
     )
 }
 
+async fn ensure_empty_memory_embeddings_next(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    embeddings_dimension: usize,
+) -> Result<(), sqlx::Error> {
+    // What：在调用方事务内锁定下一代表，核验完整结构、目标维度及空表状态。
+    // Why：临时表不能外键引用原表；事务内复用建表 SQL 作参考，锁保留到事务结束以防核验期间写入。
+    sqlx::query("LOCK TABLE memory_embeddings_next IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut **tx).await?;
+    let reference_sql = memory_embeddings_next_table_sql(embeddings_dimension)
+        .replace("memory_embeddings_next", "public._mem012_embedding_next_reference");
+    sqlx::query(&reference_sql).execute(&mut **tx).await?;
+    let matches: bool = sqlx::query_scalar(r#"
+        WITH signatures AS (SELECT c.oid, c.relkind, c.relpersistence,
+            (SELECT jsonb_agg((attname, atttypid, atttypmod, attnotnull, atthasdef, attidentity, attgenerated)
+                             ORDER BY attnum)
+             FROM pg_attribute WHERE attrelid = c.oid AND attnum > 0 AND NOT attisdropped) AS columns,
+            (SELECT jsonb_agg((pg_get_constraintdef(oid), convalidated) ORDER BY pg_get_constraintdef(oid))
+             FROM pg_constraint WHERE conrelid = c.oid) AS constraints
+            FROM pg_class c WHERE oid IN ('memory_embeddings_next'::regclass, 'public._mem012_embedding_next_reference'::regclass))
+        SELECT a.columns = b.columns AND a.constraints = b.constraints AND a.relkind = 'r' AND a.relpersistence = 'p'
+            AND NOT EXISTS (SELECT 1 FROM memory_embeddings_next)
+        FROM signatures a, signatures b
+        WHERE a.oid = 'memory_embeddings_next'::regclass AND b.oid = 'public._mem012_embedding_next_reference'::regclass
+    "#).fetch_one(&mut **tx).await?;
+    sqlx::query("DROP TABLE public._mem012_embedding_next_reference").execute(&mut **tx).await?;
+    if !matches {
+        return Err(sqlx::Error::protocol("下一代表结构、维度不匹配或非空，不能复用"));
+    }
+    Ok(())
+}
+
 pub async fn create_memory_embeddings_next(
     pool: &Pool<Postgres>,
     embeddings_dimension: usize,
