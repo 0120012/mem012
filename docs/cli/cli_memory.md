@@ -40,7 +40,7 @@ mem012 --profile riko prepare-embedding-next --dimension 1024
 
 该命令创建 `memory_embeddings_next`，已有同名表时报错。原表保留供当前查询使用；向量回填、HNSW 索引和查询切换尚待后续接入。
 
-`--dimension` 仅用于该命令，范围为 `1..=2000`，省略时使用 1024；建表不会改变当前查询配置或转换旧向量。
+`--dimension` 为该命令的必填参数，范围为 `1..=2000`，无默认值；省略时提示输入目标维度并在连接数据库前退出。建表不会改变当前查询配置或转换旧向量。
 
 回填所用目标模型由用户在 `config.toml` 的 `[embeddings]` 下配置 `embeddings_model`，不提供 `--model` 参数；当前命令仅准备空表，尚未接入向量生成。
 
