@@ -91,13 +91,23 @@ pub async fn create_memory_embeddings_next(
     pool: &Pool<Postgres>,
     embeddings_dimension: usize,
 ) -> Result<(), sqlx::Error> {
-    // What：显式创建目标维度的下一代分块向量表。
-    // Why：升级准备与现有表初始化分离，保留旧向量；已有下一代表时直接报错。
+    // What：显式创建目标维度的下一代表，或核验并复用已有空表。
+    // Why：事务锁串行化准备操作，确保已存在的表通过核验后才复用，失败时回滚。
     if !(1..=2000).contains(&embeddings_dimension) {
         return Err(sqlx::Error::protocol("embedding 维度必须在 1..=2000 范围内"));
     }
-    let create_sql = memory_embeddings_next_table_sql(embeddings_dimension);
-    sqlx::query(&create_sql).execute(pool).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('mem012:memory_embeddings_next', 0))")
+        .execute(&mut *tx).await?;
+    let exists: bool = sqlx::query_scalar("SELECT to_regclass('memory_embeddings_next') IS NOT NULL")
+        .fetch_one(&mut *tx).await?;
+    if exists {
+        ensure_empty_memory_embeddings_next(&mut tx, embeddings_dimension).await?;
+    } else {
+        let create_sql = memory_embeddings_next_table_sql(embeddings_dimension);
+        sqlx::query(&create_sql).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
