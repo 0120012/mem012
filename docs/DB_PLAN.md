@@ -139,7 +139,7 @@ embedding_dimension = 1024
 - 更换模型或维度时，以固定迁移流程准备目标索引，限速回填并建好 HNSW 后再切换查询；首版目标维度限定为 1～2000。
 - `memory_changes` 不记录 `memory_embeddings`；embedding 是派生索引，由写入流程或重建任务生成。
 
-固定迁移流程（待实现，详见 `EMBEDDING_DIMENSION_UPGRADE_PLAN.md`）：
+固定迁移流程（待实现，约束及剩余工作统一见[embedding 主线计划](EMBEDDING_ITERATION_MAINLINE_PLAN.md#维度迁移的既有约束与剩余工作)；当前执行项以主线接续入口为准）：
 
 ```text
 1. 从 config.toml 读取用户配置的目标模型，命令指定其支持的维度 N（1～2000），核验已有下一代表并扫描恢复；本阶段不新增 profile 代记录或迁移阶段表

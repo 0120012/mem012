@@ -101,8 +101,8 @@ async fn store_chunks(
     settings: &crate::config::EmbeddingSettings,
     chunks: &[GeneratedChunk],
 ) -> Result<(), MigrationError> {
-    // What：校验块覆盖和维度，再核对 active 状态及源 revision，事务写入整套块。
-    // Why：拒绝缺失或无效块；源内容在请求期间可能改变，任何块失败都回滚。
+    // What：核验完整块集合和源版本，按块起点补齐标题路径并事务写入。
+    // Why：复用生成时的源快照和解析规则保持路径一致；源变化或任一块失败均拒绝发布。
     let mut end = 0;
     if chunks.is_empty() || chunks.iter().any(|chunk| {
         let valid = chunk.start == end && chunk.end <= source.2.len()
@@ -114,18 +114,24 @@ async fn store_chunks(
     }) || end != source.2.len() {
         return Err("块覆盖或维度无效，拒绝写入".into());
     }
+    let paths = crate::provider::embedding::markdown_heading_paths(&source.2);
+    let mut headings = paths.iter().peekable();
+    let mut title_path = "";
     let mut tx = pool.begin().await?;
     let revision: Option<i64> = sqlx::query_scalar("SELECT revision FROM memory_units WHERE uuid=$1::uuid AND status='active' FOR SHARE")
         .bind(&source.0).fetch_optional(&mut *tx).await?;
     if revision != Some(source.1) { return Err("源记忆已变化或不再 active，拒绝过期结果".into()); }
     for (index, chunk) in chunks.iter().enumerate() {
+        while headings.peek().is_some_and(|(offset, _)| *offset <= chunk.start) {
+            title_path = &headings.next().unwrap().1;
+        }
         let vector = format!("[{}]", chunk.vector.iter().map(f32::to_string).collect::<Vec<_>>().join(","));
         sqlx::query(r#"INSERT INTO memory_embeddings_next
             (memory_uuid,chunk_index,content_start_byte,content_end_byte,title_path,embedding,embedding_model,embedding_dimension,source_revision,embedded_at)
-            VALUES ($1::uuid,$2,$3,$4,'',$5::vector,$6,$7,$8,now())"#)
+            VALUES ($1::uuid,$2,$3,$4,$9,$5::vector,$6,$7,$8,now())"#)
             .bind(&source.0).bind(i32::try_from(index)?).bind(i64::try_from(chunk.start)?)
             .bind(i64::try_from(chunk.end)?).bind(vector).bind(&settings.model)
-            .bind(i32::try_from(settings.dimension)?).bind(source.1).execute(&mut *tx).await?;
+            .bind(i32::try_from(settings.dimension)?).bind(source.1).bind(title_path).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(())
