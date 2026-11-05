@@ -39,11 +39,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let cli_args = parse::parse_cli_args()?;
-    if cli_args.command.as_deref() == Some("prepare-embedding-next")
-        && cli_args.embedding_dimension.is_none()
-    {
-        return Err("请通过 --dimension <1..=2000> 输入目标维度，例如 --dimension 1024".into());
-    }
 
     // Why：server 是常驻 HTTP 模式，不应继续要求 profile 和 --args 这些单次 CLI 参数。
     if cli_args.command.as_deref() == Some("server") {

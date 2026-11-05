@@ -202,22 +202,45 @@ async fn embedding_for_approve(
     ))
 }
 
-// What：根据当前 memory 工作态生成一条 embedding。
-// Why：approve 与 backfill 必须共用状态读取和输入拼接，避免两条路径生成不同向量。
+// What：先登记源版本与处理策略目标，再生成携带该目标标记的完整块集合。
+// Why：模型失败也保留新目标，使旧策略任务无法在新请求之后覆盖有效索引。
 pub(crate) async fn generate_embedding_for_memory(
     database_url: &str,
     memory_uuid: &str,
     settings: &crate::config::EmbeddingSettings,
 ) -> Result<crate::psql::ApprovedEmbedding, ApiError> {
-    let source_state = load_current_memory_state(database_url, memory_uuid).await?;
-    let input = embedding_input_from_state(&source_state)?;
-    let values = crate::provider::embedding::request_embedding(settings, &input)
-        .await
+    static RECENT: tokio::sync::Mutex<std::collections::VecDeque<(std::time::Instant, u32)>> =
+        tokio::sync::Mutex::const_new(std::collections::VecDeque::new());
+    if settings.model != "BAAI/bge-m3" || !(1..=2000).contains(&settings.dimension) {
+        return Err(ApiError { code: "EMBEDDING_REFRESH_FAILED", message: "正常分块仅支持 BAAI/bge-m3，维度须为 1..=2000".into() });
+    }
+    let tokenizer = crate::provider::embedding::load_bge_m3_tokenizer(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("models/bge-m3/tokenizer.json"),
+    ).map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error))?;
+    let mut source_state = load_current_memory_state(database_url, memory_uuid).await?;
+    let (content, metadata) = embedding_input_from_state(&source_state)?;
+    let revision = source_state.pointer("/memory/revision").and_then(Value::as_i64)
+        .filter(|revision| *revision > 0)
+        .ok_or_else(|| ApiError { code: "EMBEDDING_REFRESH_FAILED", message: "源快照缺少有效版本".into() })?;
+    let policy = "metadata-v1:heading-path-v1:full-input-8192:tokenizer-21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08";
+    let pool = sqlx::postgres::PgPoolOptions::new().max_connections(1).connect(database_url).await
+        .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
+    let generation = crate::psql::register_embedding_target(
+        &pool, memory_uuid, revision, &settings.model, settings.dimension as i32, policy,
+    ).await.map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
+    pool.close().await;
+    let mut recent = RECENT.lock().await;
+    let chunks = crate::provider::embedding::generate_chunks(
+        content, &metadata, settings, &tokenizer, &mut recent, 2000, 500000,
+    ).await
         .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error))?;
+    source_state["embedding_target"] = serde_json::json!({
+        "generation": generation, "model": settings.model, "dimension": settings.dimension, "policy": policy,
+    });
     Ok(crate::psql::ApprovedEmbedding {
         model: settings.model.clone(),
         dimension: settings.dimension as i32,
-        values,
+        values: crate::provider::embedding::EmbeddingValues::Chunks(chunks),
         source_state: source_state.to_string(),
     })
 }
@@ -247,7 +270,9 @@ async fn load_current_memory_state(
     })
 }
 
-fn embedding_input_from_state(state: &Value) -> Result<String, ApiError> {
+fn embedding_input_from_state(state: &Value) -> Result<(&str, String), ApiError> {
+    // What：从同一源快照提取原始正文，以及标题、摘要、召回场景和关键词元信息。
+    // Why：正文必须独立保留原始字节，逐块生成的范围才能准确指向源文而不混入元信息。
     let state = state.as_object().ok_or(ApiError {
         code: "EMBEDDING_INPUT_MISSING",
         message: "memory state is invalid".to_string(),
@@ -256,7 +281,11 @@ fn embedding_input_from_state(state: &Value) -> Result<String, ApiError> {
         code: "EMBEDDING_INPUT_MISSING",
         message: "memory state.memory is missing".to_string(),
     })?;
-    let mut parts = ["title_norm", "summary", "content"]
+    let content = memory.get("content").and_then(Value::as_str).ok_or(ApiError {
+        code: "EMBEDDING_INPUT_MISSING",
+        message: "memory state.memory.content is missing or invalid".to_string(),
+    })?;
+    let mut parts = ["title_norm", "summary", "recall_when"]
         .into_iter()
         .filter_map(|field| memory.get(field)?.as_str())
         .map(str::trim)
@@ -273,11 +302,7 @@ fn embedding_input_from_state(state: &Value) -> Result<String, ApiError> {
             parts.push(keywords);
         }
     }
-    let input = parts.join("\n");
-    (!input.is_empty()).then_some(input).ok_or(ApiError {
-        code: "EMBEDDING_INPUT_MISSING",
-        message: "embedding input is empty".to_string(),
-    })
+    Ok((content, parts.join("\n")))
 }
 
 fn reviewed_change(change: &Value) -> Option<(&str, &str)> {

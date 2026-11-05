@@ -116,6 +116,10 @@ fn parse_cli_args_from(
         }
     }
 
+    if preparing && embedding_dimension.is_none() {
+        return Err("请通过 --dimension <1..=2000> 输入目标维度，例如 --dimension 1024".into());
+    }
+
     Ok(CliArgs {
         command,
         profile,

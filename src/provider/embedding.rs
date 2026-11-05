@@ -133,6 +133,55 @@ pub(crate) fn markdown_heading_paths(content: &str) -> Vec<(usize, String)> {
     paths
 }
 
+pub(crate) enum EmbeddingValues {
+    Legacy(Vec<f32>),
+    Chunks(Vec<GeneratedChunk>),
+}
+
+pub(crate) struct GeneratedChunk {
+    pub(crate) chunk_index: usize,
+    pub(crate) title_path: String,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) vector: Vec<f32>,
+}
+
+pub(crate) async fn generate_chunks(
+    content: &str,
+    metadata: &str,
+    settings: &crate::config::EmbeddingSettings,
+    tokenizer: &tokenizers::Tokenizer,
+    recent: &mut std::collections::VecDeque<(std::time::Instant, u32)>,
+    rpm: u32,
+    tpm: u32,
+) -> Result<Vec<GeneratedChunk>, Box<dyn std::error::Error + Send + Sync>> {
+    // What：按标题边界和完整预算逐块生成，返回序号、章节路径及正文范围。
+    // Why：结果保留发送时的路径快照，正常入口无需重新解析即可保存完整块索引。
+    let mut chunks = Vec::new();
+    let paths = markdown_heading_paths(content);
+    let mut headings = paths.iter().peekable();
+    let mut title_path = "";
+    let mut start = 0;
+    loop {
+        while headings.peek().is_some_and(|(offset, _)| *offset <= start) {
+            title_path = &headings.next().unwrap().1;
+        }
+        let section_end = headings.peek().map_or(content.len(), |(offset, _)| *offset);
+        let rest = &content[start..section_end];
+        let end = start + fitting_content_end(rest, title_path, metadata, tokenizer)?;
+        let input = format!("{}\n{}\n{}", metadata, title_path, &content[start..end]);
+        let tokens = u32::try_from(tokenizer.encode(input.as_str(), true)?.len())?;
+        let vector = request_limited_embedding_with_retry(settings, &input, recent, rpm, tpm, tokens).await?;
+        if vector.iter().any(|value| !value.is_finite()) || vector.iter().all(|value| *value == 0.0) {
+            return Err("embedding 向量包含非有限值或全零，拒绝写入".into());
+        }
+        chunks.push(GeneratedChunk { chunk_index: chunks.len(), title_path: title_path.to_owned(), start, end, vector });
+        start = end;
+        if start == content.len() { break; }
+    }
+    Ok(chunks)
+}
+
 pub(crate) struct ContentChunk<'a> {
     pub chunk_index: usize,
     pub content_start_byte: usize,

@@ -8,6 +8,7 @@ mod relations;
 pub(crate) mod search_index;
 
 pub use age_graph::rebuild_memory_graph;
+pub(crate) use changes::register_embedding_target;
 pub use changes::{
     ApprovedEmbedding, approve_change, count_changes, delete_expired_trash, delete_trash,
     get_change, get_trash, list_changes, list_embedding_backfill_memory_uuids, list_trash,

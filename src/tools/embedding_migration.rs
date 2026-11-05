@@ -1,15 +1,10 @@
 use std::collections::VecDeque;
 
-use crate::provider::embedding::{fitting_content_end, load_bge_m3_tokenizer, request_limited_embedding_with_retry};
+use crate::provider::embedding::{generate_chunks, load_bge_m3_tokenizer, GeneratedChunk};
 use sqlx::{Pool, Postgres};
 
 type MigrationError = Box<dyn std::error::Error + Send + Sync>;
 type Source = (String, i64, String, String);
-struct GeneratedChunk {
-    start: usize,
-    end: usize,
-    vector: Vec<f32>,
-}
 
 pub(super) async fn run(
     pool: &Pool<Postgres>,
@@ -43,7 +38,7 @@ pub(super) async fn run(
         "#).bind(cursor.as_deref()).fetch_optional(pool).await?;
         let Some(source) = source else { break; };
         cursor = Some(source.0.clone());
-        let result = match generate_chunks(&source, settings, &tokenizer, &mut recent, rpm, tpm).await {
+        let result = match generate_chunks(&source.2, &source.3, settings, &tokenizer, &mut recent, rpm, tpm).await {
             Ok(chunks) => store_chunks(pool, &source, settings, &chunks).await,
             Err(error) => Err(error),
         };
@@ -58,41 +53,6 @@ pub(super) async fn run(
     guard.commit().await?;
     if failed { return Err("部分记忆回填失败，未建索引或切换；重新执行将从头生成".into()); }
     Ok(())
-}
-
-async fn generate_chunks(
-    source: &Source,
-    settings: &crate::config::EmbeddingSettings,
-    tokenizer: &tokenizers::Tokenizer,
-    recent: &mut VecDeque<(std::time::Instant, u32)>,
-    rpm: u32,
-    tpm: u32,
-) -> Result<Vec<GeneratedChunk>, MigrationError> {
-    // What：按标题边界和完整请求预算切块，携带章节路径逐块限流请求。
-    // Why：避免跨章节使用错误路径；续块重复上下文也须计入预算，网络请求仍在锁源前完成。
-    let mut chunks = Vec::new();
-    let paths = crate::provider::embedding::markdown_heading_paths(&source.2);
-    let mut headings = paths.iter().peekable();
-    let mut title_path = "";
-    let mut start = 0;
-    loop {
-        while headings.peek().is_some_and(|(offset, _)| *offset <= start) {
-            title_path = &headings.next().unwrap().1;
-        }
-        let section_end = headings.peek().map_or(source.2.len(), |(offset, _)| *offset);
-        let rest = &source.2[start..section_end];
-        let end = start + fitting_content_end(rest, title_path, &source.3, tokenizer)?;
-        let input = format!("{}\n{}\n{}", source.3, title_path, &source.2[start..end]);
-        let tokens = u32::try_from(tokenizer.encode(input.as_str(), true)?.len())?;
-        let vector = request_limited_embedding_with_retry(settings, &input, recent, rpm, tpm, tokens).await?;
-        if vector.iter().any(|value| !value.is_finite()) || vector.iter().all(|value| *value == 0.0) {
-            return Err("embedding 向量包含非有限值或全零，拒绝写入".into());
-        }
-        chunks.push(GeneratedChunk { start, end, vector });
-        start = end;
-        if start == source.2.len() { break; }
-    }
-    Ok(chunks)
 }
 
 async fn store_chunks(
@@ -144,15 +104,15 @@ async fn store_rejects_invalid_chunk_coverage_before_database_access() {
     let mut settings = crate::config::EmbeddingSettings { api: String::new(), api_type: "embeddings".into(), key: String::new(), model: "BAAI/bge-m3".into(), dimension: 2, fallback_max_distance: 1.0, proxy: None };
     let source = (String::new(), 1, "中a".into(), String::new());
     for ranges in [vec![], vec![(0, 3)], vec![(1, 4)], vec![(0, 1), (1, 4)], vec![(0, 3), (2, 4)], vec![(0, 3), (4, 4)], vec![(0, 5)], vec![(0, 0), (0, 4)], vec![(3, 0), (0, 4)]] {
-        let chunks: Vec<_> = ranges.into_iter().map(|(start, end)| GeneratedChunk { start, end, vector: vec![0.1, 0.2] }).collect();
+        let chunks: Vec<_> = ranges.into_iter().map(|(start, end)| GeneratedChunk { chunk_index: 0, title_path: String::new(), start, end, vector: vec![0.1, 0.2] }).collect();
         assert!(store_chunks(&pool, &source, &settings, &chunks).await.unwrap_err().to_string().contains("块覆盖或维度无效"));
     }
-    let chunks = [GeneratedChunk { start: 0, end: 4, vector: vec![0.1, 0.2] }];
+    let chunks = [GeneratedChunk { chunk_index: 0, title_path: String::new(), start: 0, end: 4, vector: vec![0.1, 0.2] }];
     settings.dimension = 3;
     assert!(store_chunks(&pool, &source, &settings, &chunks).await.unwrap_err().to_string().contains("块覆盖或维度无效"));
     settings.dimension = 2;
     assert_eq!(store_chunks(&pool, &source, &settings, &chunks).await.unwrap_err().to_string(), sqlx::Error::PoolClosed.to_string());
     let empty = (String::new(), 1, String::new(), String::new());
-    let chunks = [GeneratedChunk { start: 0, end: 0, vector: vec![0.1, 0.2] }];
+    let chunks = [GeneratedChunk { chunk_index: 0, title_path: String::new(), start: 0, end: 0, vector: vec![0.1, 0.2] }];
     assert_eq!(store_chunks(&pool, &empty, &settings, &chunks).await.unwrap_err().to_string(), sqlx::Error::PoolClosed.to_string());
 }

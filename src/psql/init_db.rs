@@ -19,23 +19,15 @@ fn memory_db_label(profile: &str) -> String {
 }
 
 fn memory_embeddings_table_sql(embeddings_dimension: usize) -> String {
-    format!(
-        r#"
-        CREATE TABLE memory_embeddings (
-            memory_uuid UUID PRIMARY KEY REFERENCES memory_units(uuid) ON DELETE CASCADE,
-            embedding vector({embeddings_dimension}) NOT NULL,
-            embedding_model TEXT NOT NULL,
-            embedding_dimension INT NOT NULL CHECK (embedding_dimension = {embeddings_dimension}),
-            embedded_at TIMESTAMPTZ NOT NULL,
-            CHECK (embedding_model <> '')
-        );
-        "#
-    )
+    // What：正常索引表沿用块表契约，以记忆和块序号共同定位独立向量。
+    // Why：正常刷新与迁移需要相同的块字段和约束，复用定义避免两条链路结构漂移。
+    memory_embeddings_next_table_sql(embeddings_dimension)
+        .replacen("CREATE TABLE memory_embeddings_next", "CREATE TABLE memory_embeddings", 1)
 }
 
 fn memory_embeddings_next_table_sql(embeddings_dimension: usize) -> String {
-    // What：定义按记忆和块序号定位的独立向量记录，正文范围使用半开字节区间。
-    // Why：先在下一代表准备新维度块索引，保留旧表供回填期间查询及切换验证。
+    // What：定义独立块向量及发布时的策略和代号，正文范围使用半开字节区间。
+    // Why：发布标记随块保留，不受新目标登记影响；双 NULL 明确表示尚未记录策略的块。
     assert!(embeddings_dimension > 0, "embedding 维度必须为正数");
     format!(
         r#"
@@ -49,7 +41,10 @@ fn memory_embeddings_next_table_sql(embeddings_dimension: usize) -> String {
             embedding_model TEXT NOT NULL CHECK (embedding_model <> ''),
             embedding_dimension INT NOT NULL CHECK (embedding_dimension = {embeddings_dimension}),
             source_revision BIGINT NOT NULL CHECK (source_revision > 0),
+            embedding_policy TEXT CHECK (embedding_policy <> ''),
+            target_generation BIGINT CHECK (target_generation > 0),
             embedded_at TIMESTAMPTZ NOT NULL,
+            CHECK ((embedding_policy IS NULL) = (target_generation IS NULL)),
             PRIMARY KEY (memory_uuid, chunk_index)
         );
         "#
@@ -125,9 +120,11 @@ pub(crate) async fn init_profile_memory_tables(
 }
 
 async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
-    // Why：调试重建只清理当前目标库，避免影响未由 init_db 管理的数据库。
+    // What：调试重建清理当前目标库的源表、块表和生成目标表。
+    // Why：生成目标须先于源表删除，避免 CASCADE 仅移除外键却留下旧目标。
     let tables = [
         "memory_embeddings",
+        "memory_embedding_targets",
         "memory_keywords",
         "memory_search_index",
         "memory_relations",
@@ -190,17 +187,38 @@ async fn ensure_memory_embeddings_dimension(
     pool: &Pool<Postgres>,
     expected_dimension: usize,
 ) -> Result<(), sqlx::Error> {
-    // What：检查已有 memory_embeddings 的向量类型和维度约束是否匹配配置。
-    // Why：已有完整 schema 会跳过建表，必须在启动时阻止配置与数据库漂移到审批阶段才失败。
+    // What：检查已有块索引契约，并在显式初始化时补齐生成目标表。
+    // Why：仅兼容的块表才能接入目标登记；重复初始化不得重置已有任务目标。
     let expected_type = format!("vector({expected_dimension})");
     let check_pattern = format!("%embedding_dimension = {expected_dimension}%");
-    let Some((actual_type, check_ok)): Option<(String, bool)> = sqlx::query_as(
+    let Some((actual_type, check_ok, chunks_ok)): Option<(String, bool, bool)> = sqlx::query_as(
         r#"
         SELECT format_type(a.atttypid, a.atttypmod), EXISTS (
             SELECT 1 FROM pg_constraint
             WHERE conrelid = 'public.memory_embeddings'::regclass
                 AND contype = 'c'
                 AND pg_get_constraintdef(oid) LIKE $1
+        ), NOT EXISTS (
+            SELECT 1 FROM (VALUES
+                ('memory_uuid', 'uuid'), ('chunk_index', 'integer'),
+                ('content_start_byte', 'bigint'), ('content_end_byte', 'bigint'),
+                ('title_path', 'text'), ('embedding', $2), ('embedding_model', 'text'),
+                ('embedding_dimension', 'integer'), ('source_revision', 'bigint'),
+                ('embedding_policy', 'text'), ('target_generation', 'bigint'),
+                ('embedded_at', 'timestamp with time zone')
+            ) AS required(name, typ)
+            LEFT JOIN pg_attribute col ON col.attrelid = 'public.memory_embeddings'::regclass
+                AND col.attname = required.name AND NOT col.attisdropped
+            WHERE col.attnum IS NULL OR (NOT col.attnotnull
+                AND col.attname NOT IN ('embedding_policy', 'target_generation'))
+                OR format_type(col.atttypid, col.atttypmod) <> required.typ
+        ) AND EXISTS (
+            SELECT 1 FROM pg_constraint c
+            WHERE c.conrelid = 'public.memory_embeddings'::regclass AND c.contype = 'p'
+                AND c.conkey = ARRAY[
+                    (SELECT attnum FROM pg_attribute WHERE attrelid = c.conrelid AND attname = 'memory_uuid' AND NOT attisdropped),
+                    (SELECT attnum FROM pg_attribute WHERE attrelid = c.conrelid AND attname = 'chunk_index' AND NOT attisdropped)
+                ]
         )
         FROM pg_attribute a
         WHERE a.attrelid = 'public.memory_embeddings'::regclass
@@ -209,6 +227,7 @@ async fn ensure_memory_embeddings_dimension(
         "#,
     )
     .bind(check_pattern)
+    .bind(&expected_type)
     .fetch_optional(pool)
     .await?
     else {
@@ -216,11 +235,26 @@ async fn ensure_memory_embeddings_dimension(
             "memory_embeddings.embedding 列不存在，请先完成数据库迁移",
         ));
     };
+    if !chunks_ok {
+        return Err(sqlx::Error::protocol(
+            "memory_embeddings 不是匹配配置的块表结构，请先完成数据库迁移",
+        ));
+    }
     if actual_type != expected_type || !check_ok {
         return Err(sqlx::Error::protocol(format!(
             "memory_embeddings 维度不匹配：数据库为 {actual_type}，配置要求 {expected_type}；请先清空旧向量并迁移表结构",
         )));
     }
+    sqlx::query(r#"
+        CREATE TABLE IF NOT EXISTS memory_embedding_targets (
+            memory_uuid UUID PRIMARY KEY REFERENCES memory_units(uuid) ON DELETE CASCADE,
+            generation BIGINT GENERATED ALWAYS AS IDENTITY,
+            source_revision BIGINT NOT NULL CHECK (source_revision > 0),
+            embedding_model TEXT NOT NULL CHECK (embedding_model <> ''),
+            embedding_dimension INT NOT NULL CHECK (embedding_dimension BETWEEN 1 AND 2000),
+            embedding_policy TEXT NOT NULL CHECK (embedding_policy <> '')
+        )
+    "#).execute(pool).await?;
     Ok(())
 }
 
@@ -717,6 +751,8 @@ async fn cr_memory_embeddings_table(
     include_extension_setup: bool,
     embeddings_dimension: usize,
 ) -> Result<(), sqlx::Error> {
+    // What：在同一事务创建正常块表及每条记忆的当前生成目标。
+    // Why：目标独立于已发布块，策略切换后的生成失败也不能放行旧任务覆盖有效索引。
     // Why：vector 类型来自 pgvector 扩展，建 embedding 表前必须先让当前数据库启用它。
     if include_extension_setup {
         sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
@@ -725,10 +761,22 @@ async fn cr_memory_embeddings_table(
     }
 
     let create_sql = memory_embeddings_table_sql(embeddings_dimension);
-    let cr_memory_embeddings = sqlx::query(&create_sql).execute(pool).await;
+    let mut tx = pool.begin().await?;
+    let cr_memory_embeddings = sqlx::query(&create_sql).execute(&mut *tx).await;
 
     match cr_memory_embeddings {
         Ok(_) => {
+            sqlx::query(r#"
+                CREATE TABLE memory_embedding_targets (
+                    memory_uuid UUID PRIMARY KEY REFERENCES memory_units(uuid) ON DELETE CASCADE,
+                    generation BIGINT GENERATED ALWAYS AS IDENTITY,
+                    source_revision BIGINT NOT NULL CHECK (source_revision > 0),
+                    embedding_model TEXT NOT NULL CHECK (embedding_model <> ''),
+                    embedding_dimension INT NOT NULL CHECK (embedding_dimension BETWEEN 1 AND 2000),
+                    embedding_policy TEXT NOT NULL CHECK (embedding_policy <> '')
+                )
+            "#).execute(&mut *tx).await?;
+            tx.commit().await?;
             println!("memory_embeddings 表创建成功");
             Ok(())
         }

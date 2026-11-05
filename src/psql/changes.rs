@@ -140,8 +140,36 @@ LIMIT 50
 pub struct ApprovedEmbedding {
     pub model: String,
     pub dimension: i32,
-    pub values: Vec<f32>,
+    pub(crate) values: crate::provider::embedding::EmbeddingValues,
     pub source_state: String,
+}
+
+pub(crate) async fn register_embedding_target(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    memory_uuid: &str,
+    source_revision: i64,
+    model: &str,
+    dimension: i32,
+    policy: &str,
+) -> Result<i64, sqlx::Error> {
+    // What：锁定 active 源版本并登记当前生成目标，返回本次生成代号。
+    // Why：目标先于模型请求生效，新任务失败时也必须阻止旧策略任务回写。
+    sqlx::query_scalar(r#"
+        WITH source AS (
+            SELECT uuid, revision FROM memory_units
+            WHERE uuid = $1::uuid AND status = 'active' AND revision = $2 FOR UPDATE
+        )
+        INSERT INTO memory_embedding_targets
+            (memory_uuid, source_revision, embedding_model, embedding_dimension, embedding_policy)
+        SELECT uuid, revision, $3, $4, $5 FROM source
+        ON CONFLICT (memory_uuid) DO UPDATE SET generation = DEFAULT,
+            source_revision = EXCLUDED.source_revision, embedding_model = EXCLUDED.embedding_model,
+            embedding_dimension = EXCLUDED.embedding_dimension, embedding_policy = EXCLUDED.embedding_policy
+        RETURNING generation
+    "#)
+    .bind(memory_uuid).bind(source_revision).bind(model).bind(dimension).bind(policy)
+    .fetch_optional(pool).await?
+    .ok_or_else(|| sqlx::Error::protocol("生成目标源状态或版本已变化，拒绝登记"))
 }
 
 // Why：changes 列表只暴露审查摘要，详情里的 before/after 由 detail 接口单独返回。
@@ -382,8 +410,10 @@ pub async fn refresh_memory_embedding(
         .connect(database_url)
         .await?;
     let mut tx = pool.begin().await?;
+    // What：仅锁定仍为 active 的记忆，其他状态与已删除记忆一样跳过刷新。
+    // Why：源快照一致不能代表允许发布索引，必须在事务锁边界核验状态。
     let locked: Option<String> =
-        sqlx::query_scalar("SELECT uuid::text FROM memory_units WHERE uuid = $1::uuid FOR UPDATE")
+        sqlx::query_scalar("SELECT uuid::text FROM memory_units WHERE uuid = $1::uuid AND status = 'active' FOR UPDATE")
             .bind(memory_uuid)
             .fetch_optional(&mut *tx)
             .await?;
@@ -513,16 +543,33 @@ async fn validate_embedding_source(
     memory_uuid: &str,
     source_state: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // What：确认 embedding 来源和锁定后的当前工作态一致。
-    // Why：embedding API 调用期间可能发生 update，必须拒绝把旧向量写入新工作态。
+    // What：分别核验源快照与当前生成目标，并持有目标共享行锁直至事务结束。
+    // Why：独立目标标记不属于源状态；策略切换和旧任务晚完成仍须阻止发布。
     let current_state = super::memory_state(tx, memory_uuid).await?;
     let current = serde_json::from_str::<serde_json::Value>(&current_state)?;
-    let source = serde_json::from_str::<serde_json::Value>(source_state)?;
+    let mut source = serde_json::from_str::<serde_json::Value>(source_state)?;
+    let target = source.as_object_mut().and_then(|state| state.remove("embedding_target"));
     if current != source {
         return Err(std::io::Error::other(
             "APPROVE_CONFLICT: memory changed during embedding generation",
         )
         .into());
+    }
+    if let Some(target) = target {
+        let current_target: Option<String> = sqlx::query_scalar(r#"
+            SELECT jsonb_build_object('generation', generation, 'model', embedding_model,
+                'dimension', embedding_dimension, 'policy', embedding_policy)::text
+            FROM memory_embedding_targets
+            WHERE memory_uuid = $1::uuid AND source_revision = $2 FOR SHARE
+        "#).bind(memory_uuid).bind(source.pointer("/memory/revision").and_then(serde_json::Value::as_i64))
+            .fetch_optional(&mut **tx).await?;
+        let current_target = current_target.as_deref()
+            .map(serde_json::from_str::<serde_json::Value>).transpose()?;
+        if current_target.as_ref() != Some(&target) {
+            return Err(std::io::Error::other(
+                "APPROVE_CONFLICT: embedding target changed during generation",
+            ).into());
+        }
     }
     Ok(())
 }
@@ -532,12 +579,70 @@ async fn upsert_approved_embedding(
     memory_uuid: &str,
     embedding: ApprovedEmbedding,
 ) -> Result<(), sqlx::Error> {
-    // What：在 approve 同一事务内写入已生成的 memory embedding。
-    // Why：embedding 写入失败时必须回滚 approve 状态，避免 HTTP 报错但记忆已变 active。
+    // What：核验源与目标后，在原事务替换整套块并保存发布时的策略及代号。
+    // Why：块上的目标快照不会随新请求变化，失败时内容与策略标记共同回滚。
+    let values = match embedding.values {
+        crate::provider::embedding::EmbeddingValues::Legacy(values) => values,
+        crate::provider::embedding::EmbeddingValues::Chunks(chunks) => {
+            let source: serde_json::Value = serde_json::from_str(&embedding.source_state)
+                .map_err(|_| sqlx::Error::protocol("块索引源快照不是有效 JSON"))?;
+            let content = source.pointer("/memory/content").and_then(serde_json::Value::as_str)
+                .ok_or_else(|| sqlx::Error::protocol("块索引源快照缺少正文"))?;
+            let mut end = 0;
+            if !(1..=2000).contains(&embedding.dimension) || chunks.is_empty()
+                || chunks.iter().enumerate().any(|(index, chunk)| {
+                    let valid = chunk.chunk_index == index && chunk.start == end
+                        && chunk.end <= content.len()
+                        && (chunk.end > chunk.start || (content.is_empty() && chunks.len() == 1))
+                        && content.is_char_boundary(chunk.start) && content.is_char_boundary(chunk.end)
+                        && chunk.vector.len() == embedding.dimension as usize
+                        && chunk.vector.iter().all(|value| value.is_finite())
+                        && chunk.vector.iter().any(|value| *value != 0.0);
+                    end = chunk.end;
+                    !valid
+                }) || end != content.len()
+            {
+                return Err(sqlx::Error::protocol("块序号、正文覆盖或向量无效，拒绝写入"));
+            }
+            let source_revision = source.pointer("/memory/revision")
+                .and_then(serde_json::Value::as_i64).filter(|revision| *revision > 0)
+                .ok_or_else(|| sqlx::Error::protocol("块索引源快照缺少有效版本"))?;
+            let current_revision: Option<i64> = sqlx::query_scalar(
+                "SELECT revision FROM memory_units WHERE uuid = $1::uuid AND status = 'active' FOR UPDATE",
+            ).bind(memory_uuid).fetch_optional(&mut **tx).await?;
+            if current_revision != Some(source_revision) {
+                return Err(sqlx::Error::protocol("块索引源状态或版本已变化，拒绝写入"));
+            }
+            let target = source.get("embedding_target")
+                .ok_or_else(|| sqlx::Error::protocol("块索引缺少生成目标，拒绝写入"))?;
+            if target.get("model").and_then(serde_json::Value::as_str) != Some(embedding.model.as_str())
+                || target.get("dimension").and_then(serde_json::Value::as_i64) != Some(i64::from(embedding.dimension))
+            {
+                return Err(sqlx::Error::protocol("块索引载荷与生成目标模型或维度不符"));
+            }
+            validate_embedding_source(tx, memory_uuid, &embedding.source_state).await
+                .map_err(|error| sqlx::Error::protocol(error.to_string()))?;
+            sqlx::query("DELETE FROM memory_embeddings WHERE memory_uuid = $1::uuid")
+                .bind(memory_uuid).execute(&mut **tx).await?;
+            for chunk in chunks {
+                let vector = format!("[{}]", chunk.vector.iter().map(f32::to_string).collect::<Vec<_>>().join(","));
+                sqlx::query(r#"INSERT INTO memory_embeddings
+                    (memory_uuid,chunk_index,content_start_byte,content_end_byte,title_path,embedding,embedding_model,embedding_dimension,source_revision,embedding_policy,target_generation,embedded_at)
+                    VALUES ($1::uuid,$2,$3,$4,$5,$6::vector,$7,$8,$9,$10,$11,now())"#)
+                    .bind(memory_uuid).bind(i32::try_from(chunk.chunk_index).map_err(|error| sqlx::Error::protocol(error.to_string()))?)
+                    .bind(i64::try_from(chunk.start).map_err(|error| sqlx::Error::protocol(error.to_string()))?)
+                    .bind(i64::try_from(chunk.end).map_err(|error| sqlx::Error::protocol(error.to_string()))?)
+                    .bind(chunk.title_path).bind(vector).bind(&embedding.model).bind(embedding.dimension)
+                    .bind(source_revision).bind(target.get("policy").and_then(serde_json::Value::as_str))
+                    .bind(target.get("generation").and_then(serde_json::Value::as_i64))
+                    .execute(&mut **tx).await?;
+            }
+            return Ok(());
+        }
+    };
     let vector = format!(
         "[{}]",
-        embedding
-            .values
+        values
             .iter()
             .map(f32::to_string)
             .collect::<Vec<_>>()
