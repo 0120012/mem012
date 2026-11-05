@@ -68,14 +68,21 @@ async fn generate_chunks(
     rpm: u32,
     tpm: u32,
 ) -> Result<Vec<GeneratedChunk>, MigrationError> {
-    // What：按完整请求 token 预算切出原文前缀，逐块限流请求，不截断正文。
-    // Why：在锁源记忆之前完成网络请求，保留一条记忆的结果以便整体原子写入。
+    // What：按标题边界和完整请求预算切块，携带章节路径逐块限流请求。
+    // Why：避免跨章节使用错误路径；续块重复上下文也须计入预算，网络请求仍在锁源前完成。
     let mut chunks = Vec::new();
+    let paths = crate::provider::embedding::markdown_heading_paths(&source.2);
+    let mut headings = paths.iter().peekable();
+    let mut title_path = "";
     let mut start = 0;
     loop {
-        let rest = &source.2[start..];
-        let end = start + fitting_content_end(rest, "", &source.3, tokenizer)?;
-        let input = format!("{}\n\n{}", source.3, &source.2[start..end]);
+        while headings.peek().is_some_and(|(offset, _)| *offset <= start) {
+            title_path = &headings.next().unwrap().1;
+        }
+        let section_end = headings.peek().map_or(source.2.len(), |(offset, _)| *offset);
+        let rest = &source.2[start..section_end];
+        let end = start + fitting_content_end(rest, title_path, &source.3, tokenizer)?;
+        let input = format!("{}\n{}\n{}", source.3, title_path, &source.2[start..end]);
         let tokens = u32::try_from(tokenizer.encode(input.as_str(), true)?.len())?;
         let vector = request_limited_embedding_with_retry(settings, &input, recent, rpm, tpm, tokens).await?;
         if vector.iter().any(|value| !value.is_finite()) || vector.iter().all(|value| *value == 0.0) {
