@@ -94,8 +94,19 @@ async fn store_chunks(
     settings: &crate::config::EmbeddingSettings,
     chunks: &[GeneratedChunk],
 ) -> Result<(), MigrationError> {
-    // What：核对 active 状态和源 revision 后，在一个事务中写入整套块。
-    // Why：源内容在请求期间可能改变；任何块失败都回滚，避免发布不完整集合。
+    // What：校验块覆盖和维度，再核对 active 状态及源 revision，事务写入整套块。
+    // Why：拒绝缺失或无效块；源内容在请求期间可能改变，任何块失败都回滚。
+    let mut end = 0;
+    if chunks.is_empty() || chunks.iter().any(|chunk| {
+        let valid = chunk.start == end && chunk.end <= source.2.len()
+            && (chunk.end > chunk.start || (source.2.is_empty() && chunks.len() == 1))
+            && source.2.is_char_boundary(chunk.start) && source.2.is_char_boundary(chunk.end)
+            && chunk.vector.len() == settings.dimension;
+        end = chunk.end;
+        !valid
+    }) || end != source.2.len() {
+        return Err("块覆盖或维度无效，拒绝写入".into());
+    }
     let mut tx = pool.begin().await?;
     let revision: Option<i64> = sqlx::query_scalar("SELECT revision FROM memory_units WHERE uuid=$1::uuid AND status='active' FOR SHARE")
         .bind(&source.0).fetch_optional(&mut *tx).await?;
@@ -111,4 +122,24 @@ async fn store_chunks(
     }
     tx.commit().await?;
     Ok(())
+}
+
+#[tokio::test]
+async fn store_rejects_invalid_chunk_coverage_before_database_access() {
+    let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy("postgresql://unused:unused@127.0.0.1/unused").unwrap();
+    pool.close().await;
+    let mut settings = crate::config::EmbeddingSettings { api: String::new(), api_type: "embeddings".into(), key: String::new(), model: "BAAI/bge-m3".into(), dimension: 2, fallback_max_distance: 1.0, proxy: None };
+    let source = (String::new(), 1, "中a".into(), String::new());
+    for ranges in [vec![], vec![(0, 3)], vec![(1, 4)], vec![(0, 1), (1, 4)], vec![(0, 3), (2, 4)], vec![(0, 3), (4, 4)], vec![(0, 5)], vec![(0, 0), (0, 4)], vec![(3, 0), (0, 4)]] {
+        let chunks: Vec<_> = ranges.into_iter().map(|(start, end)| GeneratedChunk { start, end, vector: vec![0.1, 0.2] }).collect();
+        assert!(store_chunks(&pool, &source, &settings, &chunks).await.unwrap_err().to_string().contains("块覆盖或维度无效"));
+    }
+    let chunks = [GeneratedChunk { start: 0, end: 4, vector: vec![0.1, 0.2] }];
+    settings.dimension = 3;
+    assert!(store_chunks(&pool, &source, &settings, &chunks).await.unwrap_err().to_string().contains("块覆盖或维度无效"));
+    settings.dimension = 2;
+    assert_eq!(store_chunks(&pool, &source, &settings, &chunks).await.unwrap_err().to_string(), sqlx::Error::PoolClosed.to_string());
+    let empty = (String::new(), 1, String::new(), String::new());
+    let chunks = [GeneratedChunk { start: 0, end: 0, vector: vec![0.1, 0.2] }];
+    assert_eq!(store_chunks(&pool, &empty, &settings, &chunks).await.unwrap_err().to_string(), sqlx::Error::PoolClosed.to_string());
 }
