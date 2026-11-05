@@ -101,6 +101,38 @@ pub(crate) fn load_bge_m3_tokenizer(
     Ok(tokenizer)
 }
 
+pub(crate) fn markdown_heading_paths(content: &str) -> Vec<(usize, String)> {
+    // What：提取顶层 ATX 标题的原文字节起点与层级路径，跳过代码围栏。
+    // Why：后续按原文分块需保留章节上下文；围栏内的井号不能改变正文标题层级。
+    let (mut paths, mut headings, mut fence) = (Vec::new(), Vec::<(usize, &str)>::new(), None);
+    let mut offset = 0;
+    for line in content.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        let line = line.trim_end_matches(['\r', '\n']);
+        let text = line.trim_start_matches(' ');
+        if line.len() - text.len() > 3 { continue; }
+        let marker = text.as_bytes().first().copied().unwrap_or_default();
+        let run = text.bytes().take_while(|byte| *byte == marker).count();
+        if let Some((kind, length)) = fence {
+            if marker == kind && run >= length && text[run..].trim_matches([' ', '\t']).is_empty() { fence = None; }
+            continue;
+        }
+        if matches!(marker, b'`' | b'~') && run >= 3 {
+            if marker == b'~' || !text[run..].contains('`') { fence = Some((marker, run)); }
+            continue;
+        }
+        if marker != b'#' || run > 6 || !matches!(text.as_bytes().get(run), None | Some(b' ' | b'\t')) { continue; }
+        let title = text[run..].trim_matches([' ', '\t']);
+        let without_hashes = title.trim_end_matches('#');
+        let title = if without_hashes.is_empty() || without_hashes.ends_with([' ', '\t']) { without_hashes.trim_end_matches([' ', '\t']) } else { title };
+        headings.retain(|(level, _)| *level < run);
+        if !title.is_empty() { headings.push((run, title)); }
+        paths.push((start, headings.iter().map(|(_, title)| *title).collect::<Vec<_>>().join(" > ")));
+    }
+    paths
+}
+
 pub(crate) struct ContentChunk<'a> {
     pub chunk_index: usize,
     pub content_start_byte: usize,
