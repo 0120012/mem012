@@ -410,8 +410,9 @@ pub async fn refresh_memory_embedding(
         .connect(database_url)
         .await?;
     let mut tx = pool.begin().await?;
-    // What：仅锁定仍为 active 的记忆，其他状态与已删除记忆一样跳过刷新。
-    // Why：源快照一致不能代表允许发布索引，必须在事务锁边界核验状态。
+    // What：先取得当前向量表写锁，再锁定 active 源记忆并核验发布条件。
+    // Why：与换表按同一顺序取锁，避免持有源行锁后等待换表；提前取得写锁避免发布时升级锁。
+    sqlx::query("LOCK TABLE memory_embeddings IN ROW EXCLUSIVE MODE").execute(&mut *tx).await?;
     let locked: Option<String> =
         sqlx::query_scalar("SELECT uuid::text FROM memory_units WHERE uuid = $1::uuid AND status = 'active' FOR UPDATE")
             .bind(memory_uuid)
@@ -427,22 +428,27 @@ pub async fn refresh_memory_embedding(
     Ok(())
 }
 
-// What：查询当前配置下缺失或元数据不匹配的 active memory embedding UUID。
-// Why：缺行即待办且限制批量，交给后续 worker 分批处理，避免一次性加载历史积压。
+// What：按本库当前索引参数扫描缺失或模型/维度不匹配的 active 记忆。
+// Why：各库可独立换代，扫描持锁核对表身份，避免旧全局参数或在途换表制造错误待办。
 pub async fn list_embedding_backfill_memory_uuids(
     database_url: &str,
-    model: &str,
-    dimension: i32,
 ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(database_url)
         .await?;
+    let (table_oid, model, dimension, _) = super::read_current_embedding_config(&pool).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("LOCK TABLE memory_embeddings IN ACCESS SHARE MODE").execute(&mut *tx).await?;
+    let current_oid: i64 = sqlx::query_scalar("SELECT 'memory_embeddings'::regclass::oid::bigint")
+        .fetch_one(&mut *tx).await?;
+    if current_oid != table_oid { return Err("待办扫描前索引已切换，下轮重新扫描".into()); }
     let uuids = sqlx::query_scalar::<_, String>(LIST_EMBEDDING_BACKFILL_SQL)
         .bind(model)
         .bind(dimension)
-        .fetch_all(&pool)
+        .fetch_all(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(uuids)
 }
 
@@ -543,11 +549,21 @@ async fn validate_embedding_source(
     memory_uuid: &str,
     source_state: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // What：分别核验源快照与当前生成目标，并持有目标共享行锁直至事务结束。
-    // Why：独立目标标记不属于源状态；策略切换和旧任务晚完成仍须阻止发布。
+    // What：单独核验携带的表身份、源快照与生成目标，持锁至发布事务结束。
+    // Why：表身份和目标标记不属于源内容，换代后晚完成的任务不能发布到新表。
+    let mut source = serde_json::from_str::<serde_json::Value>(source_state)?;
+    if let Some(oid) = source.as_object_mut().and_then(|state| state.remove("embedding_table_oid")) {
+        let expected_oid = oid.as_i64().filter(|oid| *oid > 0)
+            .ok_or("APPROVE_CONFLICT: invalid embedding table identity")?;
+        sqlx::query("LOCK TABLE memory_embeddings IN ACCESS SHARE MODE").execute(&mut **tx).await?;
+        let current_oid: i64 = sqlx::query_scalar("SELECT 'memory_embeddings'::regclass::oid::bigint")
+            .fetch_one(&mut **tx).await?;
+        if current_oid != expected_oid {
+            return Err("APPROVE_CONFLICT: embedding table changed during generation".into());
+        }
+    }
     let current_state = super::memory_state(tx, memory_uuid).await?;
     let current = serde_json::from_str::<serde_json::Value>(&current_state)?;
-    let mut source = serde_json::from_str::<serde_json::Value>(source_state)?;
     let target = source.as_object_mut().and_then(|state| state.remove("embedding_target"));
     if current != source {
         return Err(std::io::Error::other(

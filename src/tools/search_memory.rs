@@ -330,8 +330,8 @@ async fn search_embedding_fallback(
     context: &super::ToolContext<'_>,
     plan: &SearchPlan,
 ) -> ToolResult<SearchOutcome> {
-    // What：在字面召回为 0 时，用语义输入 embedding 从已生成的向量索引召回候选。
-    // Why：embedding 只是保底路径，仍必须复用 memory_search_index 执行状态、字段和 terms 边界。
+    // What：字面召回为空时，按本库当前索引参数生成查询向量并召回候选。
+    // Why：模型请求不持表锁，查询阶段锁表并核对物理代，避免旧向量查询已切换的新表。
     let Some(settings) = context.embedding_settings else {
         return Ok(SearchOutcome {
             results: vec![],
@@ -339,8 +339,19 @@ async fn search_embedding_fallback(
             rerank: false,
         });
     };
+    let (table_oid, model, dimension, fallback_max_distance) =
+        crate::psql::read_current_embedding_config(context.profile_pool).await?;
+    let settings = crate::config::EmbeddingSettings {
+        api: settings.api.clone(),
+        api_type: settings.api_type.clone(),
+        key: settings.key.clone(),
+        model,
+        dimension: usize::try_from(dimension)?,
+        fallback_max_distance,
+        proxy: settings.proxy.clone(),
+    };
     let Ok(embedding) =
-        crate::provider::embedding::request_embedding(settings, &plan.semantic_query).await
+        crate::provider::embedding::request_embedding(&settings, &plan.semantic_query).await
     else {
         return Ok(SearchOutcome {
             results: vec![],
@@ -357,6 +368,13 @@ async fn search_embedding_fallback(
             .join(",")
     );
     let field_enabled = |name: &str| plan.fields.iter().any(|field| field == name);
+    let mut tx = context.profile_pool.begin().await?;
+    sqlx::query("LOCK TABLE memory_embeddings IN ACCESS SHARE MODE").execute(&mut *tx).await?;
+    let current_oid: i64 = sqlx::query_scalar("SELECT 'memory_embeddings'::regclass::oid::bigint")
+        .fetch_one(&mut *tx).await?;
+    if current_oid != table_oid {
+        return Err("查询向量生成期间索引已切换，请重试查询".into());
+    }
     let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Vec<String>, f32)>(
         r#"
         WITH scoped AS (
@@ -398,8 +416,9 @@ async fn search_embedding_fallback(
     .bind(settings.dimension as i32)
     .bind(plan.effective_limit)
     .bind(settings.fallback_max_distance)
-    .fetch_all(context.profile_pool)
+    .fetch_all(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(SearchOutcome {
         embedding_fallback: true,
         rerank: false,

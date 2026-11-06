@@ -68,8 +68,6 @@ async fn backfill_embeddings_once() {
     for (profile, database_url) in config.database_entries() {
         let uuids = match crate::psql::list_embedding_backfill_memory_uuids(
             database_url,
-            &settings.model,
-            settings.dimension as i32,
         )
         .await
         {

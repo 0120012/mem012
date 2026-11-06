@@ -155,8 +155,10 @@ pub(crate) async fn generate_chunks(
     rpm: u32,
     tpm: u32,
 ) -> Result<Vec<GeneratedChunk>, Box<dyn std::error::Error + Send + Sync>> {
-    // What：按标题边界和完整预算逐块生成，返回序号、章节路径及正文范围。
-    // Why：结果保留发送时的路径快照，正常入口无需重新解析即可保存完整块索引。
+    // What：保持分块预算与路径快照，最多四块并发请求并按原序返回完整集合。
+    // Why：有界并发减少网络等待；错误会丢弃在途任务，禁止返回半套块供发布。
+    use futures_util::{stream, StreamExt, TryStreamExt};
+    let recent = tokio::sync::Mutex::new(recent);
     let mut chunks = Vec::new();
     let paths = markdown_heading_paths(content);
     let mut headings = paths.iter().peekable();
@@ -171,14 +173,21 @@ pub(crate) async fn generate_chunks(
         let end = start + fitting_content_end(rest, title_path, metadata, tokenizer)?;
         let input = format!("{}\n{}\n{}", metadata, title_path, &content[start..end]);
         let tokens = u32::try_from(tokenizer.encode(input.as_str(), true)?.len())?;
-        let vector = request_limited_embedding_with_retry(settings, &input, recent, rpm, tpm, tokens).await?;
-        if vector.iter().any(|value| !value.is_finite()) || vector.iter().all(|value| *value == 0.0) {
-            return Err("embedding 向量包含非有限值或全零，拒绝写入".into());
-        }
-        chunks.push(GeneratedChunk { chunk_index: chunks.len(), title_path: title_path.to_owned(), start, end, vector });
+        let chunk_index = chunks.len();
+        let title_path = title_path.to_owned();
+        let recent = &recent;
+        chunks.push(async move {
+            let vector = request_shared_embedding_with_retry(settings, &input, recent, rpm, tpm, tokens).await?;
+            if vector.iter().any(|value| !value.is_finite()) || vector.iter().all(|value| *value == 0.0) {
+                return Err("embedding 向量包含非有限值或全零，拒绝写入".into());
+            }
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(GeneratedChunk { chunk_index, title_path, start, end, vector })
+        });
         start = end;
         if start == content.len() { break; }
     }
+    let mut chunks: Vec<GeneratedChunk> = stream::iter(chunks).buffer_unordered(4).try_collect().await?;
+    chunks.sort_by_key(|chunk| chunk.chunk_index);
     Ok(chunks)
 }
 
@@ -350,6 +359,28 @@ async fn request_chunk_with_retry(
         )
         .into()),
     }
+}
+
+pub(crate) async fn request_shared_embedding_with_retry(
+    settings: &crate::config::EmbeddingSettings, input: &str,
+    recent: &tokio::sync::Mutex<&mut std::collections::VecDeque<(std::time::Instant, u32)>>,
+    rpm: u32, tpm: u32, tokens: u32,
+) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
+    // What：并发块共用额度窗口，每次请求尝试先登记 RPM/TPM。
+    // Why：锁只保护额度检查，网络及退避在锁外等待，避免并发任务被重新串行化。
+    for attempt in 0..=EMBEDDING_RETRY_DELAYS.len() {
+        loop {
+            let wait = { let mut guard = recent.lock().await; embedding_request_wait(&mut guard, rpm, tpm, tokens, std::time::Instant::now())? };
+            if wait.is_zero() { break; }
+            tokio::time::sleep(wait).await;
+        }
+        match request_single_embedding(settings, input).await {
+            Ok(vector) => return Ok(vector),
+            Err(error) if is_permanent(error.as_ref()) || attempt == EMBEDDING_RETRY_DELAYS.len() => return Err(error),
+            Err(_) => tokio::time::sleep(Duration::from_secs(EMBEDDING_RETRY_DELAYS[attempt])).await,
+        }
+    }
+    unreachable!("最后一次尝试必定返回")
 }
 
 pub(crate) async fn request_limited_embedding_with_retry(

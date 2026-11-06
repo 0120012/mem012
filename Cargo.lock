@@ -1142,6 +1142,7 @@ dependencies = [
  "base64 0.22.1",
  "dotenvy",
  "ed25519-dalek",
+ "futures-util",
  "hmac",
  "log",
  "rand 0.8.6",

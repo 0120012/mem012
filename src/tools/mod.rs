@@ -51,8 +51,8 @@ pub async fn dispatch_prepare_embedding_next_command(
     rpm: u32,
     tpm: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // What：准备目标表并串行限流回填，逐条结果后输出本轮完成状态。
-    // Why：只有全部条目成功才报告回填完成，建索引及切换仍由后续阶段实现。
+    // What：分发下一代回填与切换，提交成功后输出当前表及生效参数。
+    // Why：逐条生成成功不等于升级完成，只有查询验证及切换事务提交后才报告完成。
     embedding_migration::run(pool, settings, rpm, tpm).await
         .map_err(|error| -> Box<dyn std::error::Error> { error })?;
     println!(
@@ -61,9 +61,12 @@ pub async fn dispatch_prepare_embedding_next_command(
             "state": "success",
             "tool": "prepare_embedding_next",
             "data": {
-                "table": "memory_embeddings_next",
+                "table": "memory_embeddings",
+                "previous_table": "memory_embeddings_previous",
+                "embedding_model": settings.model,
                 "embedding_dimension": settings.dimension,
-                "phase": "backfill_complete"
+                "fallback_max_distance": settings.fallback_max_distance,
+                "phase": "upgrade_complete"
             },
             "error": null
         })

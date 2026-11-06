@@ -202,8 +202,8 @@ async fn embedding_for_approve(
     ))
 }
 
-// What：先登记源版本与处理策略目标，再生成携带该目标标记的完整块集合。
-// Why：模型失败也保留新目标，使旧策略任务无法在新请求之后覆盖有效索引。
+// What：按本库参数登记生成目标，生成完整块集合并携带起始表 OID。
+// Why：发布端须识别生成期间的换表；目标标记仍阻止同一代内的旧任务覆盖。
 pub(crate) async fn generate_embedding_for_memory(
     database_url: &str,
     memory_uuid: &str,
@@ -211,6 +211,19 @@ pub(crate) async fn generate_embedding_for_memory(
 ) -> Result<crate::psql::ApprovedEmbedding, ApiError> {
     static RECENT: tokio::sync::Mutex<std::collections::VecDeque<(std::time::Instant, u32)>> =
         tokio::sync::Mutex::const_new(std::collections::VecDeque::new());
+    let pool = sqlx::postgres::PgPoolOptions::new().max_connections(1).connect(database_url).await
+        .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
+    let (table_oid, model, dimension, fallback_max_distance) = crate::psql::read_current_embedding_config(&pool).await
+        .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
+    let settings = crate::config::EmbeddingSettings {
+        api: settings.api.clone(),
+        api_type: settings.api_type.clone(),
+        key: settings.key.clone(),
+        model,
+        dimension: usize::try_from(dimension).map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?,
+        fallback_max_distance,
+        proxy: settings.proxy.clone(),
+    };
     if settings.model != "BAAI/bge-m3" || !(1..=2000).contains(&settings.dimension) {
         return Err(ApiError { code: "EMBEDDING_REFRESH_FAILED", message: "正常分块仅支持 BAAI/bge-m3，维度须为 1..=2000".into() });
     }
@@ -223,17 +236,16 @@ pub(crate) async fn generate_embedding_for_memory(
         .filter(|revision| *revision > 0)
         .ok_or_else(|| ApiError { code: "EMBEDDING_REFRESH_FAILED", message: "源快照缺少有效版本".into() })?;
     let policy = "metadata-v1:heading-path-v1:full-input-8192:tokenizer-21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08";
-    let pool = sqlx::postgres::PgPoolOptions::new().max_connections(1).connect(database_url).await
-        .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
     let generation = crate::psql::register_embedding_target(
         &pool, memory_uuid, revision, &settings.model, settings.dimension as i32, policy,
     ).await.map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
     pool.close().await;
     let mut recent = RECENT.lock().await;
     let chunks = crate::provider::embedding::generate_chunks(
-        content, &metadata, settings, &tokenizer, &mut recent, 2000, 500000,
+        content, &metadata, &settings, &tokenizer, &mut recent, 2000, 500000,
     ).await
         .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error))?;
+    source_state["embedding_table_oid"] = serde_json::json!(table_oid);
     source_state["embedding_target"] = serde_json::json!({
         "generation": generation, "model": settings.model, "dimension": settings.dimension, "policy": policy,
     });
