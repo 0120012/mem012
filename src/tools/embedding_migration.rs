@@ -23,8 +23,15 @@ pub(super) async fn run(
         .fetch_one(&mut *guard).await?;
     if !locked { return Err("当前 profile 已有迁移任务运行".into()); }
     crate::psql::ensure_memory_embedding_config_table(pool).await?;
-    crate::psql::create_memory_embeddings_next(pool, settings.dimension).await?;
+    crate::psql::create_memory_embeddings_next(pool, settings.dimension, &settings.model).await?;
     sqlx::query("LOCK TABLE memory_embeddings_next IN ACCESS SHARE MODE").execute(&mut *guard).await?;
+    // What：从下一代表按 UUID 去重定位倒数第二条，只有一条时取该条。
+    // Why：续跑包含回退起点，避免块数影响进度；补齐轮不受该起点限制。
+    let resume_start: Option<String> = sqlx::query_scalar(r#"
+        SELECT memory_uuid::text FROM (
+            SELECT DISTINCT memory_uuid FROM memory_embeddings_next ORDER BY memory_uuid DESC LIMIT 2
+        ) completed ORDER BY memory_uuid LIMIT 1
+    "#).fetch_optional(pool).await?;
     let mut recent = VecDeque::new();
     let mut repair: Option<Vec<String>> = None;
     for attempt in 0..2 {
@@ -37,8 +44,11 @@ pub(super) async fn run(
                         (SELECT string_agg(k.keyword_norm, ' ' ORDER BY k.keyword_norm)
                          FROM memory_keywords k WHERE k.memory_uuid = u.uuid))
                 FROM memory_units u WHERE u.status = 'active' AND ($1::uuid IS NULL OR u.uuid > $1::uuid)
+                  AND ($2::uuid IS NULL OR u.uuid >= $2::uuid)
                 ORDER BY u.uuid LIMIT 1
-            "#).bind(cursor.as_deref()).fetch_optional(pool).await?;
+            "#).bind(cursor.as_deref())
+                .bind(if attempt == 0 { resume_start.as_deref() } else { None })
+                .fetch_optional(pool).await?;
             let Some(source) = source else { break; };
             cursor = Some(source.0.clone());
             if repair.as_ref().is_some_and(|ids| !ids.contains(&source.0)) { continue; }
@@ -54,7 +64,7 @@ pub(super) async fn run(
                 }
             }
         }
-        if failed { return Err("部分记忆回填失败，未建索引或切换；重新执行将从头生成".into()); }
+        if failed { return Err("部分记忆回填失败，未建索引或切换；保留下一代结果，可重新执行恢复".into()); }
         let policy = "metadata-v1:heading-path-v1:full-input-8192:tokenizer-21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08";
         let (stale, source_versions): (Vec<String>, Vec<String>) = sqlx::query_as(r#"
             WITH blocks AS (
@@ -120,7 +130,7 @@ pub(super) async fn run(
                 "SELECT uuid::text || ':' || revision::text FROM memory_units WHERE status = 'active' ORDER BY uuid",
             ).fetch_all(&mut *guard).await?;
             if current_versions != source_versions {
-                return Err("复核后 active 源集合或版本已变化，拒绝切换；重新执行将从头生成".into());
+                return Err("复核后 active 源集合或版本已变化，拒绝切换；保留下一代结果，可重新执行恢复".into());
             }
             swap_next_table(&mut guard, settings).await?;
             let (model, dimension, threshold, table_dimension): (String, i32, f64, i32) = sqlx::query_as(r#"
@@ -147,9 +157,14 @@ pub(super) async fn run(
             guard.commit().await?;
             return Ok(());
         }
-        if attempt == 1 { return Err("补齐后全量复核仍不一致，拒绝完成；重新执行将从头生成".into()); }
-        sqlx::query("DELETE FROM memory_embeddings_next WHERE memory_uuid = ANY($1::text[]::uuid[])")
-            .bind(&stale).execute(pool).await?;
+        if attempt == 1 { return Err("补齐后全量复核仍不一致，拒绝完成；保留下一代结果，可重新执行恢复".into()); }
+        // What：补齐前只清理已停用记忆的块，active 记忆交由存储事务替换。
+        // Why：不能先删除 active 旧块，否则生成或写入失败后无法保留原结果。
+        sqlx::query(r#"
+            DELETE FROM memory_embeddings_next e USING memory_units u
+            WHERE e.memory_uuid = u.uuid AND u.status <> 'active'
+              AND e.memory_uuid = ANY($1::text[]::uuid[])
+        "#).bind(&stale).execute(pool).await?;
         repair = Some(stale);
     }
     unreachable!("两轮扫描均会返回或进入下一轮")
@@ -219,8 +234,8 @@ async fn store_chunks(
     settings: &crate::config::EmbeddingSettings,
     chunks: &[GeneratedChunk],
 ) -> Result<(), MigrationError> {
-    // What：核验块集合和源版本，事务写入标题路径及本轮生成策略。
-    // Why：策略随向量保存以供整轮复核；迁移没有正常任务代号，不伪造发布目标。
+    // What：核验块集合和源版本，在同一事务内替换该记忆全部块及生成策略。
+    // Why：续跑可能改变块数，删除与写入必须共同回滚，避免重复主键、残留旧块或半条结果。
     let policy = "metadata-v1:heading-path-v1:full-input-8192:tokenizer-21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08";
     let mut end = 0;
     if chunks.is_empty() || chunks.iter().any(|chunk| {
@@ -240,6 +255,8 @@ async fn store_chunks(
     let revision: Option<i64> = sqlx::query_scalar("SELECT revision FROM memory_units WHERE uuid=$1::uuid AND status='active' FOR SHARE")
         .bind(&source.0).fetch_optional(&mut *tx).await?;
     if revision != Some(source.1) { return Err("源记忆已变化或不再 active，拒绝过期结果".into()); }
+    sqlx::query("DELETE FROM memory_embeddings_next WHERE memory_uuid=$1::uuid")
+        .bind(&source.0).execute(&mut *tx).await?;
     for (index, chunk) in chunks.iter().enumerate() {
         while headings.peek().is_some_and(|(offset, _)| *offset <= chunk.start) {
             title_path = &headings.next().unwrap().1;
