@@ -51,75 +51,27 @@ fn memory_embeddings_next_table_sql(embeddings_dimension: usize) -> String {
     )
 }
 
-pub(crate) async fn ensure_memory_embedding_config_table(
-    pool: &Pool<Postgres>,
-) -> Result<(), sqlx::Error> {
-    // What：缺行时从当前表登记模型和物理维度，阈值沿用服务配置。
-    // Why：服务配置可能已指向新代，旧代身份必须取自旧表；已有登记不得被重跑覆盖。
-    let table: String = sqlx::query_scalar(r#"
-        SELECT quote_ident(n.nspname) || '.memory_embedding_config'
-        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.oid = 'memory_embeddings'::regclass
-    "#).fetch_one(pool).await?;
-    sqlx::query(&format!(r#"
-        CREATE TABLE IF NOT EXISTS {table} (
-            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
-            embedding_model TEXT NOT NULL CHECK (btrim(embedding_model) <> ''),
-            embedding_dimension INT NOT NULL CHECK (embedding_dimension BETWEEN 1 AND 2000),
-            fallback_max_distance DOUBLE PRECISION NOT NULL CHECK (fallback_max_distance BETWEEN 0 AND 2)
-        )
-    "#)).execute(pool).await?;
-    let mut tx = pool.begin().await?;
-    sqlx::query("LOCK TABLE memory_embeddings IN SHARE MODE").execute(&mut *tx).await?;
-    let exists: bool = sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM {table})")).fetch_one(&mut *tx).await?;
-    if exists { tx.commit().await?; return Ok(()); }
-    let settings = crate::config::load_config("config.toml")
-        .map_err(|_| sqlx::Error::protocol("无法读取当前 embedding 服务配置"))?
-        .embedding_settings().ok_or_else(|| sqlx::Error::protocol("当前 embedding 服务未配置，无法登记旧代"))?;
-    let (dimension, model): (i32, String) = sqlx::query_as(r#"
-        SELECT a.atttypmod, COALESCE((SELECT embedding_model FROM memory_embeddings LIMIT 1), $1)
-        FROM pg_attribute a WHERE a.attrelid = 'memory_embeddings'::regclass
-          AND a.attname = 'embedding' AND a.atttypid = 'vector'::regtype
-          AND a.atttypmod BETWEEN 1 AND 2000 AND NOT a.attisdropped
-    "#).bind(&settings.model).fetch_one(&mut *tx).await?;
-    let compatible: bool = sqlx::query_scalar(r#"
-        SELECT EXISTS (
-            SELECT 1 FROM pg_attribute WHERE attrelid = 'memory_embeddings'::regclass
-              AND attname = 'embedding' AND atttypid = 'vector'::regtype AND atttypmod = $1 AND NOT attisdropped
-        ) AND NOT EXISTS (
-            SELECT 1 FROM memory_embeddings WHERE embedding_model IS DISTINCT FROM $2
-              OR embedding_dimension IS DISTINCT FROM $1 OR vector_dims(embedding) IS DISTINCT FROM $1
-        )
-    "#).bind(dimension).bind(&model).fetch_one(&mut *tx).await?;
-    if !compatible { return Err(sqlx::Error::protocol("当前向量表的模型或维度不一致，拒绝登记旧代")); }
-    sqlx::query(&format!("INSERT INTO {table} (singleton, embedding_model, embedding_dimension, fallback_max_distance) VALUES (TRUE, $1, $2, $3)"))
-        .bind(&model).bind(dimension).bind(settings.fallback_max_distance).execute(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(())
-}
-
 pub(crate) async fn read_current_embedding_config(
     pool: &Pool<Postgres>,
 ) -> Result<(i64, String, i32, f64), sqlx::Error> {
-    // What：只读取得当前物理表 OID 及模型、维度、距离阈值。
-    // Why：短暂持锁保证表与参数一致，保留表身份供调用方识别生成期间的切换。
+    // What：读取文件中的向量配置，核验当前表模型及维度，并返回物理表 OID。
+    // Why：配置只保留一个来源；不匹配时拒绝读写，OID 用于阻止在途任务跨代发布。
+    let settings = crate::config::load_config("config.toml")
+        .map_err(|_| sqlx::Error::protocol("无法读取 embedding 服务配置"))?
+        .embedding_settings().ok_or_else(|| sqlx::Error::protocol("embedding 服务未配置"))?;
+    let dimension = i32::try_from(settings.dimension).map_err(|_| sqlx::Error::protocol("配置中的 embedding 维度超出范围"))?;
     let mut tx = pool.begin().await?;
     sqlx::query("LOCK TABLE memory_embeddings IN ACCESS SHARE MODE").execute(&mut *tx).await?;
-    let table: String = sqlx::query_scalar(r#"
-        SELECT quote_ident(n.nspname) || '.memory_embedding_config'
-        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.oid = 'memory_embeddings'::regclass
-    "#).fetch_one(&mut *tx).await?;
-    let config: (i64, String, i32, f64) = sqlx::query_as(&format!(r#"
-        SELECT 'memory_embeddings'::regclass::oid::bigint,
-               cfg.embedding_model, cfg.embedding_dimension, cfg.fallback_max_distance
-        FROM {table} cfg
-        JOIN pg_attribute a ON a.attrelid = 'memory_embeddings'::regclass
+    let config: (i64, String, i32, f64) = sqlx::query_as(r#"
+        SELECT 'memory_embeddings'::regclass::oid::bigint, $1::text, a.atttypmod, $3::double precision
+        FROM pg_attribute a WHERE a.attrelid = 'memory_embeddings'::regclass
           AND a.attname = 'embedding' AND a.atttypid = 'vector'::regtype AND NOT a.attisdropped
-          AND a.atttypmod = cfg.embedding_dimension
-        WHERE cfg.singleton
-    "#)).fetch_optional(&mut *tx).await?
-        .ok_or_else(|| sqlx::Error::protocol("当前索引配置缺失或与当前向量表维度不符"))?;
+          AND a.atttypmod = $2 AND a.atttypmod BETWEEN 1 AND 2000 AND btrim($1) <> '' AND $3 BETWEEN 0 AND 2
+          AND NOT EXISTS (SELECT 1 FROM memory_embeddings WHERE embedding_model IS DISTINCT FROM $1
+              OR embedding_dimension IS DISTINCT FROM $2 OR vector_dims(embedding) IS DISTINCT FROM $2)
+    "#).bind(&settings.model).bind(dimension).bind(settings.fallback_max_distance)
+        .fetch_optional(&mut *tx).await?
+        .ok_or_else(|| sqlx::Error::protocol("embedding 配置无效或与当前向量表不一致"))?;
     tx.commit().await?;
     Ok(config)
 }
@@ -129,8 +81,8 @@ pub async fn create_memory_embeddings_next(
     embeddings_dimension: usize,
     embedding_model: &str,
 ) -> Result<(), sqlx::Error> {
-    // What：按内容、物理维度和模型选择保留或重建同 schema 的下一代表。
-    // Why：仅复用同一生成目标的非空结果，防止同维度的不同模型向量混用。
+    // What：从当前向量表核验旧代身份，按内容、物理维度和模型准备下一代表。
+    // Why：配置只来自文件，旧代身份取已存向量；空表不伪造模型，同维度异模型不混用。
     if !(1..=2000).contains(&embeddings_dimension) {
         return Err(sqlx::Error::protocol("embedding 维度必须在 1..=2000 范围内"));
     }
@@ -141,14 +93,20 @@ pub async fn create_memory_embeddings_next(
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('mem012:memory_embeddings_next', 0))")
         .execute(&mut *tx).await?;
     sqlx::query("LOCK TABLE memory_embeddings IN ACCESS SHARE MODE").execute(&mut *tx).await?;
-    let (current_dimension, current_model, next_table): (i32, String, String) = sqlx::query_as(r#"
-        SELECT a.atttypmod, cfg.embedding_model, quote_ident(n.nspname) || '.memory_embeddings_next'
+    let (current_dimension, current_model, next_table): (i32, Option<String>, String) = sqlx::query_as(r#"
+        SELECT a.atttypmod, (SELECT embedding_model FROM memory_embeddings LIMIT 1),
+               quote_ident(n.nspname) || '.memory_embeddings_next'
         FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-        JOIN memory_embedding_config cfg ON cfg.singleton AND cfg.embedding_dimension = a.atttypmod
         WHERE c.oid = 'memory_embeddings'::regclass AND c.relkind = 'r' AND a.attname = 'embedding'
-          AND a.atttypid = 'vector'::regtype AND a.atttypmod > 0 AND NOT a.attisdropped
-    "#).fetch_one(&mut *tx).await?;
-    if current_dimension == embeddings_dimension as i32 && current_model == embedding_model {
+          AND a.atttypid = 'vector'::regtype AND a.atttypmod BETWEEN 1 AND 2000 AND NOT a.attisdropped
+          AND NOT EXISTS (SELECT 1 FROM memory_embeddings e WHERE e.embedding_model IS NULL
+              OR btrim(e.embedding_model) = ''
+              OR e.embedding_model IS DISTINCT FROM (SELECT embedding_model FROM memory_embeddings LIMIT 1)
+              OR e.embedding_dimension IS DISTINCT FROM a.atttypmod
+              OR vector_dims(e.embedding) IS DISTINCT FROM a.atttypmod)
+    "#).fetch_optional(&mut *tx).await?
+        .ok_or_else(|| sqlx::Error::protocol("当前向量表模型或维度不一致，拒绝准备下一代"))?;
+    if current_dimension == embeddings_dimension as i32 && current_model.as_deref() == Some(embedding_model) {
         return Err(sqlx::Error::protocol("目标模型和维度与当前代相同，无需换表"));
     }
     let next_dimension: Option<i32> = sqlx::query_scalar(r#"
@@ -217,10 +175,9 @@ pub(crate) async fn init_profile_memory_tables(
 }
 
 async fn reset_memory_tables(pool: &Pool<Postgres>, db_label: &str) -> Result<(), sqlx::Error> {
-    // What：调试重建清理本库源表、块表、生成目标及当前索引配置。
-    // Why：配置须随表重建，避免新表沿用旧代参数；生成目标须先于源表删除。
+    // What：调试重建清理本库源表、块表和生成目标。
+    // Why：生成目标引用源表，须先于源表删除；运行参数继续由文件配置提供。
     let tables = [
-        "memory_embedding_config",
         "memory_embeddings",
         "memory_embedding_targets",
         "memory_keywords",
@@ -247,11 +204,8 @@ async fn migrate_memory_tables(
     include_extension_setup: bool,
     embeddings_dimension: usize,
 ) -> Result<(), sqlx::Error> {
-    // What：初始化或迁移本库结构，并在启用 embedding 时确保当前索引配置已登记。
-    // Why：新旧库复用登记入口，未配置 embedding 时保持记忆本体初始化可用。
-    let embedding_configured = crate::config::load_config("config.toml")
-        .map_err(|_| sqlx::Error::protocol("无法读取初始化配置"))?
-        .embedding_settings().is_some();
+    // What：按调用方配置的维度初始化或检查本库结构。
+    // Why：配置参数由文件入口提供，结构初始化不再维护另一份库内配置。
     drop_memory_handles(pool).await?;
     if schema_ready(pool).await? {
         ensure_memory_embeddings_dimension(pool, embeddings_dimension).await?;
@@ -260,7 +214,6 @@ async fn migrate_memory_tables(
         ensure_memory_status_constraint(pool).await?;
         ensure_memory_change_identity(pool).await?;
         cr_memory_indexes(pool, db_label, include_extension_setup).await?;
-        if embedding_configured { ensure_memory_embedding_config_table(pool).await?; }
         if include_extension_setup {
             ensure_memory_graph(pool).await?;
         }
@@ -280,7 +233,6 @@ async fn migrate_memory_tables(
     ensure_memory_change_identity(pool).await?;
     cr_memory_graph_meta_table(pool).await?;
     cr_memory_indexes(pool, db_label, include_extension_setup).await?;
-    if embedding_configured { ensure_memory_embedding_config_table(pool).await?; }
     if include_extension_setup {
         ensure_memory_graph(pool).await?;
     }
@@ -291,17 +243,8 @@ async fn ensure_memory_embeddings_dimension(
     pool: &Pool<Postgres>,
     expected_dimension: usize,
 ) -> Result<(), sqlx::Error> {
-    // What：按本库当前配置检查块表契约，未登记配置时沿用初始化参数。
-    // Why：库内换代后全局维度可能仍旧，重复初始化不能因此拒绝当前表或重置已有目标。
-    let configured: bool = sqlx::query_scalar(r#"
-        SELECT to_regclass(quote_ident(n.nspname) || '.memory_embedding_config') IS NOT NULL
-        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.oid = 'memory_embeddings'::regclass
-    "#).fetch_one(pool).await?;
-    let expected_dimension = if configured {
-        usize::try_from(read_current_embedding_config(pool).await?.2)
-            .map_err(|_| sqlx::Error::protocol("本库当前索引维度无效"))?
-    } else { expected_dimension };
+    // What：按调用方传入的配置维度检查块表契约。
+    // Why：文件配置是唯一参数来源，已有表不匹配时必须拒绝初始化，避免隐式覆盖。
     let expected_type = format!("vector({expected_dimension})");
     let check_pattern = format!("%embedding_dimension = {expected_dimension}%");
     let Some((actual_type, check_ok, chunks_ok)): Option<(String, bool, bool)> = sqlx::query_as(

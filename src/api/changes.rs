@@ -215,6 +215,10 @@ pub(crate) async fn generate_embedding_for_memory(
         .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
     let (table_oid, model, dimension, fallback_max_distance) = crate::psql::read_current_embedding_config(&pool).await
         .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
+    // Why：模型或维度已变化时，不能将文件新参数与调用方旧 API 参数拼成请求。
+    if settings.model != model || i32::try_from(settings.dimension).ok() != Some(dimension) {
+        return Err(ApiError { code: "EMBEDDING_REFRESH_FAILED", message: "embedding 调用配置与文件配置不一致，请重新读取配置后重试".into() });
+    }
     let settings = crate::config::EmbeddingSettings {
         api: settings.api.clone(),
         api_type: settings.api_type.clone(),

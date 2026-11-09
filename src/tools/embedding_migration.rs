@@ -12,8 +12,8 @@ pub(super) async fn run(
     rpm: u32,
     tpm: u32,
 ) -> Result<(), MigrationError> {
-    // What：回填复核和建索引后，在切换事务内换表、更新配置并验证新代查询。
-    // Why：网络请求先于切换锁，验证失败与改名/配置共同回滚，不发布未经验证的新代。
+    // What：回填复核和建索引后，在切换事务内换表并验证新代结构和查询。
+    // Why：网络请求先于切换锁，验证失败与改名及槽位回收共同回滚，不发布未经验证的新代。
     if rpm == 0 || tpm == 0 || settings.model != "BAAI/bge-m3" {
         return Err("RPM/TPM 必须为正数；当前迁移分词仅支持 BAAI/bge-m3".into());
     }
@@ -22,7 +22,6 @@ pub(super) async fn run(
     let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended('mem012:embedding_migration', 0))")
         .fetch_one(&mut *guard).await?;
     if !locked { return Err("当前 profile 已有迁移任务运行".into()); }
-    crate::psql::ensure_memory_embedding_config_table(pool).await?;
     crate::psql::create_memory_embeddings_next(pool, settings.dimension, &settings.model).await?;
     sqlx::query("LOCK TABLE memory_embeddings_next IN ACCESS SHARE MODE").execute(&mut *guard).await?;
     // What：从下一代表按 UUID 去重定位倒数第二条，只有一条时取该条。
@@ -124,24 +123,21 @@ pub(super) async fn run(
                 .execute(&mut *guard).await?;
             sqlx::query("LOCK TABLE memory_units, memory_keywords, memory_search_index, memory_embedding_targets IN SHARE MODE NOWAIT")
                 .execute(&mut *guard).await?;
-            sqlx::query("LOCK TABLE memory_embedding_config IN EXCLUSIVE MODE NOWAIT")
-                .execute(&mut *guard).await?;
             let current_versions: Vec<String> = sqlx::query_scalar(
                 "SELECT uuid::text || ':' || revision::text FROM memory_units WHERE status = 'active' ORDER BY uuid",
             ).fetch_all(&mut *guard).await?;
             if current_versions != source_versions {
                 return Err("复核后 active 源集合或版本已变化，拒绝切换；保留下一代结果，可重新执行恢复".into());
             }
-            swap_next_table(&mut guard, settings).await?;
-            let (model, dimension, threshold, table_dimension): (String, i32, f64, i32) = sqlx::query_as(r#"
-                SELECT cfg.embedding_model, cfg.embedding_dimension, cfg.fallback_max_distance, a.atttypmod
-                FROM memory_embedding_config cfg JOIN pg_attribute a ON a.attrelid = 'memory_embeddings'::regclass
-                  AND a.attname = 'embedding' AND a.atttypid = 'vector'::regtype AND NOT a.attisdropped
-                WHERE cfg.singleton
-            "#).fetch_one(&mut *guard).await?;
-            if model != settings.model || dimension != settings.dimension as i32
-                || table_dimension != dimension || threshold != settings.fallback_max_distance {
-                return Err("换表后当前表与索引参数不一致，回滚切换".into());
+            swap_next_table(&mut guard).await?;
+            let valid: bool = sqlx::query_scalar(r#"
+                SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'memory_embeddings'::regclass
+                  AND attname = 'embedding' AND atttypid = 'vector'::regtype AND atttypmod = $2 AND NOT attisdropped)
+                  AND NOT EXISTS (SELECT 1 FROM memory_embeddings WHERE embedding_model IS DISTINCT FROM $1
+                    OR embedding_dimension IS DISTINCT FROM $2 OR vector_dims(embedding) IS DISTINCT FROM $2)
+            "#).bind(&settings.model).bind(settings.dimension as i32).fetch_one(&mut *guard).await?;
+            if !valid {
+                return Err("换表后当前表模型或维度不一致，回滚切换".into());
             }
             let vector = format!("[{}]", verification_vector.iter().map(f32::to_string).collect::<Vec<_>>().join(","));
             let distance: Option<f64> = sqlx::query_scalar(r#"
@@ -149,7 +145,7 @@ pub(super) async fn run(
                 JOIN memory_units u ON u.uuid = e.memory_uuid AND u.status = 'active'
                 WHERE e.embedding_model = $2 AND e.embedding_dimension = $3
                 ORDER BY e.embedding <=> $1::vector LIMIT 1
-            "#).bind(vector).bind(&settings.model).bind(dimension).fetch_optional(&mut *guard).await?;
+            "#).bind(vector).bind(&settings.model).bind(settings.dimension as i32).fetch_optional(&mut *guard).await?;
             if distance.is_some_and(|value| !value.is_finite())
                 || (distance.is_none() && !source_versions.is_empty()) {
                 return Err("换表后余弦查询结果异常，回滚切换".into());
@@ -199,10 +195,9 @@ async fn remove_previous_table(tx: &mut sqlx::Transaction<'_, Postgres>) -> Resu
 
 async fn swap_next_table(
     tx: &mut sqlx::Transaction<'_, Postgres>,
-    settings: &crate::config::EmbeddingSettings,
 ) -> Result<(), MigrationError> {
-    // What：在调用方已锁定的事务内协调上一代槽位、表名、索引名及当前配置。
-    // Why：切换不可自行提交，查询验证失败须连同槽位回收和参数变更一起回滚。
+    // What：在调用方已锁定的事务内协调上一代槽位、表名和索引名。
+    // Why：切换不可自行提交，查询验证失败须连同槽位回收和改名一起回滚。
     remove_previous_table(tx).await?;
     let schema: String = sqlx::query_scalar("SELECT quote_ident(n.nspname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = 'memory_embeddings'::regclass").fetch_one(&mut **tx).await?;
     let indexes: Vec<(String, String)> = sqlx::query_as(r#"
@@ -222,9 +217,6 @@ async fn swap_next_table(
         format!("ALTER INDEX {schema}.memory_embeddings_next_embedding_hnsw_idx RENAME TO memory_embeddings_embedding_hnsw_idx"),
         format!("COMMENT ON TABLE {schema}.memory_embeddings_previous IS 'mem012:embedding_previous'"),
     ] { sqlx::query(&query).execute(&mut **tx).await?; }
-    let changed = sqlx::query(&format!("UPDATE {schema}.memory_embedding_config SET embedding_model = $1, embedding_dimension = $2, fallback_max_distance = $3 WHERE singleton"))
-        .bind(&settings.model).bind(i32::try_from(settings.dimension)?).bind(settings.fallback_max_distance).execute(&mut **tx).await?;
-    if changed.rows_affected() != 1 { return Err("本库当前索引配置缺行，拒绝提交换表".into()); }
     Ok(())
 }
 

@@ -341,6 +341,10 @@ async fn search_embedding_fallback(
     };
     let (table_oid, model, dimension, fallback_max_distance) =
         crate::psql::read_current_embedding_config(context.profile_pool).await?;
+    // Why：不能将文件中的新模型或维度与调用方保留的旧 API 参数混用。
+    if settings.model != model || i32::try_from(settings.dimension).ok() != Some(dimension) {
+        return Err("embedding 调用配置与文件配置不一致，请重新读取配置后重试".into());
+    }
     let settings = crate::config::EmbeddingSettings {
         api: settings.api.clone(),
         api_type: settings.api_type.clone(),

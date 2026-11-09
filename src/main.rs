@@ -23,6 +23,10 @@ struct CliArgs {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
+    if raw_args == ["--version"] || raw_args == ["-v"] {
+        println!("mem012 {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let help_requested = tools::cli_help::agent_help_requested(&raw_args);
 
     // ==== 1. load config
