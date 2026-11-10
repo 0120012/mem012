@@ -1,5 +1,5 @@
 {
-  "description": "P0 合成离线标注样本，仅用于隔离评测。",
+  "description": "旧版 P0 检索标签与新版 search_memory 响应契约样本；均为隔离评测资料。",
   "profile": "embedding_eval",
   "annotation_status": "synthetic_labels_not_verified_by_search",
   "notes": [
@@ -10,7 +10,8 @@
     "未单列 expected_hard_match_memory_uuids 时，硬条件命中集合等于 expected_memory_uuids；低相关样本单独列出硬命中集合。",
     "pipeline_cases 的路由候选、模型状态和预算条件是后续隔离 harness 的受控输入，不是新增 API 参数或真实模型响应。",
     "pipeline_cases 中候选 UUID 可重复，以模拟多个块命中；最终每条记忆只输出一次。",
-    "expected_outcome 是行为标注：success 可有空结果，degraded 表示故障或预算不足，invalid_request 表示参数拒绝；不预设线上的错误码或响应结构。",
+    "既有 cases、pipeline_cases 和 invalid_request_cases 是旧版检索算法的历史标注，不作为新接口验收；request_contract_cases 和 response_contract_cases 是新接口的确定性验收样本。",
+    "response_contract_cases 中的召回候选和 rerank 状态是测试夹具，不是 search_memory 请求参数或真实模型响应。",
     "当前只验证样本数据；tokenizer、模型窗口、配额、旧流程基线和真实检索质量仍须单独核验。"
   ],
   "split_policy": {
@@ -735,6 +736,75 @@
     "expected_model_calls": {"embedding": 0, "rerank": 0},
     "expected_database_search_calls": 0
   },
+  "request_contract_cases": [
+    {"id": "minimal-request-valid-001", "params": {"query": "离线保存网页的方法", "terms": {"include": ["网页"]}}, "expected_valid": true},
+    {"id": "query-terms-combined-valid-001", "params": {"query": "把网页保存成 Markdown", "terms": {"include": ["Markdown"], "exclude": ["付费"]}, "filters": ["content"], "limit": 5}, "expected_valid": true},
+    {"id": "query-boolean-words-are-literal-001", "params": {"query": "A and B OR C", "terms": {"include": ["A"]}}, "expected_valid": true, "expected_query_text": "A and B OR C"},
+    {"id": "missing-query-invalid-001", "params": {"terms": {"include": ["网页"]}}, "expected_valid": false, "expected_rejected_before_retrieval": true},
+    {"id": "blank-query-invalid-001", "params": {"query": "  ", "terms": {"include": ["网页"]}}, "expected_valid": false, "expected_rejected_before_retrieval": true},
+    {"id": "missing-terms-invalid-001", "params": {"query": "离线保存网页的方法"}, "expected_valid": false, "expected_rejected_before_retrieval": true},
+    {"id": "empty-include-invalid-001", "params": {"query": "离线保存网页的方法", "terms": {"include": [], "exclude": []}}, "expected_valid": false, "expected_rejected_before_retrieval": true},
+    {"id": "exclude-only-invalid-001", "params": {"query": "离线保存网页的方法", "terms": {"include": [], "exclude": ["付费"]}}, "expected_valid": false, "expected_rejected_before_retrieval": true},
+    {"id": "unknown-parameter-invalid-001", "params": {"query": "离线保存网页的方法", "terms": {"include": ["网页"]}, "status": "active"}, "expected_valid": false, "expected_rejected_before_retrieval": true}
+  ],
+  "response_contract_cases": [
+    {
+      "id": "combined-rerank-success-001",
+      "request": {"tool": "search_memory", "params": {"query": "离线保存网页并转换为 Markdown", "terms": {"include": ["Markdown"]}, "limit": 2}},
+      "keyword_recall": {"outcome": "success", "memory_uuids": ["00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000019"]},
+      "vector_recall": {"outcome": "success", "memory_uuids": ["00000000-0000-4000-8000-000000000019", "00000000-0000-4000-8000-000000000020"]},
+      "rerank": {"outcome": "success", "ordered_memory_uuids": ["00000000-0000-4000-8000-000000000020", "00000000-0000-4000-8000-000000000019", "00000000-0000-4000-8000-000000000018"]},
+      "expected": {"state": "success", "error": null, "memory_uuids": ["00000000-0000-4000-8000-000000000020", "00000000-0000-4000-8000-000000000019"], "max_count": 2, "rerank_calls": 1, "strategy_present": false}
+    },
+    {
+      "id": "rerank-failure-interleave-limit-001",
+      "request": {"tool": "search_memory", "params": {"query": "离线保存网页并转换为 Markdown", "terms": {"include": ["Markdown"], "exclude": []}, "filters": ["content"], "limit": 3}},
+      "keyword_recall": {"outcome": "success", "memory_uuids": ["00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000019"]},
+      "vector_recall": {"outcome": "success", "memory_uuids": ["00000000-0000-4000-8000-000000000020", "00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000021"]},
+      "rerank": {"outcome": "failure"},
+      "expected": {"state": "success", "error": "rerank_failed", "memory_uuids": ["00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000020", "00000000-0000-4000-8000-000000000019"], "max_count": 3, "rerank_calls": 1, "strategy_present": false}
+    },
+    {
+      "id": "vector-recall-failure-partial-001",
+      "request": {"tool": "search_memory", "params": {"query": "离线保存网页并转换为 Markdown", "terms": {"include": ["Markdown"]}, "limit": 5}},
+      "keyword_recall": {"outcome": "success", "memory_uuids": ["00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000019"]},
+      "vector_recall": {"outcome": "failure"},
+      "rerank": {"outcome": "success", "ordered_memory_uuids": ["00000000-0000-4000-8000-000000000019", "00000000-0000-4000-8000-000000000018"]},
+      "expected": {"state": "success", "error": "vector_recall_failed", "memory_uuids": ["00000000-0000-4000-8000-000000000019", "00000000-0000-4000-8000-000000000018"], "max_count": 5, "rerank_calls": 1, "strategy_present": false}
+    },
+    {
+      "id": "multiple-failures-error-array-001",
+      "request": {"tool": "search_memory", "params": {"query": "离线保存网页并转换为 Markdown", "terms": {"include": ["Markdown"]}, "limit": 5}},
+      "keyword_recall": {"outcome": "success", "memory_uuids": ["00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000019"]},
+      "vector_recall": {"outcome": "failure"},
+      "rerank": {"outcome": "failure"},
+      "expected": {"state": "success", "error": ["vector_recall_failed", "rerank_failed"], "memory_uuids": ["00000000-0000-4000-8000-000000000018", "00000000-0000-4000-8000-000000000019"], "max_count": 5, "rerank_calls": 1, "strategy_present": false}
+    },
+    {
+      "id": "both-recall-fail-001",
+      "request": {"tool": "search_memory", "params": {"query": "离线保存网页并转换为 Markdown", "terms": {"include": ["Markdown"]}, "limit": 5}},
+      "keyword_recall": {"outcome": "failure"},
+      "vector_recall": {"outcome": "failure"},
+      "rerank": {"outcome": "not_called"},
+      "expected": {"state": "error", "error": ["keyword_recall_failed", "vector_recall_failed"], "memory_uuids": [], "max_count": 0, "rerank_calls": 0, "strategy_present": false}
+    },
+    {
+      "id": "single-candidate-skips-rerank-001",
+      "request": {"tool": "search_memory", "params": {"query": "离线保存网页并转换为 Markdown", "terms": {"include": ["Markdown"]}, "limit": 5}},
+      "keyword_recall": {"outcome": "success", "memory_uuids": ["00000000-0000-4000-8000-000000000018"]},
+      "vector_recall": {"outcome": "success", "memory_uuids": []},
+      "rerank": {"outcome": "not_called"},
+      "expected": {"state": "success", "error": null, "memory_uuids": ["00000000-0000-4000-8000-000000000018"], "max_count": 1, "rerank_calls": 0, "strategy_present": false}
+    },
+    {
+      "id": "empty-recall-skips-rerank-001",
+      "request": {"tool": "search_memory", "params": {"query": "离线保存网页并转换为 Markdown", "terms": {"include": ["Markdown"]}, "limit": 5}},
+      "keyword_recall": {"outcome": "success", "memory_uuids": []},
+      "vector_recall": {"outcome": "success", "memory_uuids": []},
+      "rerank": {"outcome": "not_called"},
+      "expected": {"state": "success", "error": null, "memory_uuids": [], "max_count": 0, "rerank_calls": 0, "strategy_present": false}
+    }
+  ],
   "coverage": {
     "Trending 项目细节": ["trending-project-detail-001"],
     "skill/prompt 末尾": ["skill-final-clause-001"],
@@ -747,10 +817,12 @@
     "排除与字段范围": ["cross-chunk-exclude-001", "exclude-outside-fields-001", "all-fields-exclude-001", "field-restriction-001"],
     "profile 隔离": ["profile-local-001", "profile-other-001", "profile-foreign-only-001", "profile-foreign-positive-001"],
     "状态边界": ["state-boundary-001", "status-not-text-001"],
+    "新版请求契约": ["minimal-request-valid-001", "query-terms-combined-valid-001", "query-boolean-words-are-literal-001", "missing-query-invalid-001", "blank-query-invalid-001", "missing-terms-invalid-001", "empty-include-invalid-001", "exclude-only-invalid-001", "unknown-parameter-invalid-001"],
     "按记忆去重与最后 limit": ["duplicate-identity-001", "parallel-dedup-and-limit-001"],
     "证据合并与预算不足": ["overlapping-evidence-001", "cross-field-evidence-budget-001", "incomplete-evidence-budget-001"],
     "续块、长标题、代码围栏与尾部": ["long-section-continuation-001", "long-heading-budget-001", "code-fence-boundary-001", "tail-coverage-001", "tail-after-old-cap-001", "code-fence-detail-001"],
-    "单路与重排失败": ["parallel-dedup-and-limit-001", "rerank-unusable-001", "vector-only-rerank-failure-001", "exact-name-rerank-failure-001"],
+    "旧版单路与重排失败标签": ["parallel-dedup-and-limit-001", "rerank-unusable-001", "vector-only-rerank-failure-001", "exact-name-rerank-failure-001"],
+    "新版响应契约": ["combined-rerank-success-001", "rerank-failure-interleave-limit-001", "vector-recall-failure-partial-001", "multiple-failures-error-array-001", "both-recall-fail-001", "single-candidate-skips-rerank-001", "empty-recall-skips-rerank-001"],
     "高级参数与纯过滤": ["exclude-only-001", "include-normalization-001", "query-only", "both-empty", "unknown-filter"]
   }
 }

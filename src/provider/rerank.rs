@@ -28,6 +28,25 @@ pub struct RerankResult {
     pub score: f32,
 }
 
+pub(crate) fn load_rerank_tokenizer(model: &str) -> ProviderResult<tokenizers::Tokenizer> {
+    // What：加载已冻结模型的实际 tokenizer，并禁用隐式截断。
+    // Why：必须按 query/document 完整输入计数，未知模型不能借用其他分词器。
+    use sha2::{Digest, Sha256};
+    if !matches!(model, "BAAI/bge-reranker-v2-m3" | "bge-reranker-v2-m3") {
+        return Err(format!("尚未冻结 rerank 模型的 tokenizer: {model}").into());
+    }
+    let data = include_bytes!("../../models/bge-reranker-v2-m3/tokenizer.json");
+    if format!("{:x}", Sha256::digest(&data))
+        != "69564b696052886ed0ac63fa393e928384e0f8caada38c1f4864a9bfbf379c15"
+    {
+        return Err("rerank tokenizer SHA256 校验失败".into());
+    }
+    let mut tokenizer = tokenizers::Tokenizer::from_bytes(&data)?;
+    tokenizer.with_truncation(None)?;
+    tokenizer.with_padding(None);
+    Ok(tokenizer)
+}
+
 #[derive(Deserialize)]
 struct RerankResponse {
     results: Vec<RerankResponseItem>,
@@ -70,15 +89,25 @@ fn normalize_results(
     results: Vec<RerankResponseItem>,
     document_count: usize,
 ) -> ProviderResult<Vec<RerankResult>> {
+    // What：要求每份文档恰好对应一个有限评分。
+    // Why：部分、重复或畸形评分不能冒充一次完整成功的重排。
+    if results.len() != document_count {
+        return Err("rerank 评分数量与文档数量不一致".into());
+    }
     let mut output = Vec::with_capacity(results.len());
+    let mut seen = std::collections::HashSet::new();
     for result in results {
         if result.index >= document_count {
             return Err(format!("rerank 返回越界 index: {}", result.index).into());
+        }
+        if !seen.insert(result.index) || !result.relevance_score.is_finite() {
+            return Err("rerank 返回重复 index 或非有限评分".into());
         }
         output.push(RerankResult {
             index: result.index,
             score: result.relevance_score,
         });
     }
+    output.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.index.cmp(&b.index)));
     Ok(output)
 }

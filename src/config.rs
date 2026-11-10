@@ -185,7 +185,9 @@ impl Config {
                 .rerank
                 .rerank_model
                 .as_deref()
-                .unwrap_or("Qwen3-Reranker-4B")
+                // What：缺省使用已有冻结 tokenizer 的模型。
+                // Why：默认值必须与预算校验及配置示例一致，避免合法配置必然回退。
+                .unwrap_or("BAAI/bge-reranker-v2-m3")
                 .to_string(),
             proxy: self.provider_proxy(),
         })

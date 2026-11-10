@@ -5,10 +5,10 @@
 index_list = ["init", "core", "user", "agent", "project", "github", "ops", "book"]
 
 [rerank]
-enabled = false # 是否启用 rerank 模型重排；关闭时只按基础召回分排序。
+enabled = false # 是否启用 rerank；关闭时聚合候选按召回顺序回退并标记 rerank_failed。
 rerank_api = "local" # local 表示本地 rerank；否则填写 rerank API base URL 或完整 endpoint。
 rerank_api_type = "rerank"
-rerank_model = "Qwen/Qwen3-Reranker-4B"
+rerank_model = "BAAI/bge-reranker-v2-m3" # 当前已冻结实际 tokenizer 和 8192 token 窗口的模型。
 rerank_key = "" # rerank_api = local 时可为空。
 
 [embeddings]

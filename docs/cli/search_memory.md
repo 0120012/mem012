@@ -1,406 +1,68 @@
 # Search Memory
 
-## 1. 工具定位
+更新：2026-11-10。本文描述已实现的 `search_memory` 聚合接口；实际入口版本及验收范围见 [验收记录](../SEARCH_MEMORY_VALIDATION.md)。
 
-`search_memory` 用于从记忆库中搜索候选记忆，返回可确认的 `memory_uuid`。
+## 用途
 
-它只负责找候选，不负责读取、更新、删除或审核：
+`search_memory` 并行从关键词和向量两路找候选，合并去重后统一 rerank，返回不超过 `limit` 条结果。它只返回候选，不读取、更新、删除或审核记忆；需要确认完整内容时调用 `read_memory`。
 
-```text
-search_memory    = 找候选 memory_uuid
-read_memory      = 读取目标记忆完整内容
-read_memory_hash = 更新前读取 revision 和字段 hash
-update_memory_*  = 带 expected_revision + expected_*_hash 写入变更
-delete_memory    = 删除前仍依赖明确 memory_uuid + expected_revision
-```
+搜索始终限定当前 profile 和当前工作态，允许 `active`、`pending`，排除 `trashed`。
 
-`search_memory` 不写入 `memory_units`、`memory_keywords`、`memory_changes`，不刷新 embedding，也不标记 graph dirty。
-
-## 2. 高级筛选
-
-基础搜索类似 GitHub 的默认搜索：只给 `query`，系统在全部可搜索内容里做模糊召回。
-
-高级搜索类似 GitHub 左侧筛选面板：用 `terms` 表达硬性关键词条件，再用 `filters` 收窄字段范围。
-
-可用筛选：
-
-```text
-filters      = title / summary / keywords / content / recall_when 的数组
-```
-
-字段映射：
-
-```text
-title       = memory_units.title_norm
-summary     = memory_units.summary
-keywords    = memory_keywords.keyword_norm
-content     = memory_units.content
-recall_when = memory_units.recall_when
-category    = memory_units.category
-```
-
-## 3. 状态边界
-
-默认用途是帮助 Agent 找到可读、可改、可删的候选记忆：
-
-```text
-不开放状态搜索
-不开放状态筛选
-永远排除 trashed
-```
-
-结果可以返回 `status` 给 Agent 展示，但请求参数不能按状态过滤，也不能搜索状态文本。
-
-## 4. 基础搜索
-
-基础搜索是模糊搜索，只接受 `query` 和可选 `limit`：
+## 请求
 
 ```json
 {
   "tool": "search_memory",
   "params": {
-    "query": "尼采深渊凝视",
-    "limit": 8
+    "query": "把网页保存成 Markdown 的离线方法",
+    "terms": { "include": ["Markdown"], "exclude": ["付费"] },
+    "filters": ["content"],
+    "limit": 5
   }
 }
 ```
 
-规则：
+只接受 `query`、`terms`、`filters` 和 `limit`：
 
-- `query` 必填，去除首尾空白后不能为空。
-- `limit` 可选；不传时使用 `[search].default_limit`。
-- `limit` 必须大于 0。
-- `limit` 超过 `[search].default_limit` 时，按 `[search].default_limit` 截断。
-- 不传 `filters` 和 `terms` 时执行基础搜索。
-- 结果永远排除 `trashed`。
-- 字面搜索结果为 0 时，才允许 embedding 保底补候选。
-- 如果 `[rerank].enabled = true`，返回前对候选集重排。
+- `query` 必填，trim 后不能为空；保留自然语言，供向量召回和 rerank 使用。
+- `terms.include` 必填且至少有一个非空字符串；`terms.exclude` 可省略，默认空数组。两者只约束关键词召回路，按不区分大小写的子串匹配；所有 include 都要命中，exclude 任一命中即排除该关键词候选。
+- `filters` 可省略或传空数组，默认覆盖 `title`、`summary`、`keywords`、`content`、`recall_when`；也可传这些字段的子集。
+- `limit` 可省略或为 null，使用后端默认值；否则必须为正整数，超过后端上限时按上限返回。
+- 未知字段、非法类型、空白 query/关键词和未知 filter 均拒绝；参数错误发生在检索和模型请求前。
 
-## 5. 高级搜索
+## 搜索约定
 
-高级搜索用于表达明确的字面约束和搜索范围。高级搜索不接受 `query`；`terms` 表示硬性关键词条件；`filters` 表示搜索字段范围。
+- 关键词路根据 `terms` 独立召回；向量路根据 `query` 独立召回，向量候选不必包含 `terms.include`。
+- 两路候选按 `memory_uuid` 去重后统一送入 rerank。rerank 成功按 rerank 排序，之后应用 `limit`。
+- 去重后少于两条候选时跳过 rerank；零条返回空结果，单条直接返回。
+- rerank 失败时保留两路合并候选，按“关键词第 1 条、向量第 1 条、关键词第 2 条、向量第 2 条”的次序交替回退，跳过重复 UUID，最后应用 `limit`。回退结果不携带伪装成 rerank 分数的原始分数。
 
-关键词逻辑必须写入 `terms`。
+## 响应
 
-```json
-{
-  "tool": "search_memory",
-  "params": {
-    "limit": 8,
-    "terms": {
-      "include": ["微信读书", "skill"],
-      "exclude": ["失败", "报错"]
-    },
-    "filters": ["title", "content"]
-  }
-}
-```
+正常结果和正常空结果都使用 `state="success"`、`error=null`。`data.count` 始终等于结果条数；响应不再包含 `data.strategy`、`embedding_fallback` 或 `rerank`。
 
-参数：
-
-```text
-terms             = 硬性关键词条件；高级搜索必填
-limit             = 返回条数；不传或超过 [search].default_limit 时使用 [search].default_limit
-filters           = 搜索字段数组；高级搜索必填，可以为空数组
-```
-
-高级搜索触发规则：
-
-```text
-传 terms       = 必须同时传 filters
-传 filters     = 必须同时传 terms
-terms 双数组    = include、exclude 必须同时出现
-terms 全空      = 拒绝；include、exclude 至少一个数组必须非空
-filters = []   = 允许，表示不限制搜索字段
-```
-
-可用 `filters`：
-
-```text
-title / summary / keywords / content / recall_when
-```
-
-可用 `terms`：
-
-```text
-include  = 至少包含 include 中的一个关键词
-exclude  = 必须全部不包含 exclude 中的关键词
-```
-
-筛选语义：
-
-```text
-terms.include = ["微信读书", "skill"]
-表示至少包含 include 中的一个关键词。
-
-terms.exclude = ["失败", "报错"]
-表示必须全部不包含 exclude 中的关键词。
-
-filters = ["title", "content"]
-表示 terms 只在 title 或 content 中匹配。
-
-filters = []
-表示不限制字段，terms 在 title、summary、keywords、content、recall_when 中匹配。
-
-terms.include = [] 且 terms.exclude = []
-不允许；两组里至少一个数组必须非空。
-
-terms.include 数组内多个值使用 OR。
-terms.exclude 数组内多个值使用 AND NOT。
-filters 数组内多个值使用 OR。
-```
-
-高级搜索不接受 `query`。需要语义输入时，系统用 `terms.include` 拼接生成；`terms.exclude` 只做排除条件，不参与 embedding 或 rerank 输入。
-
-高级搜索不支持 all、exact phrase、hashtag、date 等条件。
-
-`filters` 不能包含 `status`、`category`、`embedding` 或 `rerank`。CLI 搜索不开放状态和分类筛选，仍然固定排除 `trashed`。
-
-## 6. Embedding 保底
-
-embedding 只做保底召回。
-
-使用时机：
-
-```text
-基础搜索 query 非空，或高级搜索 terms.include 非空
-字面搜索结果为 0
-```
-
-配置入口：
-
-```toml
-[embeddings]
-embeddings_api = "local"
-embeddings_model = "BAAI/bge-m3"
-embeddings_dimension = 1024
-embeddings_key = ""
-```
-
-规则：
-
-- `embeddings_api = "local"` 表示本地 embedding 入口。
-- `embeddings_api` 不是 `local` 时必须填写 URL。
-- `embeddings_dimension` 必须和 `memory_embeddings.embedding` 的 pgvector 维度一致。
-- `embeddings_key` 在 `local` 模式下可为空。
-- embedding 保底是否触发只看 `strategy.embedding_fallback`。
-- embedding 命中不能返回 `trashed`。
-- embedding 命中不能直接触发 read/update/delete。
-- 字面搜索有结果时不混入 embedding 候选。
-- 高级搜索使用 `terms.include` 派生语义输入，仍必须遵守 `terms.exclude` 和 `trashed` 边界。
-
-## 7. Rerank 重排
-
-rerank 只对已经召回的候选集排序，不扩大召回范围。
-
-配置入口：
-
-```toml
-[rerank]
-enabled = false
-rerank_api = "local"
-rerank_model = "Qwen/Qwen3-Reranker-4B"
-rerank_key = ""
-```
-
-规则：
-
-- `enabled = false` 时只使用基础召回分排序。
-- `rerank_api = "local"` 表示本地 rerank 入口。
-- `rerank_api` 不是 `local` 时必须填写 URL。
-- `rerank_key` 在 `local` 模式下可为空。
-
-执行流程：
-
-```text
-1. 基础搜索使用 query；高级搜索使用 terms.include 派生语义输入
-2. 最多取 effective_limit 条；effective_limit = min(limit, [search].default_limit)
-3. 如果语义输入非空、[rerank].enabled = true 且候选数 > 1
-   就把这 effective_limit 条发给 rerank API 排序
-4. 返回排序后的同一批候选
-```
-
-边界：
-
-- rerank 不扩大召回。
-- rerank 不额外拉更多候选。
-- rerank 只排序最终要返回的 `effective_limit` 条。
-- rerank 失败时返回原排序。
-- rerank 只影响顺序，不改变候选可操作边界。
-- 高级搜索使用 `terms.include` 派生语义输入后可以 rerank。
-
-模型候选：
-
-```text
-Qwen/Qwen3-Reranker-4B      = 默认建议，输入倍率 5x，补全倍率 1x
-Qwen/Qwen3-Reranker-8B      = 质量优先备选，输入倍率 10x，补全倍率 1x
-BAAI/bge-reranker-v2-m3    = 开源权重备选，输入倍率 5x，补全倍率 1x，窗口 512
-```
-
-## 8. 实现方案
-
-第一版实现采用 `memory_search_index` 搜索投影表、`pg_trgm` 字面召回、参数化硬过滤、embedding 保底、rerank 重排的顺序。
-
-执行顺序：
-
-```text
-1. 从 memory_search_index 读取候选搜索文本。
-2. 基础搜索使用 pg_trgm 对 query 做字面召回；高级搜索只使用 terms 做字面筛选。
-3. status 固定排除 trashed，pending 和 active 都可返回。
-4. filters 控制 terms 参与匹配的字段范围。
-5. terms.include / terms.exclude 作为硬过滤。
-6. 语义输入非空且字面召回结果为 0 时，才允许 embedding fallback。
-7. embedding fallback 仍必须遵守 status、filters、terms 硬过滤；高级搜索的语义输入来自 terms.include。
-8. rerank 只重排最终候选，不扩大召回。
-```
-
-SQL 约束：
-
-```text
-用户输入的 query 和 terms 必须参数化绑定。
-filters 只能从字段白名单映射到 memory_search_index 字段。
-禁止把用户关键词直接拼进 SQL 字符串。
-禁止让 embedding 绕过 terms.exclude 或 trashed 边界。
-```
-
-索引方向：
-
-```text
-pg_trgm = memory_search_index.title_text / summary_text / keywords_text / content_text / recall_when_text / all_text
-pgvector = memory_embeddings.embedding
-```
-
-当前不开放 `category` 作为 filter；如果后续要让 `category` 参与召回，只能作为搜索面，不作为硬过滤。
-
-字段规则：
-
-```text
-filters = [] = title / summary / keywords / content / recall_when
-category     = 不进入 filters = []，也不参与 matched_fields
-```
-
-返回规则：
-
-```text
-matched_fields = 由实际命中的字段文本二次判断生成
-all_text       = 只用于搜索，不作为 matched_fields 返回
-preview        = 只在 content 命中时返回，最长 120 字
-```
-
-## 9. 成功响应
+rerank 失败时仍为 `state="success"`，并返回：
 
 ```json
 {
   "state": "success",
   "tool": "search_memory",
-  "data": {
-    "strategy": {
-      "embedding_fallback": false,
-      "rerank": false
-    },
-    "results": [
-      {
-        "memory_uuid": "{memory_uuid}",
-        "title_norm": "尼采深渊凝视 approve flow test 20260521_01",
-        "status": "active",
-        "summary": "用于测试 approve 流程的哲学版本记忆，主题是尼采与深渊凝视。",
-        "preview": "……主题是尼采与深渊凝视……",
-        "matched_fields": ["title", "summary", "keywords"]
-      }
-    ],
-    "count": 1
-  },
-  "error": null,
+  "data": { "results": [{ "memory_uuid": "{memory_uuid}" }], "count": 1 },
+  "error": "rerank_failed",
   "profile": "{profile}"
 }
 ```
 
-响应规则：
+若关键词路或向量路单独失败，另一条成功的路继续完成搜索，并返回该路召回的结果（可能为空）；用 `error="keyword_recall_failed"` 或 `error="vector_recall_failed"` 标出失败来源。一次出现多个故障时，`error` 是错误码数组，按关键词路、向量路、rerank 的顺序排列；两路召回都失败时 `state="error"`。只有一个故障时 `error` 为字符串，正常完成时为 null。
 
-- 没有命中时 `results` 返回空数组，`count = 0`。
-- `strategy.embedding_fallback = true` 表示本次由 embedding 保底召回。
-- `strategy.rerank = true` 表示本次结果已由 rerank 重排。
-- `score` 只在 `strategy.rerank = true` 时返回，用于说明 rerank 排序分。
-- `matched_fields` 只说明单条候选的命中来源，不能替代 `read_memory`。
-- `preview` 只在 content 命中时返回，是命中上下文短文本，最多 120 字，不能返回完整 `content`。
-- `summary` 可以是 `null`。
+结果保留 `memory_uuid`、`title_norm`、`status`、`summary` 和 `matched_fields` 等现有字段；`content_preview` 仅在适用时出现且不超过 120 字。搜索结果只用于定位候选，不能按排序自动选择第一条执行后续读写操作。
 
-## 10. Agent 使用规则
+## Agent 调用
 
-Agent 不能把搜索结果当作最终目标。
-
-必须遵守：
-
-```text
-不能按搜索排序自动选择第一条
-不能通过 title 直接执行 read/update/delete
-必须展示候选 memory_uuid、title_norm、status
-embedding 保底结果必须回读确认
-用户确认后才能把 memory_uuid 交给 read/update/delete
-更新前必须再调用 read_memory_hash 获取 revision 和字段 hash
+```bash
+mem012 --profile {profile} --args '{"tool":"search_memory","params":{"query":"离线保存网页的方法","terms":{"include":["网页"],"exclude":[]},"filters":["title","summary","content"],"limit":5}}'
 ```
 
-推荐流程：
-
-```text
-1. 调用 search_memory 找候选
-2. 展示候选 memory_uuid、title_norm、status
-3. 等用户确认具体 memory_uuid
-4. 读取内容时调用 read_memory
-5. 更新内容时调用 read_memory_hash
-6. 携带 expected_revision 和 expected_*_hash 调用 update_memory_*
-```
-
-## 11. 成功验证
-
-执行后检查：
-
-```text
-1. state = success
-2. tool = search_memory
-3. data.strategy 包含 embedding_fallback、rerank
-4. data.count 等于 data.results 的数量
-5. data.results 是数组
-6. data.results 中的每条结果都有 memory_uuid、title_norm、status、matched_fields
-7. 如果返回 preview，preview 不能超过 120 字
-8. 结果中不能出现 trashed memory
-```
-
-## 12. 失败场景
-
-```text
-基础搜索 query 为空       = 拒绝
-高级搜索包含 query       = 拒绝
-基础搜索 query 混用 AND 和 OR = 拒绝
-包含 mode              = 拒绝
-包含 terms 但省略 filters = 拒绝
-包含 filters 但省略 terms = 拒绝
-filters 不是数组        = 拒绝
-filters 包含未知值      = 拒绝
-filters 包含 embedding  = 拒绝
-filters 包含 rerank     = 拒绝
-filters 包含 status     = 拒绝
-filters 包含 category   = 拒绝
-terms 不是对象          = 拒绝
-terms.include 不是数组   = 拒绝
-terms.exclude 不是数组   = 拒绝
-terms 省略 include/exclude = 拒绝
-terms 双数组全空         = 拒绝
-terms 包含空关键词      = 拒绝
-limit 小于 1           = 拒绝
-limit 超过默认值        = 按 [search].default_limit 截断
-请求包含未知字段        = 拒绝
-```
-
-## 13. 非目标
-
-- 直接更新记忆
-- 直接删除记忆
-- approve / reject
-- 搜索 `trashed` 记忆
-- 跨 profile 搜索
-- 跨 share 库合并搜索
-- embedding 精准搜索
-- rerank 扩大召回
-- 关系图扩展搜索
-- 自动选择最相关结果
+- 检查 `state` 与 `error`：`state="success"` 且 error 非 null 表示部分召回或 rerank 回退，仍须检查 `data.results`；`state="error"` 表示搜索未能完成。
+- 展示候选 `memory_uuid`、`title_norm`、`status`，取得确认后再调用 `read_memory`；更新前调用 `read_memory_hash`。
+- 调用返回后核对 `data.results` 为数组、`data.count` 与数组长度一致，且结果数不超过请求 `limit`。
