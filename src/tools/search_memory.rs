@@ -4,8 +4,8 @@ use serde::Deserialize;
 
 type ToolResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-// tune 中最低相关正例约 0.81，无关尾部最高约 0.18；冻结阈值后再跑 holdout。
-const RERANK_MIN_SCORE: f32 = 0.3;
+// 追加长文 tune 负例最高块分数约 0.311；收紧至 0.4 后重新验证 holdout。
+const RERANK_MIN_SCORE: f32 = 0.4;
 // 候选预算独立于最终 limit；在小规模 tune 验收后冻结，质量范围见验收记录。
 const CANDIDATE_BUDGET: i32 = 40;
 
@@ -69,46 +69,13 @@ async fn load_candidate_fields(
         .into_iter().map(str::to_string).zip([row.0, row.1, row.2, row.3, row.4]).collect())
 }
 
-fn evidence_document(
-    fields: &[(String, String)], plan: &SearchPlan, ranges: &[(usize, usize)],
-) -> String {
-    // What：仅压缩连续完全相同的原文行，保留次数和原文字节范围。
-    // Why：字面命中或单个向量块都不能证明其他段落无关，证据不完整时必须回退。
-    let mut output = Vec::new();
-    for (name, text) in fields.iter().filter(|(name, _)| plan.fields.contains(name)) {
-        let mut offset = 0;
-        let mut groups: Vec<(usize, usize, &str, usize)> = Vec::new();
-        for part in text.split_inclusive('\n') {
-            let start = offset; offset += part.len();
-            if let Some(last) = groups.last_mut() && last.2 == part {
-                last.1 = offset; last.3 += 1;
-            } else {
-                groups.push((start, offset, part, 1));
-            }
-        }
-        for (start, end, part, count) in groups {
-            output.push(format!("[{name}:{start}..{end}; repeated={count}]\n{part}"));
-        }
-        if name == "content" && !ranges.is_empty() {
-            output.push(format!("[vector_hits:{ranges:?}]"));
-        }
-    }
-    output.join("\n")
-}
-
 async fn build_rerank_documents(
     context: &super::ToolContext<'_>,
     plan: &SearchPlan,
     candidates: &[SearchCandidate],
 ) -> ToolResult<Vec<String>> {
-    // What：为每条记忆读取选定字段的完整原文，并按实际 pair tokenizer 检查预算。
-    // Why：无法证明完整证据可容纳时必须回退，不能把截断预览伪装成充分证据。
-    let settings = context.rerank_settings.ok_or("rerank 配置缺失")?;
-    let tokenizer = crate::provider::rerank::load_rerank_tokenizer(&settings.model)
-        .map_err(|error| -> Box<dyn std::error::Error> {
-            eprintln!("search_memory rerank evidence failed: tokenizer load: {error}");
-            error
-        })?;
+    // What：为每条记忆读取选定字段的完整原文，交给 provider 分块重排。
+    // Why：原文是否超出单块预算不应让整批候选提前失败。
     let mut documents = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let fields = load_candidate_fields(context, &candidate.memory_uuid).await
@@ -116,26 +83,9 @@ async fn build_rerank_documents(
                 eprintln!("search_memory rerank evidence failed: candidate fields: {error}");
                 error
             })?;
-        let mut document = fields.iter().filter(|(name, _)| plan.fields.contains(name))
-            .map(|(name, text)| format!("[{name}]\n{}", text.trim()))
+        let document = fields.iter().filter(|(name, _)| plan.fields.contains(name))
+            .map(|(name, text)| format!("[{name}]\n{text}"))
             .collect::<Vec<_>>().join("\n");
-        let encoding = tokenizer.encode((plan.query.as_str(), document.as_str()), true)
-            .map_err(|error| -> Box<dyn std::error::Error> {
-                eprintln!("search_memory rerank evidence failed: pair encoding: {error}");
-                error
-            })?;
-        if encoding.len() > 8192 {
-            document = evidence_document(&fields, plan, &candidate.vector_range);
-            let reduced = tokenizer.encode((plan.query.as_str(), document.as_str()), true)
-                .map_err(|error| -> Box<dyn std::error::Error> {
-                    eprintln!("search_memory rerank evidence failed: reduced pair encoding: {error}");
-                    error
-                })?;
-            if document.is_empty() || reduced.len() > 8192 {
-                eprintln!("search_memory rerank evidence failed: reduced document exceeds token budget");
-                return Err("关键重排证据超过模型预算".into());
-            }
-        }
         documents.push(document);
     }
     Ok(documents)

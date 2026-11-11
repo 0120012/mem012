@@ -1,6 +1,6 @@
 # Search Memory
 
-更新：2026-11-10。本文描述已实现的 `search_memory` 聚合接口；实际入口版本及验收范围见 [验收记录](../SEARCH_MEMORY_VALIDATION.md)。
+更新：2026-11-11。本文描述 `search_memory` 聚合接口；实际入口版本及验收范围见 [验收记录](../SEARCH_MEMORY_VALIDATION.md)。
 
 ## 用途
 
@@ -34,6 +34,8 @@
 
 - 关键词路根据 `terms` 独立召回；向量路根据 `query` 独立召回，向量候选不必包含 `terms.include`。
 - 两路候选按 `memory_uuid` 去重后统一送入 rerank。rerank 成功按 rerank 排序，之后应用 `limit`。
+- 重排保留选定字段的完整原文；长文由客户端按实际 tokenizer 切成 query/document pair 不超过 8192 token 的重叠块，分批调用模型。每条记忆取最高块分数，再执行阈值过滤、排序和最终 limit；块数不占用最终结果名额。
+- 每批最多 40 块、累计 pair 预算最多 32768 token。任一批请求失败或评分不完整时，整次 rerank 显式回退；query 自身耗尽预算也返回 `rerank_failed`，不提交残缺证据。
 - 去重后少于两条候选时跳过 rerank；零条返回空结果，单条直接返回。
 - rerank 失败时保留两路合并候选，按“关键词第 1 条、向量第 1 条、关键词第 2 条、向量第 2 条”的次序交替回退，跳过重复 UUID，最后应用 `limit`。回退结果不携带伪装成 rerank 分数的原始分数。
 
