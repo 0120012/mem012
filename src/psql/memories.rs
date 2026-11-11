@@ -43,7 +43,8 @@ WHERE u.status = 'active'
         LEFT JOIN memory_search_index s ON s.memory_uuid = m.uuid
         WHERE m.status = 'active'
             AND ($1::text IS NULL OR m.category = $1)
-            AND ($2::text IS NULL OR (s.status = 'active' AND s.all_text ILIKE $2 ESCAPE E'\\'))
+            AND ($2::text IS NULL OR m.uuid::text ILIKE $2 ESCAPE E'\\'
+                OR (s.status = 'active' AND s.all_text ILIKE $2 ESCAPE E'\\'))
             AND ($4::date IS NULL OR
                 CASE WHEN $3 = 'created_at' THEN m.created_at ELSE m.updated_at END >= $4::date)
             AND ($5::date IS NULL OR
@@ -271,6 +272,7 @@ mod tests {
     #[test]
     fn list_memories_sql_filters_before_pagination_aggregation() {
         assert!(LIST_MEMORIES_SQL.contains("memory_search_index"));
+        assert!(LIST_MEMORIES_SQL.contains("m.uuid::text ILIKE $2"));
         assert!(LIST_MEMORIES_SQL.contains("LIMIT $6 OFFSET $7"));
         assert!(LIST_MEMORIES_SQL.contains("$4::date"));
         assert!(LIST_MEMORIES_SQL.contains("$5::date"));
