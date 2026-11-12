@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::Path,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
 };
 use serde_json::Value;
@@ -9,7 +9,10 @@ use super::utils::{ApiError, api_response, require_project};
 
 // What：返回当前项目回收站列表，包含进入回收站时间和配置派生的自动硬删时间。
 // Why：回收站页面只展示当前 active project，跨 profile 自动清理由后台 worker 单独负责。
-pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
+pub async fn list(
+    State(state): State<super::AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
         Ok(project) => project,
         Err(error) => return error_response(error, None),
@@ -35,7 +38,16 @@ pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
             Some(&project),
         );
     };
-    match crate::psql::list_trash(database_url, config.trash_retention_minutes() as i64).await {
+    let Some(pool) = state.pool_for(&project, database_url) else {
+        return error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        );
+    };
+    match crate::psql::list_trash(pool, config.trash_retention_minutes() as i64).await {
         Ok(data) => (
             StatusCode::OK,
             api_response(Some(data), None, Some(&project)),
@@ -52,13 +64,23 @@ pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
 
 pub async fn detail(
     Path(memory_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
     let (project, database_url, retention_minutes) = match trash_context(&headers) {
         Ok(context) => context,
         Err((status, body)) => return (status, body),
     };
-    match crate::psql::get_trash(&database_url, &memory_uuid, retention_minutes).await {
+    let Some(pool) = state.pool_for(&project, &database_url) else {
+        return error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        );
+    };
+    match crate::psql::get_trash(pool, &memory_uuid, retention_minutes).await {
         Ok(Some(data)) => (
             StatusCode::OK,
             api_response(Some(data), None, Some(&project)),
@@ -78,13 +100,23 @@ pub async fn detail(
 // Why：HTTP 层不能复用 changes approve，否则恢复/删除规则会和专用回收站语义混在一起。
 pub async fn delete(
     Path(memory_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
     let (project, database_url, _) = match trash_context(&headers) {
         Ok(context) => context,
         Err((status, body)) => return (status, body),
     };
-    match crate::psql::delete_trash(&database_url, &memory_uuid).await {
+    let Some(pool) = state.pool_for(&project, &database_url) else {
+        return error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        );
+    };
+    match crate::psql::delete_trash(pool, &memory_uuid).await {
         Ok(true) => (
             StatusCode::OK,
             api_response(Some(Value::Null), None, Some(&project)),
@@ -106,13 +138,23 @@ pub async fn delete(
 // Why：恢复规则由 psql 层区分 active/pending，HTTP 层只提供专用回收站入口。
 pub async fn restore(
     Path(memory_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
     let (project, database_url, _) = match trash_context(&headers) {
         Ok(context) => context,
         Err((status, body)) => return (status, body),
     };
-    match crate::psql::restore_trash(&database_url, &memory_uuid).await {
+    let Some(pool) = state.pool_for(&project, &database_url) else {
+        return error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        );
+    };
+    match crate::psql::restore_trash(pool, &memory_uuid).await {
         Ok(true) => (
             StatusCode::OK,
             api_response(Some(Value::Null), None, Some(&project)),

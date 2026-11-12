@@ -174,14 +174,10 @@ pub(crate) async fn register_embedding_target(
 
 // Why：changes 列表只暴露审查摘要，详情里的 before/after 由 detail 接口单独返回。
 pub async fn list_changes(
-    database_url: &str,
+    pool: &sqlx::PgPool,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let rows: String = sqlx::query_scalar(LIST_CHANGES_SQL)
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
     Ok(serde_json::from_str(&rows)?)
 }
@@ -189,48 +185,36 @@ pub async fn list_changes(
 // What：只返回当前项目可审查变更的数量。
 // Why：侧栏徽标不需要完整摘要，避免应用启动时构造整个变更列表。
 pub async fn count_changes(
-    database_url: &str,
+    pool: &sqlx::PgPool,
 ) -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     Ok(sqlx::query_scalar(COUNT_CHANGES_SQL)
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?)
 }
 
 // What：列出当前项目回收站里的待删除记忆，并计算自动硬删时间。
 // Why：expires_at 是配置派生值，不应落库，否则配置变更后页面会显示过期数据。
 pub async fn list_trash(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     retention_minutes: i64,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let rows: String = sqlx::query_scalar(LIST_TRASH_SQL)
         .bind(retention_minutes)
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
     Ok(serde_json::from_str(&rows)?)
 }
 
 // Why：详情接口必须在 SQL 层限定 delete + trashed，避免 HTTP 层误把普通 change 当回收站项。
 pub async fn get_trash(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
     retention_minutes: i64,
 ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let row = sqlx::query_scalar::<_, String>(TRASH_DETAIL_SQL)
         .bind(memory_uuid)
         .bind(retention_minutes)
-        .fetch_optional(&pool)
+        .fetch_optional(pool)
         .await?;
     row.map(|value| Ok(serde_json::from_str(&value)?))
         .transpose()
@@ -239,13 +223,9 @@ pub async fn get_trash(
 // What：永久删除一个已进入回收站且等待 delete 审批的记忆。
 // Why：硬删入口必须自带状态约束，避免 API 或定时任务误删普通待审批项。
 pub async fn delete_trash(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let mut tx = pool.begin().await?;
     let Some(locked_uuid) = sqlx::query_scalar::<_, String>(LOCK_TRASH_MEMORY_SQL)
         .bind(memory_uuid)
@@ -285,13 +265,9 @@ pub async fn delete_trash(
 // What：从回收站恢复一条等待 delete 审批的记忆。
 // Why：pending create 的删除恢复后仍必须保留 create 审批，不能复用 reject_change 删除 change。
 pub async fn restore_trash(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let mut tx = pool.begin().await?;
     let Some(locked_uuid) = sqlx::query_scalar::<_, String>(LOCK_TRASH_MEMORY_SQL)
         .bind(memory_uuid)
@@ -334,13 +310,9 @@ pub async fn restore_trash(
 // What：永久删除单个数据库里已超过保留期的回收站记忆。
 // Why：后台 worker 会逐 profile 调用这里；SQL 自带 trash 条件，避免跨入口误删普通变更。
 pub async fn delete_expired_trash(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     retention_minutes: i64,
 ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let mut tx = pool.begin().await?;
     let deleted = sqlx::query(DELETE_EXPIRED_TRASH_SQL)
         .bind(retention_minutes)
@@ -356,16 +328,12 @@ pub async fn delete_expired_trash(
 
 // Why：详情接口必须返回完整状态快照，前端才能展示 create/update/delete 的差异。
 pub async fn get_change(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
 ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let row = sqlx::query_scalar::<_, String>(CHANGE_DETAIL_SQL)
         .bind(memory_uuid)
-        .fetch_optional(&pool)
+        .fetch_optional(pool)
         .await?;
     row.map(|value| Ok(serde_json::from_str(&value)?))
         .transpose()
@@ -373,14 +341,10 @@ pub async fn get_change(
 
 // Why：批准 create 后记忆已成为正式工作态，可以在同一事务内生成默认图关系。
 pub async fn approve_change(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
     embedding: Option<ApprovedEmbedding>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let mut tx = pool.begin().await?;
     let Some(change) = lock_change(&mut tx, memory_uuid).await? else {
         tx.rollback().await?;
@@ -401,14 +365,10 @@ pub async fn approve_change(
 // Why：approve 不再同步等待向量生成，后台写入必须自带行锁与 source_state 校验，
 // 才能避免把生成期间已被更新的旧向量覆盖到新工作态上；记忆已不存在时静默跳过。
 pub async fn refresh_memory_embedding(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
     embedding: ApprovedEmbedding,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let mut tx = pool.begin().await?;
     // What：先取得当前向量表写锁，再锁定 active 源记忆并核验发布条件。
     // Why：与换表按同一顺序取锁，避免持有源行锁后等待换表；提前取得写锁避免发布时升级锁。
@@ -431,13 +391,9 @@ pub async fn refresh_memory_embedding(
 // What：按本库当前索引参数扫描缺失或模型/维度不匹配的 active 记忆。
 // Why：各库可独立换代，扫描持锁核对表身份，避免旧全局参数或在途换表制造错误待办。
 pub async fn list_embedding_backfill_memory_uuids(
-    database_url: &str,
+    pool: &sqlx::PgPool,
 ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
-    let (table_oid, model, dimension, _) = super::read_current_embedding_config(&pool).await?;
+    let (table_oid, model, dimension, _) = super::read_current_embedding_config(pool).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("LOCK TABLE memory_embeddings IN ACCESS SHARE MODE").execute(&mut *tx).await?;
     let current_oid: i64 = sqlx::query_scalar("SELECT 'memory_embeddings'::regclass::oid::bigint")
@@ -454,13 +410,9 @@ pub async fn list_embedding_backfill_memory_uuids(
 
 // Why：拒绝必须在事务里恢复工作态和删除 change，避免出现半回滚状态。
 pub async fn reject_change(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let mut tx = pool.begin().await?;
     let Some(change) = lock_change(&mut tx, memory_uuid).await? else {
         tx.rollback().await?;

@@ -1,7 +1,7 @@
 use axum::{
     Json,
     extract::{
-        Path, Query,
+        Path, Query, State,
         rejection::{JsonRejection, QueryRejection},
     },
     http::{HeaderMap, StatusCode},
@@ -27,6 +27,7 @@ pub struct MemoryListQuery {
 // Why：先让记忆列表入口经过统一门禁，避免后续真实查询绕过 session 和 project 白名单。
 pub async fn list(
     query: Result<Query<MemoryListQuery>, QueryRejection>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
     let Query(query) = match query {
@@ -79,6 +80,7 @@ pub async fn list(
     };
 
     let data = match load_memory_data(
+        &state,
         &project,
         limit,
         offset,
@@ -108,6 +110,7 @@ pub async fn list(
 // What：接收前端的新建记忆请求，并返回待审核记忆的 UUID。
 // Why：HTTP 层只负责鉴权、上下文和响应包装，创建规则统一交给现有 create_memory 工具。
 pub async fn create(
+    State(state): State<super::AppState>,
     headers: HeaderMap,
     payload: Result<Json<Value>, JsonRejection>,
 ) -> (StatusCode, Json<Value>) {
@@ -136,7 +139,7 @@ pub async fn create(
             );
         }
     };
-    match create_memory_data(&project, payload).await {
+    match create_memory_data(&state, &project, payload).await {
         Ok(memory_uuid) => (
             StatusCode::OK,
             api_response(
@@ -156,6 +159,7 @@ pub async fn create(
 // Why：关键词层级必须由用户点击 category 后懒加载，避免初始侧栏一次性读取完整记忆树。
 pub async fn category_keywords(
     Path(category): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
     let category = category.trim();
@@ -184,7 +188,7 @@ pub async fn category_keywords(
             return (status, api_response(None, Some(error), None));
         }
     };
-    match load_memory_category_keywords(&project, category).await {
+    match load_memory_category_keywords(&state, &project, category).await {
         Ok(data) => (
             StatusCode::OK,
             api_response(Some(data), None, Some(&project)),
@@ -198,6 +202,7 @@ pub async fn category_keywords(
 
 pub async fn update(
     Path(memory_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
     payload: Result<Json<crate::psql::MemoryUpdateInput>, JsonRejection>,
 ) -> (StatusCode, Json<Value>) {
@@ -239,7 +244,7 @@ pub async fn update(
             );
         }
     };
-    match update_memory_data(&project, &memory_uuid, payload).await {
+    match update_memory_data(&state, &project, &memory_uuid, payload).await {
         Ok(true) => (
             StatusCode::OK,
             api_response(Some(Value::Null), None, Some(&project)),
@@ -264,6 +269,7 @@ pub async fn update(
 
 // Why：handler 只按 project 选择数据源，真实列表 SQL 必须留在 psql 层统一维护。
 async fn load_memory_data(
+    state: &super::AppState,
     project: &str,
     limit: i64,
     offset: i64,
@@ -281,8 +287,12 @@ async fn load_memory_data(
         code: "PROJECT_NOT_FOUND",
         message: "project is not configured".to_string(),
     })?;
+    let pool = state.pool_for(project, database_url).ok_or(ApiError {
+        code: "DATABASE_POOL_UNAVAILABLE",
+        message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+    })?;
     crate::psql::list_memories(
-        database_url,
+        pool,
         limit,
         offset,
         category,
@@ -410,7 +420,11 @@ fn memory_list_pagination(query: &MemoryListQuery) -> Result<(i64, i64), ApiErro
     Ok((limit, offset))
 }
 
-async fn create_memory_data(project: &str, payload: Value) -> Result<String, ApiError> {
+async fn create_memory_data(
+    state: &super::AppState,
+    project: &str,
+    payload: Value,
+) -> Result<String, ApiError> {
     let config = crate::config::load_config("config.toml").map_err(|error| ApiError {
         code: "CONFIG_LOAD_FAILED",
         message: error.to_string(),
@@ -419,14 +433,10 @@ async fn create_memory_data(project: &str, payload: Value) -> Result<String, Api
         code: "PROJECT_NOT_FOUND",
         message: "project is not configured".to_string(),
     })?;
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await
-        .map_err(|error| ApiError {
-            code: "DATABASE_CONNECT_FAILED",
-            message: error.to_string(),
-        })?;
+    let pool = state.pool_for(project, database_url).ok_or(ApiError {
+        code: "DATABASE_POOL_UNAVAILABLE",
+        message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+    })?;
     let api_base_url =
         crate::config::local_api_base_url(config.client_base_url().unwrap_or(config.server_addr()))
             .map_err(|error| ApiError {
@@ -435,7 +445,7 @@ async fn create_memory_data(project: &str, payload: Value) -> Result<String, Api
             })?;
     let context = crate::tools::ToolContext {
         profile: project,
-        profile_pool: &pool,
+        profile_pool: pool,
         search_default_limit: config.search_default_limit(),
         category_index_list: config.category_index_list(),
         api_base_url: &api_base_url,
@@ -449,7 +459,11 @@ async fn create_memory_data(project: &str, payload: Value) -> Result<String, Api
         .map_err(create_memory_error)
 }
 
-async fn load_memory_category_keywords(project: &str, category: &str) -> Result<Value, ApiError> {
+async fn load_memory_category_keywords(
+    state: &super::AppState,
+    project: &str,
+    category: &str,
+) -> Result<Value, ApiError> {
     let config = crate::config::load_config("config.toml").map_err(|error| ApiError {
         code: "CONFIG_LOAD_FAILED",
         message: error.to_string(),
@@ -458,7 +472,11 @@ async fn load_memory_category_keywords(project: &str, category: &str) -> Result<
         code: "PROJECT_NOT_FOUND",
         message: "project is not configured".to_string(),
     })?;
-    crate::psql::list_memory_category_keywords(database_url, category)
+    let pool = state.pool_for(project, database_url).ok_or(ApiError {
+        code: "DATABASE_POOL_UNAVAILABLE",
+        message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+    })?;
+    crate::psql::list_memory_category_keywords(pool, category)
         .await
         .map_err(|error| ApiError {
             code: "MEMORY_CATEGORY_KEYWORDS_FAILED",
@@ -467,6 +485,7 @@ async fn load_memory_category_keywords(project: &str, category: &str) -> Result<
 }
 
 async fn update_memory_data(
+    state: &super::AppState,
     project: &str,
     memory_uuid: &str,
     input: crate::psql::MemoryUpdateInput,
@@ -479,7 +498,11 @@ async fn update_memory_data(
         code: "PROJECT_NOT_FOUND",
         message: "project is not configured".to_string(),
     })?;
-    crate::psql::update_memory(database_url, memory_uuid, input)
+    let pool = state.pool_for(project, database_url).ok_or(ApiError {
+        code: "DATABASE_POOL_UNAVAILABLE",
+        message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+    })?;
+    crate::psql::update_memory(pool, memory_uuid, input)
         .await
         .map_err(|error| {
             let message = error.to_string();

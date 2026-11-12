@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::Path,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
 };
 use serde_json::Value;
@@ -8,7 +8,10 @@ use serde_json::Value;
 use super::utils::{ApiError, api_response, require_project};
 
 // Why：待确认列表必须和 memories 分流，避免普通记忆页展示未审核工作态。
-pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
+pub async fn list(
+    State(state): State<super::AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
         Ok(project) => project,
         Err(error) => return error_response(error, None),
@@ -17,7 +20,16 @@ pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
         Ok(url) => url,
         Err(error) => return error_response(error, Some(&project)),
     };
-    let data = match crate::psql::list_changes(&url).await {
+    let Some(pool) = state.pool_for(&project, &url) else {
+        return error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        );
+    };
+    let data = match crate::psql::list_changes(pool).await {
         Ok(data) => data,
         Err(error) => return error_response(db_error("CHANGE_LIST_FAILED", error), Some(&project)),
     };
@@ -29,7 +41,10 @@ pub async fn list(headers: HeaderMap) -> (StatusCode, Json<Value>) {
 
 // What：返回当前项目待确认变更数量。
 // Why：Layout 只需显示徽标，不应为此加载完整变更摘要。
-pub async fn count(headers: HeaderMap) -> (StatusCode, Json<Value>) {
+pub async fn count(
+    State(state): State<super::AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
         Ok(project) => project,
         Err(error) => return error_response(error, None),
@@ -38,7 +53,16 @@ pub async fn count(headers: HeaderMap) -> (StatusCode, Json<Value>) {
         Ok(url) => url,
         Err(error) => return error_response(error, Some(&project)),
     };
-    let count = match crate::psql::count_changes(&url).await {
+    let Some(pool) = state.pool_for(&project, &url) else {
+        return error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        );
+    };
+    let count = match crate::psql::count_changes(pool).await {
         Ok(count) => count,
         Err(error) => {
             return error_response(db_error("CHANGE_COUNT_FAILED", error), Some(&project));
@@ -57,13 +81,27 @@ pub async fn count(headers: HeaderMap) -> (StatusCode, Json<Value>) {
 // Why：详情接口只根据 memory_uuid 读取 before/after，不让前端提交回滚状态。
 pub async fn detail(
     Path(memory_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
         Ok(project) => project,
         Err(error) => return error_response(error, None),
     };
-    let data = match load_change_detail(&project, &memory_uuid).await {
+    let url = match database_url(&project) {
+        Ok(url) => url,
+        Err(error) => return error_response(error, Some(&project)),
+    };
+    let Some(pool) = state.pool_for(&project, &url) else {
+        return error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        );
+    };
+    let data = match load_change_detail(pool, &memory_uuid).await {
         Ok(Some(data)) => data,
         Ok(None) => return missing_change(&project),
         Err(error) => return error_response(error, Some(&project)),
@@ -77,6 +115,7 @@ pub async fn detail(
 // Why：approve 的状态机在 psql 层统一执行，HTTP 层只负责鉴权和定位 change。
 pub async fn approve(
     Path(memory_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
@@ -87,16 +126,25 @@ pub async fn approve(
         Ok(url) => url,
         Err(error) => return error_response(error, Some(&project)),
     };
-    let change = match crate::psql::get_change(&url, &memory_uuid).await {
+    let Some(pool) = state.pool_for(&project, &url) else {
+        return error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        );
+    };
+    let change = match crate::psql::get_change(pool, &memory_uuid).await {
         Ok(Some(change)) => change,
         Ok(None) => return missing_change(&project),
         Err(error) => {
             return error_response(db_error("CHANGE_DETAIL_FAILED", error), Some(&project));
         }
     };
-    match crate::psql::approve_change(&url, &memory_uuid, None).await {
+    match crate::psql::approve_change(pool, &memory_uuid, None).await {
         Ok(true) => {
-            spawn_embedding_refresh(url, memory_uuid, change);
+            spawn_embedding_refresh(pool.clone(), memory_uuid, change);
             (
                 StatusCode::OK,
                 api_response(Some(Value::Null), None, Some(&project)),
@@ -118,9 +166,9 @@ pub async fn approve(
 // What：approve 提交后在后台任务里生成并写入 embedding，不阻塞审批响应。
 // Why：分块 embedding 在慢机器上需数分钟，同步等待会超过网关与 Cloudflare 的超时上限，
 // 断连还会连带取消审批本身；向量短暂滞后只影响保底语义召回，可接受。
-fn spawn_embedding_refresh(database_url: String, memory_uuid: String, change: Value) {
+fn spawn_embedding_refresh(pool: sqlx::PgPool, memory_uuid: String, change: Value) {
     tokio::spawn(async move {
-        let embedding = match embedding_for_approve(&database_url, &memory_uuid, &change).await {
+        let embedding = match embedding_for_approve(&pool, &memory_uuid, &change).await {
             Ok(Some(embedding)) => embedding,
             Ok(None) => return,
             Err(error) => {
@@ -131,9 +179,7 @@ fn spawn_embedding_refresh(database_url: String, memory_uuid: String, change: Va
                 return;
             }
         };
-        if let Err(error) =
-            crate::psql::refresh_memory_embedding(&database_url, &memory_uuid, embedding).await
-        {
+        if let Err(error) = crate::psql::refresh_memory_embedding(&pool, &memory_uuid, embedding).await {
             eprintln!("embedding refresh write failed for {memory_uuid}: {error}");
         }
     });
@@ -142,6 +188,7 @@ fn spawn_embedding_refresh(database_url: String, memory_uuid: String, change: Va
 // Why：reject 只接受 memory_uuid，回滚依据必须来自后端锁定的 before_state。
 pub async fn reject(
     Path(memory_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
@@ -152,7 +199,16 @@ pub async fn reject(
         Ok(url) => url,
         Err(error) => return error_response(error, Some(&project)),
     };
-    match crate::psql::reject_change(&url, &memory_uuid).await {
+    let Some(pool) = state.pool_for(&project, &url) else {
+        return error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        );
+    };
+    match crate::psql::reject_change(pool, &memory_uuid).await {
         Ok(true) => (
             StatusCode::OK,
             api_response(Some(Value::Null), None, Some(&project)),
@@ -178,7 +234,7 @@ fn database_url(project: &str) -> Result<String, ApiError> {
 }
 
 async fn embedding_for_approve(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
     change: &Value,
 ) -> Result<Option<crate::psql::ApprovedEmbedding>, ApiError> {
@@ -198,22 +254,20 @@ async fn embedding_for_approve(
         return Ok(None);
     };
     Ok(Some(
-        generate_embedding_for_memory(database_url, memory_uuid, &settings).await?,
+        generate_embedding_for_memory(pool, memory_uuid, &settings).await?,
     ))
 }
 
 // What：按本库参数登记生成目标，生成完整块集合并携带起始表 OID。
 // Why：发布端须识别生成期间的换表；目标标记仍阻止同一代内的旧任务覆盖。
 pub(crate) async fn generate_embedding_for_memory(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
     settings: &crate::config::EmbeddingSettings,
 ) -> Result<crate::psql::ApprovedEmbedding, ApiError> {
     static RECENT: tokio::sync::Mutex<std::collections::VecDeque<(std::time::Instant, u32)>> =
         tokio::sync::Mutex::const_new(std::collections::VecDeque::new());
-    let pool = sqlx::postgres::PgPoolOptions::new().max_connections(1).connect(database_url).await
-        .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
-    let (table_oid, model, dimension, fallback_max_distance) = crate::psql::read_current_embedding_config(&pool).await
+    let (table_oid, model, dimension, fallback_max_distance) = crate::psql::read_current_embedding_config(pool).await
         .map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
     // Why：模型或维度已变化时，不能将文件新参数与调用方旧 API 参数拼成请求。
     if settings.model != model || i32::try_from(settings.dimension).ok() != Some(dimension) {
@@ -234,16 +288,15 @@ pub(crate) async fn generate_embedding_for_memory(
     let tokenizer = crate::provider::embedding::load_bge_m3_tokenizer(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("models/bge-m3/tokenizer.json"),
     ).map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error))?;
-    let mut source_state = load_current_memory_state(database_url, memory_uuid).await?;
+    let mut source_state = load_current_memory_state(pool, memory_uuid).await?;
     let (content, metadata) = embedding_input_from_state(&source_state)?;
     let revision = source_state.pointer("/memory/revision").and_then(Value::as_i64)
         .filter(|revision| *revision > 0)
         .ok_or_else(|| ApiError { code: "EMBEDDING_REFRESH_FAILED", message: "源快照缺少有效版本".into() })?;
     let policy = "metadata-v1:heading-path-v1:full-input-8192:tokenizer-21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08";
     let generation = crate::psql::register_embedding_target(
-        &pool, memory_uuid, revision, &settings.model, settings.dimension as i32, policy,
+        pool, memory_uuid, revision, &settings.model, settings.dimension as i32, policy,
     ).await.map_err(|error| db_error("EMBEDDING_REFRESH_FAILED", error.into()))?;
-    pool.close().await;
     let mut recent = RECENT.lock().await;
     let chunks = crate::provider::embedding::generate_chunks(
         content, &metadata, &settings, &tokenizer, &mut recent, 2000, 500000,
@@ -262,14 +315,9 @@ pub(crate) async fn generate_embedding_for_memory(
 }
 
 async fn load_current_memory_state(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
 ) -> Result<Value, ApiError> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await
-        .map_err(|error| db_error("EMBEDDING_INPUT_LOAD_FAILED", error.into()))?;
     let mut tx = pool
         .begin()
         .await
@@ -330,9 +378,11 @@ fn reviewed_change(change: &Value) -> Option<(&str, &str)> {
 }
 
 // Why：详情读取需要区分不存在和数据库失败，前端才能展示正确状态。
-async fn load_change_detail(project: &str, uuid: &str) -> Result<Option<Value>, ApiError> {
-    let url = database_url(project)?;
-    crate::psql::get_change(&url, uuid)
+async fn load_change_detail(
+    pool: &sqlx::PgPool,
+    uuid: &str,
+) -> Result<Option<Value>, ApiError> {
+    crate::psql::get_change(pool, uuid)
         .await
         .map_err(|error| db_error("CHANGE_DETAIL_FAILED", error))
 }

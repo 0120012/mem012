@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, rejection::JsonRejection},
+    extract::{Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
 use serde::Deserialize;
@@ -25,8 +25,11 @@ pub struct UpdateRelationRequest {
 }
 
 // Why：graph status 是 rebuild 前置判断，HTTP 入口必须和 CLI 返回同一数据来源。
-pub async fn status(headers: HeaderMap) -> (StatusCode, Json<Value>) {
-    let (project, pool) = match project_pool(headers).await {
+pub async fn status(
+    State(state): State<super::AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    let (project, pool) = match project_pool(&state, headers) {
         Ok(value) => value,
         Err((status, body)) => return (status, body),
     };
@@ -40,8 +43,11 @@ pub async fn status(headers: HeaderMap) -> (StatusCode, Json<Value>) {
 }
 
 // Why：rebuild 是显式操作，避免 approve 时把 AGE 失败混入用户确认流程。
-pub async fn rebuild(headers: HeaderMap) -> (StatusCode, Json<Value>) {
-    let (project, pool) = match project_pool(headers).await {
+pub async fn rebuild(
+    State(state): State<super::AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    let (project, pool) = match project_pool(&state, headers) {
         Ok(value) => value,
         Err((status, body)) => return (status, body),
     };
@@ -67,9 +73,10 @@ pub async fn rebuild(headers: HeaderMap) -> (StatusCode, Json<Value>) {
 // Why：一跳邻居来自 SQL 主数据，dirty 状态下仍可作为图页的稳定降级查询。
 pub async fn neighbors(
     Path(memory_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
-    let (project, pool) = match project_pool(headers).await {
+    let (project, pool) = match project_pool(&state, headers) {
         Ok(value) => value,
         Err((status, body)) => return (status, body),
     };
@@ -83,8 +90,11 @@ pub async fn neighbors(
 }
 
 // Why：图谱页默认打开时需要稳定数据源，不能依赖用户先输入某个 memory_uuid。
-pub async fn overview(headers: HeaderMap) -> (StatusCode, Json<Value>) {
-    let (project, pool) = match project_pool(headers).await {
+pub async fn overview(
+    State(state): State<super::AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    let (project, pool) = match project_pool(&state, headers) {
         Ok(value) => value,
         Err((status, body)) => return (status, body),
     };
@@ -99,6 +109,7 @@ pub async fn overview(headers: HeaderMap) -> (StatusCode, Json<Value>) {
 
 // Why：HTTP relation 写入给前端使用，但仍复用 CLI 的 psql 工作态和 pending change 规则。
 pub async fn add_relation(
+    State(state): State<super::AppState>,
     headers: HeaderMap,
     payload: Result<Json<AddRelationRequest>, JsonRejection>,
 ) -> (StatusCode, Json<Value>) {
@@ -114,7 +125,7 @@ pub async fn add_relation(
             );
         }
     };
-    let (project, pool) = match project_pool(headers).await {
+    let (project, pool) = match project_pool(&state, headers) {
         Ok(value) => value,
         Err((status, body)) => return (status, body),
     };
@@ -137,6 +148,7 @@ pub async fn add_relation(
 // Why：relation 修正必须由 relation_uuid 定位，避免前端重新提交两端 memory 造成歧义。
 pub async fn update_relation(
     Path(relation_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
     payload: Result<Json<UpdateRelationRequest>, JsonRejection>,
 ) -> (StatusCode, Json<Value>) {
@@ -144,7 +156,7 @@ pub async fn update_relation(
         Ok(payload) => payload,
         Err(error) => return bad_request(error),
     };
-    let (project, pool) = match project_pool(headers).await {
+    let (project, pool) = match project_pool(&state, headers) {
         Ok(value) => value,
         Err((status, body)) => return (status, body),
     };
@@ -166,9 +178,10 @@ pub async fn update_relation(
 // Why：删除 relation 只接收 uuid，实际回滚基线必须从数据库锁定后的 before_state 得到。
 pub async fn delete_relation(
     Path(relation_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
-    let (project, pool) = match project_pool(headers).await {
+    let (project, pool) = match project_pool(&state, headers) {
         Ok(value) => value,
         Err((status, body)) => return (status, body),
     };
@@ -189,9 +202,10 @@ pub async fn delete_relation(
 // Why：候选接口只读，不替用户建边，前端可以把候选再交给用户确认。
 pub async fn suggest_relations(
     Path(memory_uuid): Path<String>,
+    State(state): State<super::AppState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
-    let (project, pool) = match project_pool(headers).await {
+    let (project, pool) = match project_pool(&state, headers) {
         Ok(value) => value,
         Err((status, body)) => return (status, body),
     };
@@ -204,24 +218,21 @@ pub async fn suggest_relations(
     }
 }
 
-async fn project_pool(
+fn project_pool(
+    state: &super::AppState,
     headers: HeaderMap,
 ) -> Result<(String, sqlx::Pool<sqlx::Postgres>), (StatusCode, Json<Value>)> {
     let project = require_project(&headers).map_err(|error| error_response(error, None))?;
     let url = database_url(&project).map_err(|error| error_response(error, Some(&project)))?;
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
-        .await
-        .map_err(|error| {
-            error_response(
-                ApiError {
-                    code: "DATABASE_CONNECT_FAILED",
-                    message: error.to_string(),
-                },
-                Some(&project),
-            )
-        })?;
+    let pool = state.pool_for(&project, &url).cloned().ok_or_else(|| {
+        error_response(
+            ApiError {
+                code: "DATABASE_POOL_UNAVAILABLE",
+                message: "database pool is unavailable; restart the server after changing database configuration".to_string(),
+            },
+            Some(&project),
+        )
+    })?;
     Ok((project, pool))
 }
 

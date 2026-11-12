@@ -76,7 +76,7 @@ END
 
 // Why：列表展示查询放在 psql 层，避免 HTTP handler 持有 memory_changes 派生规则。
 pub async fn list_memories(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     limit: i64,
     offset: i64,
     category: Option<&str>,
@@ -85,10 +85,6 @@ pub async fn list_memories(
     date_from: Option<&str>,
     date_to: Option<&str>,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let rows: String = sqlx::query_scalar(LIST_MEMORIES_SQL)
         .bind(category)
         .bind(filter)
@@ -97,7 +93,7 @@ pub async fn list_memories(
         .bind(date_to)
         .bind(limit)
         .bind(offset)
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
     Ok(serde_json::from_str(&rows)?)
 }
@@ -105,22 +101,18 @@ pub async fn list_memories(
 // What：列出单个 category 下可展开的关键词。
 // Why：侧栏关键词必须在点击 category 时按需读取，不能随记忆分组一次性加载完整层级。
 pub async fn list_memory_category_keywords(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     category: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let rows: String = sqlx::query_scalar(LIST_MEMORY_CATEGORY_KEYWORDS_SQL)
         .bind(category)
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
     Ok(serde_json::from_str(&rows)?)
 }
 
 pub async fn update_memory(
-    database_url: &str,
+    pool: &sqlx::PgPool,
     memory_uuid: &str,
     input: MemoryUpdateInput,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
@@ -140,10 +132,6 @@ pub async fn update_memory(
         .map(|value| required_nonempty_text("recall_when", value))
         .transpose()?;
     let keywords = normalize_keywords(input.keywords)?;
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await?;
     let mut tx = pool.begin().await?;
     let locked_revision: Option<i64> = sqlx::query_scalar(
         "SELECT revision FROM memory_units WHERE uuid = $1::uuid AND status = 'active' FOR UPDATE",
