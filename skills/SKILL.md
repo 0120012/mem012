@@ -34,9 +34,9 @@ mem012 --profile {profile} init
 MEM012_ADMIN_DATABASE_URL="postgresql://{admin_user}:{admin_password}@{host}:{port}/postgres" mem012 --create_profile {profile}
 ```
 
-## auth -- 授权 init 操作
+## auth -- 授权 init 写入
 
-对init类别的记忆操作(新建、删除、修改、追加、修补)都需要授权，需要用户从前端获取`auth_token`，并提供`auth_token` 后执行。`--auth` 必须同时带 `--profile`；成功后会写入本机短期授权文件 `~/.auth/auth_file.mem`。
+仅当用户明确提供`auth_token` 后执行。`--auth` 必须同时带 `--profile`；成功后会写入本机短期授权文件 `~/.auth/auth_file.mem`。
 
 ```bash
 mem012 --profile {profile} --auth {auth_token}
@@ -61,20 +61,25 @@ mem012 --profile {profile} --args '{"tool":"create_memory","params":{"category":
 
 ## search_memory -- 搜索记忆
 
-只使用高级搜索；`query` 普通搜索入口已关闭。
+只使用统一聚合搜索；必须同时提供自然语言 `query` 和少量有把握的 `terms.include`。该工具只返回候选，不读取、更新、删除或审核记忆；需要确认候选完整内容时，先用 `read_memory`。
 
-### 高级搜索
+### 聚合搜索
 
-必须同时传 `terms` 和 `filters`，不得传 `query`。高级搜索先做 `terms` + `filters` 字面筛选，再用 `terms.include` 作为语义输入执行 embedding fallback 或 rerank。
+请求只接受 `query`、`terms`、`filters`、`limit`。`query` trim 后必须非空，用于向量召回和统一 rerank，不解析其中的 AND/OR。`terms.include` 必须是至少一个非空字符串的数组；`terms.exclude` 可省略，默认空数组。关键词条件只约束关键词召回路，向量候选不要求包含 include。
 
 ```bash
-mem012 --profile {profile} --args '{"tool":"search_memory","params":{"limit":10,"terms":{"include":["word1","word2"],"exclude":["word3"]},"filters":["summary","keywords","content","recall_when"]}}'
+mem012 --profile {profile} --args '{"tool":"search_memory","params":{"query":"想查找的内容或方法","limit":5,"terms":{"include":["确定的关键词"],"exclude":[]},"filters":["summary","keywords","content","recall_when"]}}'
 ```
 
 - 可用 `filters` 只有 `title`、`summary`、`keywords`、`content`、`recall_when`。
-- `terms.include`、`terms.exclude` 必须同时传数组，且至少一个数组非空。
-- `terms.include` 中的关键词必须全部命中（AND）；`terms.exclude` 中的关键词必须全部不能命中（NOT）。
-- 高级搜索不提供 `any` 或 `exact` 参数。
+- `filters` 可省略或为空数组，默认五个字段；不能为 null。`limit` 可省略或为 null，否则必须是正整数，超过后端上限按上限返回。
+- 关键词路以不区分大小写的子串匹配要求全部 include 命中，exclude 任一命中即排除；关键词可以分散在选定字段中。
+- 不提供 `any` 或 `exact` 参数；未知字段、非法类型和空白关键词在检索及模型调用前拒绝。
+- 两路独立并行召回后按 `memory_uuid` 去重，再统一进入 rerank；只有合并后至少两条候选时才调用 rerank，零条或单条直接返回。
+- rerank 使用选定字段的完整原文；长文按冻结 tokenizer 切成 query/document pair 不超过 `8192` token 的重叠块，每批最多 `40` 块、累计 pair token 不超过 `32768`。每条记忆取最高块分数，再过滤、排序并应用最终 `limit`；块数不占用结果名额。
+- 任一 rerank 批次请求失败、评分缺失/重复/越界/非有限，或 query 耗尽预算时，整次 rerank 回退，不用截断证据或部分评分冒充成功。
+- 搜索响应不含 `data.strategy`、`embedding_fallback` 或 `rerank`。`state=success,error=null` 为正常结果；`error` 非 null 表示单路召回失败或 rerank 回退，错误码按关键词、向量、rerank 顺序排列。两路召回都失败时返回 `state=error`。
+- rerank 回退仍返回两路合并候选，按关键词第 1 条、向量第 1 条交替取值，跳过重复 UUID，最后应用 `limit`；回退结果不代表已确认相关性，不能直接执行后续写操作。
 
 ## delete_memory -- 删除记忆
 
