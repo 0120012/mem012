@@ -56,34 +56,26 @@ struct SearchCandidate {
     vector_range: Vec<(usize, usize)>,
 }
 
-async fn load_candidate_fields(
-    context: &super::ToolContext<'_>,
-    uuid: &str,
-) -> ToolResult<Vec<(String, String)>> {
-    // What：按候选 UUID 获取当前工作态的完整五字段原文。
-    // Why：120 字预览不能作为重排证据，关键词和远端相关段落都必须可见。
-    let row = sqlx::query_as::<_, (String, String, String, String, String)>(
-        "SELECT title_text, summary_text, keywords_text, content_text, recall_when_text FROM memory_search_index WHERE memory_uuid = $1::uuid AND status IN ('active', 'pending')"
-    ).bind(uuid).fetch_one(context.profile_pool).await?;
-    Ok(["title", "summary", "keywords", "content", "recall_when"]
-        .into_iter().map(str::to_string).zip([row.0, row.1, row.2, row.3, row.4]).collect())
-}
-
 async fn build_rerank_documents(
     context: &super::ToolContext<'_>,
     plan: &SearchPlan,
     candidates: &[SearchCandidate],
 ) -> ToolResult<Vec<String>> {
-    // What：为每条记忆读取选定字段的完整原文，交给 provider 分块重排。
-    // Why：原文是否超出单块预算不应让整批候选提前失败。
+    let uuids = candidates.iter().map(|candidate| candidate.memory_uuid.clone()).collect::<Vec<_>>();
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT title_text, summary_text, keywords_text, content_text, recall_when_text
+         FROM unnest($1::text[]::uuid[]) WITH ORDINALITY AS candidate(memory_uuid, ord)
+         JOIN memory_search_index USING (memory_uuid)
+         WHERE status IN ('active', 'pending') ORDER BY candidate.ord",
+    ).bind(&uuids).fetch_all(context.profile_pool).await?;
+    if rows.len() != candidates.len() {
+        return Err(sqlx::Error::RowNotFound.into());
+    }
     let mut documents = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        let fields = load_candidate_fields(context, &candidate.memory_uuid).await
-            .map_err(|error| -> Box<dyn std::error::Error> {
-                eprintln!("search_memory rerank evidence failed: candidate fields: {error}");
-                error
-            })?;
-        let document = fields.iter().filter(|(name, _)| plan.fields.contains(name))
+    for (title, summary, keywords, content, recall_when) in rows {
+        let document = ["title", "summary", "keywords", "content", "recall_when"].into_iter()
+            .zip([title, summary, keywords, content, recall_when])
+            .filter(|(name, _)| plan.fields.iter().any(|field| field == *name))
             .map(|(name, text)| format!("[{name}]\n{text}"))
             .collect::<Vec<_>>().join("\n");
         documents.push(document);
@@ -418,29 +410,22 @@ async fn search_embedding_fallback(
     if current_oid != table_oid {
         return Err("查询向量生成期间索引已切换，请重试查询".into());
     }
-    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Vec<String>, f32, Vec<i64>, Vec<i64>)>(
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Vec<String>, f32)>(
         r#"
-        WITH scoped AS (
-            SELECT i.*, e.chunk_index, e.content_start_byte, e.content_end_byte,
-                (e.embedding <=> $1::vector) AS distance
+        WITH scoped AS MATERIALIZED (
+            SELECT e.memory_uuid, (e.embedding <=> $1::vector) AS distance
             FROM memory_embeddings e
-            JOIN memory_search_index i ON i.memory_uuid = e.memory_uuid
             JOIN memory_units u ON u.uuid = e.memory_uuid AND u.revision = e.source_revision
-            WHERE i.status IN ('active', 'pending')
-                AND e.embedding_model = $2 AND e.embedding_dimension = $3
+            WHERE e.embedding_model = $2 AND e.embedding_dimension = $3
+                AND (e.embedding <=> $1::vector) <= $5
         )
         SELECT memory_uuid::text, title_text, status, summary_text,
-            NULL::text AS content_preview, ARRAY[]::text[] AS matched_fields, (1 - distance)::real AS score,
-            starts, ends
+            NULL::text AS content_preview, ARRAY[]::text[] AS matched_fields, (1 - distance)::real AS score
         FROM (
-            SELECT DISTINCT ON (memory_uuid) *,
-                array_agg(content_start_byte) OVER hits AS starts,
-                array_agg(content_end_byte) OVER hits AS ends
-            FROM scoped WHERE distance <= $5
-            WINDOW hits AS (PARTITION BY memory_uuid ORDER BY chunk_index
-                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
-            ORDER BY memory_uuid, distance ASC, chunk_index ASC
+            SELECT memory_uuid, min(distance) AS distance FROM scoped GROUP BY memory_uuid
         ) memories
+        JOIN memory_search_index USING (memory_uuid)
+        WHERE status IN ('active', 'pending')
         ORDER BY distance ASC, title_text ASC, memory_uuid ASC
         LIMIT $4
         "#,
@@ -467,8 +452,6 @@ async fn search_embedding_fallback(
                     content_preview,
                     matched_fields,
                     score,
-                    start,
-                    end,
                 )| {
                     SearchCandidate {
                         memory_uuid,
@@ -478,9 +461,7 @@ async fn search_embedding_fallback(
                         content_preview,
                         matched_fields,
                         score,
-                        vector_range: start.into_iter().zip(end).map(|(start, end)|
-                            (usize::try_from(start).expect("块起点非负"), usize::try_from(end).expect("块终点非负"))
-                        ).collect(),
+                        vector_range: Vec::new(),
                     }
                 },
             )

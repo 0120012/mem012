@@ -83,19 +83,38 @@ async fn request_chunked_rerank(
     // Why：限制单次模型负载，同时让长记忆的所有块都有机会参与重排。
     let tokenizer = load_rerank_tokenizer(&settings.model)?;
     let mut scores = vec![f32::NEG_INFINITY; documents.len()];
+    let mut paired_scores = scores.clone();
+    let mut pending: Option<(Vec<String>, Vec<usize>)> = None;
     let (mut chunks, mut owners, mut tokens) = (Vec::new(), Vec::new(), 0);
     for (owner, document) in documents.iter().enumerate() {
         for chunk in split_rerank_document(&tokenizer, query, document)? {
             let count = tokenizer.encode((query, chunk.as_str()), true)?.len();
             if !chunks.is_empty() && (chunks.len() == 40 || tokens + count > 32768) {
-                score_rerank_batch(settings, query, &chunks, &owners, &mut scores).await?;
-                chunks.clear(); owners.clear(); tokens = 0;
+                if let Some((pending_chunks, pending_owners)) = pending.take() {
+                    tokio::try_join!(
+                        score_rerank_batch(settings, query, &pending_chunks, &pending_owners, &mut scores),
+                        score_rerank_batch(settings, query, &chunks, &owners, &mut paired_scores),
+                    )?;
+                    chunks.clear();
+                    owners.clear();
+                } else {
+                    pending = Some((std::mem::take(&mut chunks), std::mem::take(&mut owners)));
+                }
+                tokens = 0;
             }
             chunks.push(chunk); owners.push(owner); tokens += count;
         }
     }
-    if !chunks.is_empty() {
+    if let Some((pending_chunks, pending_owners)) = pending {
+        tokio::try_join!(
+            score_rerank_batch(settings, query, &pending_chunks, &pending_owners, &mut scores),
+            score_rerank_batch(settings, query, &chunks, &owners, &mut paired_scores),
+        )?;
+    } else if !chunks.is_empty() {
         score_rerank_batch(settings, query, &chunks, &owners, &mut scores).await?;
+    }
+    for (score, paired_score) in scores.iter_mut().zip(paired_scores) {
+        *score = score.max(paired_score);
     }
     debug_assert!(scores.iter().all(|score| score.is_finite()));
     let mut results = scores.into_iter().enumerate()
