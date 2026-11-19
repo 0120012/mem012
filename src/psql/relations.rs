@@ -111,6 +111,8 @@ pub async fn list_memory_graph_overview(
     Ok(serde_json::from_str(&row)?)
 }
 
+// What：分页列出历史边，并按当前类型和旧自动生成备注标记优先复核项。
+// Why：备注可以编辑且可能沿用，是否清理需要结合当前类型及变更记录判断。
 pub async fn list_relation_inventory(
     pool: &sqlx::PgPool,
     page: u32,
@@ -153,7 +155,8 @@ pub async fn suggest_memory_relations(
     Ok(serde_json::from_str(&row)?)
 }
 
-// Why：用户批准 create 后，默认关系已经属于确认后的派生工作态，不应再生成第二条待确认 change。
+// What：在新记忆审批事务中，根据预览目标或即时候选写入默认相关边。
+// Why：已展示的候选限定了用户确认的范围，写入数量用于识别过期预览。
 pub(crate) async fn insert_auto_relations_for_approved_memory(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
@@ -167,6 +170,8 @@ pub(crate) async fn insert_auto_relations_for_approved_memory(
     Ok(result.rows_affected())
 }
 
+// What：把明确选定的活跃旧记忆记录为新版替代边的目标。
+// Why：锁住旧记忆可防止它在审批提交前被其他事务归档或删除。
 pub(crate) async fn insert_approved_supersedes(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
@@ -259,6 +264,8 @@ WHERE self.uuid = $1::uuid AND self.status = 'active'
 GROUP BY self.uuid, self.category, self.title_norm, self.summary, self.status
 "#;
 
+// What：先按关系权重为端点排序，再从有限的节点集合中取两端都可见的边。
+// Why：限制总览规模的同时优先保留高权重关系，并避免返回悬空边。
 const GRAPH_OVERVIEW_SQL: &str = r#"
 WITH active_edges AS (
     SELECT r.from_memory_uuid, r.to_memory_uuid,
@@ -309,6 +316,8 @@ SELECT jsonb_build_object(
 )::text
 "#;
 
+// What：让只读预览和审批写入共用同一套候选筛选与排序。
+// Why：两边规则一致，审批才能准确识别预览到提交之间的候选变化。
 macro_rules! relation_candidate_query {
     ($statement:literal) => {
         concat!(r#"

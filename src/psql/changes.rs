@@ -263,7 +263,8 @@ pub async fn delete_trash(
 }
 
 // What：从回收站恢复一条等待 delete 审批的记忆。
-// Why：pending create 的删除恢复后仍必须保留 create 审批，不能复用 reject_change 删除 change。
+// What：根据删除前的状态恢复记忆及其关系，并保留对应的审批状态。
+// Why：待审批的新记忆从回收站恢复后，仍须完成原来的创建审批。
 pub async fn restore_trash(
     pool: &sqlx::PgPool,
     memory_uuid: &str,
@@ -339,7 +340,8 @@ pub async fn get_change(
         .transpose()
 }
 
-// Why：批准 create 后记忆已成为正式工作态，可以在同一事务内生成默认图关系。
+// What：在批准新记忆的事务里一起保存替代关系和默认关联。
+// Why：候选可能在预览后变化，审批和关系写入必须一起提交或回滚。
 pub async fn approve_change(
     pool: &sqlx::PgPool,
     memory_uuid: &str,
@@ -428,7 +430,8 @@ pub async fn list_embedding_backfill_memory_uuids(
     Ok(uuids)
 }
 
-// Why：拒绝必须在事务里恢复工作态和删除 change，避免出现半回滚状态。
+// What：拒绝更新时，把审批记录的前后快照交给工作态恢复逻辑。
+// Why：按更新差异撤回可保留并发新增的边，事务则确保状态恢复与审批记录同步。
 pub async fn reject_change(
     pool: &sqlx::PgPool,
     memory_uuid: &str,
@@ -670,7 +673,8 @@ async fn reject_create(
     Ok(())
 }
 
-// Why：非 create 拒绝要恢复完整工作态快照，不能只改 memory_units 主表。
+// What：恢复记忆快照，并将更新后的快照交给关系回滚逻辑。
+// Why：更新被拒绝后，记忆字段和关系都应恢复到这次变更前的状态。
 async fn restore_before_state(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
@@ -742,7 +746,8 @@ async fn replace_keywords(
     Ok(())
 }
 
-// Why：relations 中目标 memory 相关边也是工作态，拒绝时要和 before_state 一起回滚。
+// What：更新回滚按前后快照的差异恢复关系，完整恢复则使用原快照重建关系。
+// Why：邻接边也能由另一端记忆创建，按差异回滚可保留快照之外新增的边。
 async fn replace_relations(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,

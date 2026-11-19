@@ -2,6 +2,8 @@ import { useEffect, useState } from "react"
 import { api, type RelationInventory } from "@/api/client"
 import { Button } from "@/components/ui/button"
 
+// What：分页展示历史关系，并标记优先复核的边。
+// Why：历史备注只是复核线索，界面保留两端记忆和当前类型供人工判断。
 export function RelationInventoryDialog({ onClose }: { onClose: () => void }) {
   const [page, setPage] = useState(0)
   const [inventory, setInventory] = useState<RelationInventory | null>(null)

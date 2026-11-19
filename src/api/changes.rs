@@ -119,7 +119,8 @@ pub async fn detail(
     )
 }
 
-// Why：approve 的状态机在 psql 层统一执行，HTTP 层只负责鉴权和定位 change。
+// What：解析可选的关系确认请求，将替代目标和预览候选交给审批事务。
+// Why：空请求兼容原有调用方，显式空候选列表则表示本次预览没有关联目标。
 pub async fn approve(
     Path(memory_uuid): Path<String>,
     State(state): State<super::AppState>,
@@ -393,7 +394,8 @@ fn reviewed_change(change: &Value) -> Option<(&str, &str)> {
     ))
 }
 
-// Why：详情读取需要区分不存在和数据库失败，前端才能展示正确状态。
+// What：在新记忆的变更详情中附带当前关系候选，供审批时一并确认。
+// Why：审批页需要预先展示候选及共同关键词，用户据此确认保存的关系。
 async fn load_change_detail(
     pool: &sqlx::PgPool,
     uuid: &str,

@@ -210,6 +210,8 @@ export function ChangesPage() {
     }
   }
 
+  // What：提交审批时携带当前记忆的候选 UUID 和用户指定的替代目标。
+  // Why：后端用 UUID 校验预览是否过期，限制本次保存的关系范围。
   const handleAction = async (uuid: string, action: "approve" | "reject") => {
     if (trashOnly && action === "approve" && !window.confirm("确认永久删除这条记忆？此操作不可恢复。")) return
     setActionLoading(true)

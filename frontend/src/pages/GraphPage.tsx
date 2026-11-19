@@ -22,7 +22,8 @@ const oppositeSide = {
   [Position.Right]: Position.Left,
 }
 
-// ---- Radial Layout ----
+// What：以记忆为中心布置一跳邻居，并为同一对节点的多条边分配偏移。
+// Why：反向边的局部法线相反，需要修正偏移符号才能把双向关系分开。
 function radialLayout(centerUuid: string, centerTitle: string, centerCategory: string, neighbors: NeighborRelation[]): { nodes: Node[]; edges: Edge[] } {
   const groups = new Map<string, NeighborRelation[]>()
   for (const relation of neighbors) {
@@ -62,7 +63,8 @@ function radialLayout(centerUuid: string, centerTitle: string, centerCategory: s
   return { nodes, edges }
 }
 
-// Why：默认图谱没有中心节点，用环形布局先保证所有当前工作态关系可见。
+// What：用环形布局展示总览返回的记忆与关系，保留边的真实来源和方向。
+// Why：总览没有中心节点，固定环形布局让用户可以从任意记忆进入一跳视图。
 function overviewLayout(memories: NeighborMemory[], relations: GraphOverviewRelation[]): { nodes: Node[]; edges: Edge[] } {
   const RADIUS = 260
   const nodes = memories.map((memory, i) => {
@@ -109,7 +111,8 @@ function MemoryNode({ data, selected }: NodeProps) {
   )
 }
 
-// ---- Custom Edge ----
+// What：按边的偏移计算二次贝塞尔曲线，并把标签落在曲线中点上。
+// Why：同一对记忆可以有多条有向关系，标签随各自曲线偏移才能逐条辨认。
 function LabeledEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, data }: EdgeProps) {
   const relation = data as { relation_type?: string; weight?: number | null; offset?: number } | undefined
   const deltaX = targetX - sourceX
@@ -139,7 +142,8 @@ function LabeledEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, data }
 const nodeTypes = { memoryNode: MemoryNode }
 const edgeTypes = { labeledEdge: LabeledEdge }
 
-// ---- Page ----
+// What：在关系总览和一跳图之间切换，并提供独立的 AGE 投影重建入口。
+// Why：浏览读取 PostgreSQL 中的当前工作态，AGE 投影过期时也能继续查看关系。
 export function GraphPage() {
   const { activeProject } = useAuth()
   const [status, setStatus] = useState<GraphStatus | null>(null)
