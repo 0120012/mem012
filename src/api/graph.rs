@@ -218,6 +218,21 @@ pub async fn suggest_relations(
     }
 }
 
+pub async fn relation_inventory(
+    Path(page): Path<u32>,
+    State(state): State<super::AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    let (project, pool) = match project_pool(&state, headers) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    match crate::psql::list_relation_inventory(&pool, page).await {
+        Ok(data) => (StatusCode::OK, api_response(Some(data), None, Some(&project))),
+        Err(error) => error_response(db_error("RELATION_INVENTORY_FAILED", error), Some(&project)),
+    }
+}
+
 fn project_pool(
     state: &super::AppState,
     headers: HeaderMap,

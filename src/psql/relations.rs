@@ -111,6 +111,36 @@ pub async fn list_memory_graph_overview(
     Ok(serde_json::from_str(&row)?)
 }
 
+pub async fn list_relation_inventory(
+    pool: &sqlx::PgPool,
+    page: u32,
+) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+    let row: String = sqlx::query_scalar(RELATION_INVENTORY_SQL)
+        .bind(i64::from(page) * 50)
+        .fetch_one(pool)
+        .await?;
+    Ok(serde_json::from_str(&row)?)
+}
+
+const RELATION_INVENTORY_SQL: &str = r#"
+WITH inventory AS (
+    SELECT r.uuid AS relation_uuid, r.relation_type, r.note,
+           jsonb_build_object('memory_uuid', f.uuid, 'title_norm', f.title_norm) AS source,
+           jsonb_build_object('memory_uuid', t.uuid, 'title_norm', t.title_norm) AS target,
+           COALESCE(r.relation_type = 'related_to' AND r.note = 'auto: same_category', false) AS priority_review
+    FROM memory_relations r
+    JOIN memory_units f ON f.uuid = r.from_memory_uuid
+    JOIN memory_units t ON t.uuid = r.to_memory_uuid
+), page AS (
+    SELECT * FROM inventory ORDER BY priority_review DESC, relation_uuid LIMIT 50 OFFSET $1
+)
+SELECT jsonb_build_object(
+    'total', (SELECT count(*) FROM inventory),
+    'priority_count', (SELECT count(*) FROM inventory WHERE priority_review),
+    'relations', COALESCE((SELECT jsonb_agg(to_jsonb(page) ORDER BY priority_review DESC, relation_uuid) FROM page), '[]'::jsonb)
+)::text
+"#;
+
 // Why：候选生成只读 SQL 主数据，避免 Agent 直接凭文本自行发明关系。
 pub async fn suggest_memory_relations(
     pool: &sqlx::Pool<sqlx::Postgres>,
@@ -127,12 +157,37 @@ pub async fn suggest_memory_relations(
 pub(crate) async fn insert_auto_relations_for_approved_memory(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
+    preview: Option<&[String]>,
 ) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(AUTO_RELATIONS_SQL)
         .bind(memory_uuid)
+        .bind(preview)
         .execute(&mut **tx)
         .await?;
     Ok(result.rows_affected())
+}
+
+pub(crate) async fn insert_approved_supersedes(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_uuid: &str,
+    previous_uuid: &str,
+) -> Result<bool, sqlx::Error> {
+    let inserted = sqlx::query(r#"
+        WITH previous AS (
+            SELECT uuid FROM memory_units
+            WHERE uuid = $2::uuid AND uuid <> $1::uuid AND status = 'active'
+            FOR SHARE
+        )
+        INSERT INTO memory_relations (uuid, from_memory_uuid, to_memory_uuid, relation_type, created_at)
+        SELECT gen_random_uuid(), $1::uuid, uuid, 'supersedes', now() FROM previous
+        ON CONFLICT (from_memory_uuid, to_memory_uuid, relation_type)
+        DO UPDATE SET relation_type = EXCLUDED.relation_type
+        "#)
+        .bind(memory_uuid)
+        .bind(previous_uuid)
+        .execute(&mut **tx)
+        .await?;
+    Ok(inserted.rows_affected() == 1)
 }
 
 const MEMORY_STATE_SQL: &str = r#"
@@ -192,7 +247,7 @@ SELECT jsonb_build_object(
             'summary', other.summary,
             'status', other.status
         )
-    ) ORDER BY r.created_at DESC) FILTER (WHERE r.uuid IS NOT NULL), '[]'::jsonb)
+    ) ORDER BY r.created_at DESC, r.uuid) FILTER (WHERE other.uuid IS NOT NULL), '[]'::jsonb)
 )::text
 FROM memory_units self
 LEFT JOIN memory_relations r ON r.from_memory_uuid = self.uuid OR r.to_memory_uuid = self.uuid
@@ -205,11 +260,22 @@ GROUP BY self.uuid, self.category, self.title_norm, self.summary, self.status
 "#;
 
 const GRAPH_OVERVIEW_SQL: &str = r#"
-WITH nodes AS (
-    SELECT uuid, category, title_norm, summary, status, updated_at
-    FROM memory_units
-    WHERE status = 'active'
-    ORDER BY updated_at DESC
+WITH active_edges AS (
+    SELECT r.from_memory_uuid, r.to_memory_uuid,
+           row_number() OVER (ORDER BY r.weight DESC NULLS LAST, r.created_at DESC, r.uuid) AS priority
+    FROM memory_relations r
+    JOIN memory_units f ON f.uuid = r.from_memory_uuid AND f.status = 'active'
+    JOIN memory_units t ON t.uuid = r.to_memory_uuid AND t.status = 'active'
+), ranked_endpoints AS (
+    SELECT endpoint, min(priority) AS priority
+    FROM active_edges
+    CROSS JOIN LATERAL (VALUES (from_memory_uuid), (to_memory_uuid)) AS endpoints(endpoint)
+    GROUP BY endpoint
+), nodes AS (
+    SELECT m.*, e.priority
+    FROM memory_units m LEFT JOIN ranked_endpoints e ON e.endpoint = m.uuid
+    WHERE m.status = 'active'
+    ORDER BY e.priority NULLS LAST, m.updated_at DESC, m.uuid
     LIMIT 100
 ),
 relations AS (
@@ -226,7 +292,7 @@ SELECT jsonb_build_object(
             'title_norm', title_norm,
             'summary', summary,
             'status', status
-        ) ORDER BY updated_at DESC)
+        ) ORDER BY priority NULLS LAST, updated_at DESC, uuid)
         FROM nodes
     ), '[]'::jsonb),
     'relations', COALESCE((
@@ -243,12 +309,15 @@ SELECT jsonb_build_object(
 )::text
 "#;
 
-const SUGGEST_RELATIONS_SQL: &str = r#"
+macro_rules! relation_candidate_query {
+    ($statement:literal) => {
+        concat!(r#"
 WITH source_keywords AS (
     SELECT keyword_norm FROM memory_keywords WHERE memory_uuid = $1::uuid
 ),
 candidates AS (
-    SELECT m.uuid, m.category, m.title_norm, m.summary, count(*)::int AS shared_keywords
+    SELECT m.uuid, m.category, m.title_norm, m.summary, count(*)::int AS shared_keywords,
+        array_agg(k.keyword_norm ORDER BY k.keyword_norm) AS common_keywords
     FROM memory_units m
     JOIN memory_keywords k ON k.memory_uuid = m.uuid
     JOIN source_keywords sk ON sk.keyword_norm = k.keyword_norm
@@ -261,9 +330,14 @@ candidates AS (
                 OR (r.from_memory_uuid = m.uuid AND r.to_memory_uuid = $1::uuid))
         )
     GROUP BY m.uuid, m.category, m.title_norm, m.summary
-    ORDER BY shared_keywords DESC, m.title_norm
+    ORDER BY shared_keywords DESC, m.title_norm, m.uuid
     LIMIT 3
 )
+"#, $statement)
+    };
+}
+
+const SUGGEST_RELATIONS_SQL: &str = relation_candidate_query!(r#"
 SELECT COALESCE(jsonb_agg(jsonb_build_object(
     'from_memory_uuid', $1::uuid::text,
     'to_memory_uuid', uuid::text,
@@ -275,33 +349,19 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object(
         'category', category,
         'title_norm', title_norm,
         'summary', summary,
-        'shared_keywords', shared_keywords
+        'shared_keywords', shared_keywords,
+        'common_keywords', common_keywords
     )
-) ORDER BY shared_keywords DESC), '[]'::jsonb)::text
+) ORDER BY shared_keywords DESC, title_norm, uuid), '[]'::jsonb)::text
 FROM candidates
-"#;
+"#);
 
-const AUTO_RELATIONS_SQL: &str = r#"
-WITH source AS (
-    SELECT uuid, category FROM memory_units WHERE uuid = $1::uuid AND status = 'active'
-),
-candidates AS (
-    SELECT m.uuid, count(sk.keyword_norm)::int AS shared_keywords
-    FROM source
-    JOIN memory_units m ON m.category = source.category
-    LEFT JOIN memory_keywords k ON k.memory_uuid = m.uuid
-    LEFT JOIN memory_keywords sk ON sk.memory_uuid = source.uuid AND sk.keyword_norm = k.keyword_norm
-    WHERE m.uuid <> source.uuid
-        AND m.status = 'active'
-        AND NOT EXISTS (
-            SELECT 1 FROM memory_relations r
-            WHERE r.relation_type = 'related_to'
-              AND ((r.from_memory_uuid = source.uuid AND r.to_memory_uuid = m.uuid)
-                OR (r.from_memory_uuid = m.uuid AND r.to_memory_uuid = source.uuid))
-        )
-    GROUP BY m.uuid
-    ORDER BY shared_keywords DESC, m.uuid
-    LIMIT 3
+const AUTO_RELATIONS_SQL: &str = relation_candidate_query!(r#"
+, locked_targets AS (
+    SELECT target.uuid FROM memory_units target JOIN candidates USING (uuid)
+    WHERE target.status = 'active' AND ($2::text[] IS NULL OR target.uuid::text = ANY($2::text[]))
+    ORDER BY target.uuid
+    FOR SHARE OF target
 )
 INSERT INTO memory_relations (
     uuid, from_memory_uuid, to_memory_uuid, relation_type, weight, note, created_at
@@ -309,14 +369,15 @@ INSERT INTO memory_relations (
 SELECT
     gen_random_uuid(),
     $1::uuid,
-    uuid,
+    candidates.uuid,
     'related_to',
-    CASE WHEN shared_keywords > 0 THEN LEAST(100, 50 + shared_keywords * 10) ELSE 40 END,
-    CASE WHEN shared_keywords > 0 THEN format('auto: shared_keywords=%s', shared_keywords) ELSE 'auto: same_category' END,
+    LEAST(100, 50 + shared_keywords * 10),
+    format('auto: shared_keywords=%s', shared_keywords),
     now()
-FROM candidates
+FROM candidates JOIN locked_targets USING (uuid)
+WHERE EXISTS (SELECT 1 FROM memory_units WHERE uuid = $1::uuid AND status = 'active')
 ON CONFLICT (from_memory_uuid, to_memory_uuid, relation_type) DO NOTHING
-"#;
+"#);
 
 pub(crate) async fn memory_state(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

@@ -5,26 +5,59 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { RelationInventoryDialog } from "@/components/RelationInventoryDialog"
 import { cn } from "@/lib/utils"
 import {
   ReactFlow, Background, Controls, useNodesState, useEdgesState,
   type Node, type Edge, Position, Handle, type NodeProps,
-  BaseEdge, EdgeLabelRenderer, type EdgeProps, getBezierPath,
+  BaseEdge, EdgeLabelRenderer, type EdgeProps, MarkerType,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { AlertTriangle, CheckCircle, Plus, Trash2, RefreshCw, Search, GitBranch, ArrowLeft } from "lucide-react"
 
+const oppositeSide = {
+  [Position.Top]: Position.Bottom,
+  [Position.Bottom]: Position.Top,
+  [Position.Left]: Position.Right,
+  [Position.Right]: Position.Left,
+}
+
 // ---- Radial Layout ----
 function radialLayout(centerUuid: string, centerTitle: string, centerCategory: string, neighbors: NeighborRelation[]): { nodes: Node[]; edges: Edge[] } {
-  const RADIUS = 240
+  const groups = new Map<string, NeighborRelation[]>()
+  for (const relation of neighbors) {
+    const uuid = relation.memory.memory_uuid
+    const group = groups.get(uuid) ?? []
+    group.push(relation)
+    groups.set(uuid, group)
+  }
+  const radius = Math.max(300, groups.size * 250 / (2 * Math.PI))
   const nodes: Node[] = [{ id: centerUuid, type: "memoryNode", position: { x: 0, y: 0 }, data: { label: centerTitle, category: centerCategory, isCenter: true } }]
   const edges: Edge[] = []
-  neighbors.forEach((r, i) => {
-    const angle = (2 * Math.PI * i) / neighbors.length - Math.PI / 2
-    nodes.push({ id: r.memory.memory_uuid, type: "memoryNode", position: { x: RADIUS * Math.cos(angle), y: RADIUS * Math.sin(angle) }, data: { label: r.memory.title_norm, category: r.memory.category, isCenter: false } })
-    const source = r.direction === "outgoing" ? centerUuid : r.memory.memory_uuid
-    const target = r.direction === "outgoing" ? r.memory.memory_uuid : centerUuid
-    edges.push({ id: r.relation_uuid, source, target, type: "labeledEdge", data: { relation_type: r.relation_type, weight: r.weight, note: r.note, relation_uuid: r.relation_uuid } })
+  Array.from(groups).forEach(([uuid, group], index) => {
+    const angle = (2 * Math.PI * index) / groups.size - Math.PI / 2
+    const { memory } = group[0]
+    const xOffset = radius * Math.cos(angle)
+    const yOffset = radius * Math.sin(angle)
+    const centerSide = Math.abs(xOffset) > Math.abs(yOffset)
+      ? (xOffset > 0 ? Position.Right : Position.Left)
+      : (yOffset > 0 ? Position.Bottom : Position.Top)
+    const neighborSide = oppositeSide[centerSide]
+    nodes.push({ id: uuid, type: "memoryNode", position: { x: xOffset, y: yOffset }, data: { label: memory.title_norm, category: memory.category, isCenter: false } })
+    group.forEach((relation, lane) => {
+      const outgoing = relation.direction === "outgoing"
+      const offset = (lane - (group.length - 1) / 2) * 56 * (outgoing ? 1 : -1)
+      edges.push({
+        id: relation.relation_uuid,
+        source: outgoing ? centerUuid : uuid,
+        target: outgoing ? uuid : centerUuid,
+        sourceHandle: outgoing ? centerSide : neighborSide,
+        targetHandle: outgoing ? neighborSide : centerSide,
+        type: "labeledEdge",
+        markerEnd: { type: MarkerType.ArrowClosed, color: "currentColor" },
+        data: { relation_type: relation.relation_type, weight: relation.weight, offset },
+      })
+    })
   })
   return { nodes, edges }
 }
@@ -40,7 +73,10 @@ function overviewLayout(memories: NeighborMemory[], relations: GraphOverviewRela
     id: relation.relation_uuid,
     source: relation.from_memory_uuid,
     target: relation.to_memory_uuid,
+    sourceHandle: Position.Bottom,
+    targetHandle: Position.Top,
     type: "labeledEdge",
+    markerEnd: { type: MarkerType.ArrowClosed, color: "currentColor" },
     data: { relation_type: relation.relation_type, weight: relation.weight, note: relation.note, relation_uuid: relation.relation_uuid },
   }))
   return { nodes, edges }
@@ -56,7 +92,9 @@ function MemoryNode({ data, selected }: NodeProps) {
       selected && "ring-2 ring-foreground/50",
       d.isCenter ? "border-foreground/70 shadow-md" : "border-border/80 hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
     )}>
-      <Handle type="target" position={Position.Top} className="!h-1.5 !w-8 !rounded-full !border-0 !bg-foreground/20" />
+      {Object.values(Position).map((side) => (
+        <Handle key={`target-${side}`} id={side} type="target" position={side} isConnectable={false} className="!opacity-0" />
+      ))}
       <div className="flex items-center gap-2">
         <span className={cn("h-2.5 w-2.5 rounded-full", d.isCenter ? "bg-foreground" : "bg-muted-foreground/60")} />
         <div className="min-w-0">
@@ -64,23 +102,33 @@ function MemoryNode({ data, selected }: NodeProps) {
           <div className="mt-0.5 text-[9px] uppercase text-muted-foreground">{d.category}</div>
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} className="!h-1.5 !w-8 !rounded-full !border-0 !bg-foreground/20" />
+      {Object.values(Position).map((side) => (
+        <Handle key={`source-${side}`} id={side} type="source" position={side} isConnectable={false} className="!opacity-0" />
+      ))}
     </div>
   )
 }
 
 // ---- Custom Edge ----
-function LabeledEdge({ id, sourceX, sourceY, targetX, targetY, data }: EdgeProps) {
-  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY })
-  const d = data as unknown as { relation_type?: string; weight?: number | null } | undefined
+function LabeledEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, data }: EdgeProps) {
+  const relation = data as { relation_type?: string; weight?: number | null; offset?: number } | undefined
+  const deltaX = targetX - sourceX
+  const deltaY = targetY - sourceY
+  const length = Math.hypot(deltaX, deltaY) || 1
+  const offset = relation?.offset ?? 0
+  const midpointX = (sourceX + targetX) / 2
+  const midpointY = (sourceY + targetY) / 2
+  const labelX = midpointX - deltaY / length * offset
+  const labelY = midpointY + deltaX / length * offset
+  const edgePath = `M ${sourceX},${sourceY} Q ${2 * labelX - midpointX},${2 * labelY - midpointY} ${targetX},${targetY}`
   return (
     <>
-      <BaseEdge id={id} path={edgePath} className="!stroke-foreground/35" style={{ strokeWidth: d?.weight ? 1.5 + d.weight / 60 : 1.5 }} />
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} className="!stroke-foreground/55" style={{ strokeWidth: 1.5 + (relation?.weight ?? 0) / 60 }} />
       <EdgeLabelRenderer>
-        <div style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }} className="nodrag nopan pointer-events-auto cursor-pointer">
+        <div style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }} className="pointer-events-none">
           <div className="flex items-center gap-1 rounded-full border bg-background/95 px-2 py-1 text-[10px] font-medium text-foreground shadow-sm transition-colors hover:border-foreground/50">
-            <span>{d?.relation_type}</span>
-            {d?.weight != null && <span className="text-muted-foreground">{d.weight}</span>}
+            <span>{relation?.relation_type}</span>
+            {relation?.weight != null && <span className="text-muted-foreground">{relation.weight}</span>}
           </div>
         </div>
       </EdgeLabelRenderer>
@@ -97,7 +145,8 @@ export function GraphPage() {
   const [status, setStatus] = useState<GraphStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [rebuilding, setRebuilding] = useState(false)
-  const autoRebuildAttemptedRef = useRef(false)
+  const [showInventory, setShowInventory] = useState(false)
+  const browseRequest = useRef(0)
 
   const [searchUuid, setSearchUuid] = useState("")
   const [center, setCenter] = useState<{ uuid: string; title: string; category: string } | null>(null)
@@ -140,10 +189,12 @@ export function GraphPage() {
 
   // Why：页面默认态要直接展示图谱，不能把 UUID 查询作为进入图谱的前置条件。
   const loadOverview = useCallback(async () => {
+    const request = ++browseRequest.current
     setLoading(true)
     setError("")
     try {
       const res = await api.graph.overview()
+      if (request !== browseRequest.current) return
       const layout = overviewLayout(res.nodes || [], res.relations || [])
       setCenter(null)
       setNeighbors([])
@@ -151,6 +202,7 @@ export function GraphPage() {
       setNodes(layout.nodes)
       setEdges(layout.edges)
     } catch (e) {
+      if (request !== browseRequest.current) return
       setError(e instanceof Error ? e.message : "加载失败")
       setNodes([])
       setEdges([])
@@ -159,20 +211,18 @@ export function GraphPage() {
   }, [setNodes, setEdges])
 
   useEffect(() => {
-    autoRebuildAttemptedRef.current = false
-    void Promise.resolve().then(async () => {
-      await fetchStatus()
-      await loadOverview()
-    })
+    void Promise.resolve().then(() => Promise.all([fetchStatus(), loadOverview()]))
   }, [activeProject, fetchStatus, loadOverview])
 
   // ---- Load Memory ----
   const loadMemory = useCallback(async (uuid: string) => {
     if (!uuid.trim()) return
+    const request = ++browseRequest.current
     setLoading(true)
     setError("")
     try {
       const res = await api.graph.neighbors(uuid.trim())
+      if (request !== browseRequest.current) return
       setNeighbors(res.neighbors || [])
       const c = { uuid: res.memory_uuid, title: res.memory.title_norm, category: res.memory.category }
       setCenter(c)
@@ -180,6 +230,7 @@ export function GraphPage() {
       setNodes(layout.nodes)
       setEdges(layout.edges)
     } catch (e) {
+      if (request !== browseRequest.current) return
       setError(e instanceof Error ? e.message : "加载失败")
       setNodes([])
       setEdges([])
@@ -192,23 +243,11 @@ export function GraphPage() {
     try {
       await api.graph.rebuild()
       await fetchStatus()
-      if (center) await loadMemory(center.uuid)
-      else await loadOverview()
     } catch (e) {
       setError(e instanceof Error ? e.message : "重建失败")
     }
     setRebuilding(false)
-  }, [center, fetchStatus, loadMemory, loadOverview])
-
-  useEffect(() => {
-    if (status && !status.dirty) autoRebuildAttemptedRef.current = false
-  }, [status])
-
-  useEffect(() => {
-    if (!status?.dirty || rebuilding || autoRebuildAttemptedRef.current) return
-    autoRebuildAttemptedRef.current = true
-    void rebuildGraph()
-  }, [rebuildGraph, rebuilding, status?.dirty])
+  }, [fetchStatus])
 
   // ---- Node/Edge clicks ----
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
@@ -306,7 +345,7 @@ export function GraphPage() {
         {statusLoading ? null : status ? (
           <div className="flex items-center gap-3">
             {status.dirty ? (
-              <Badge variant="outline" className="text-xs border-destructive text-destructive gap-1"><AlertTriangle className="h-3 w-3" />Needs rebuild</Badge>
+              <Badge variant="outline" className="text-xs border-destructive text-destructive gap-1"><AlertTriangle className="h-3 w-3" />AGE 投影待重建</Badge>
             ) : (
               <Badge variant="outline" className="text-xs text-muted-foreground gap-1"><CheckCircle className="h-3 w-3" />Clean</Badge>
             )}
@@ -315,12 +354,13 @@ export function GraphPage() {
             <span className="text-muted-foreground hidden sm:inline">{new Date(status.updated_at).toLocaleString("zh-CN")}</span>
             {status.dirty && (
               <Button size="sm" className="h-6 text-xs" disabled={rebuilding} onClick={rebuildGraph}>
-                <RefreshCw className={cn("h-3 w-3 mr-1", rebuilding && "animate-spin")} />Rebuild
+                <RefreshCw className={cn("h-3 w-3 mr-1", rebuilding && "animate-spin")} />重建 AGE
               </Button>
             )}
           </div>
         ) : null}
         <div className="flex-1" />
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowInventory(true)}>关系盘点</Button>
         {center && (
           <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={loadOverview}><ArrowLeft className="h-3 w-3 mr-1" />返回总览</Button>
         )}
@@ -342,6 +382,7 @@ export function GraphPage() {
       {/* ===== Graph Canvas ===== */}
       <div className="relative min-h-0 flex-1 bg-[radial-gradient(circle_at_20%_20%,hsl(var(--accent))_0,transparent_26%),linear-gradient(135deg,hsl(var(--background)),hsl(var(--muted)))]">
         <ReactFlow
+          key={center?.uuid ?? "overview"}
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
@@ -396,13 +437,14 @@ export function GraphPage() {
       </div>
 
       {/* ===== Edit Relation Dialog ===== */}
+      {showInventory && <RelationInventoryDialog key={activeProject?.project_id} onClose={() => setShowInventory(false)} />}
       {showEdit && editRel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowEdit(false)}>
           <div className="bg-card border rounded-lg shadow-lg w-80 p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
             <p className="text-sm font-semibold">编辑关系</p>
-            <p className="text-xs text-muted-foreground">{editRel.memory.title_norm}</p>
+            <p className="text-xs text-muted-foreground">{editRel.memory.title_norm || editRel.memory.memory_uuid}</p>
             <div className="space-y-2">
-              <Label className="text-xs">Type</Label>
+              <Label className="text-xs">关系类型</Label>
               <select className="flex h-7 w-full rounded-md border bg-background px-2 text-xs" value={formType} onChange={(e) => setFormType(e.target.value)}>{RELATION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
               <Label className="text-xs">Weight</Label>
               <Input className="h-7 text-xs" type="number" min={0} max={100} value={formWeight} onChange={(e) => setFormWeight(e.target.value)} />

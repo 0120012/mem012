@@ -289,11 +289,11 @@ pub async fn restore_trash(
         .pointer("/memory/status")
         .and_then(serde_json::Value::as_str)
     {
-        Some("active") => restore_before_state(&mut tx, &locked_uuid, Some(&before_state)).await?,
+        Some("active") => restore_before_state(&mut tx, &locked_uuid, Some(&before_state), None).await?,
         Some("pending") => {
             restore_memory_unit(&mut tx, &locked_uuid, &before_state).await?;
             replace_keywords(&mut tx, &locked_uuid, &before_state).await?;
-            replace_relations(&mut tx, &locked_uuid, &before_state).await?;
+            replace_relations(&mut tx, &locked_uuid, &before_state, None).await?;
             super::search_index::refresh_memory_search_index(&mut tx, &locked_uuid).await?;
             sqlx::query(RESTORE_PENDING_CREATE_SQL)
                 .bind(&locked_uuid)
@@ -344,6 +344,8 @@ pub async fn approve_change(
     pool: &sqlx::PgPool,
     memory_uuid: &str,
     embedding: Option<ApprovedEmbedding>,
+    supersedes_memory_uuid: Option<&str>,
+    related_memory_uuids: Option<&[String]>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let mut tx = pool.begin().await?;
     let Some(change) = lock_change(&mut tx, memory_uuid).await? else {
@@ -354,6 +356,24 @@ pub async fn approve_change(
         validate_embedding_source(&mut tx, memory_uuid, &embedding.source_state).await?;
     }
     approve_locked_change(&mut tx, &change.0, &change.1).await?;
+    if let Some(previous_uuid) = supersedes_memory_uuid {
+        if change.0 != "create"
+            || !super::relations::insert_approved_supersedes(&mut tx, memory_uuid, previous_uuid).await?
+        {
+            return Err("APPROVE_CONFLICT: only a new memory can replace another active memory".into());
+        }
+    }
+    if change.0 == "create" {
+        let inserted = super::relations::insert_auto_relations_for_approved_memory(
+            &mut tx, memory_uuid, related_memory_uuids,
+        ).await?;
+        if related_memory_uuids.is_some_and(|preview| preview.len() as u64 != inserted) {
+            return Err("APPROVE_CONFLICT: relation candidates changed; reopen the approval preview".into());
+        }
+        super::mark_memory_graph_dirty(&mut tx).await?;
+    } else if related_memory_uuids.is_some() {
+        return Err("APPROVE_CONFLICT: relation candidates require a new memory".into());
+    }
     if let Some(embedding) = embedding {
         upsert_approved_embedding(&mut tx, memory_uuid, embedding).await?;
     }
@@ -421,7 +441,8 @@ pub async fn reject_change(
     if change.0 == "create" {
         reject_create(&mut tx, &change.1).await?;
     } else {
-        restore_before_state(&mut tx, &change.1, change.2.as_deref()).await?;
+        let after_state = if change.0 == "update" { change.3.as_deref() } else { None };
+        restore_before_state(&mut tx, &change.1, change.2.as_deref(), after_state).await?;
     }
     tx.commit().await?;
     Ok(true)
@@ -431,7 +452,7 @@ pub async fn reject_change(
 async fn lock_change(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
-) -> Result<Option<(String, String, Option<String>)>, sqlx::Error> {
+) -> Result<Option<(String, String, Option<String>, Option<String>)>, sqlx::Error> {
     let locked_memory: Option<String> =
         sqlx::query_scalar("SELECT uuid::text FROM memory_units WHERE uuid = $1::uuid FOR UPDATE")
             .bind(memory_uuid)
@@ -442,7 +463,7 @@ async fn lock_change(
     }
     sqlx::query_as(
         r#"
-        SELECT action, memory_uuid::text, before_state::text
+        SELECT action, memory_uuid::text, before_state::text, after_state::text
         FROM memory_changes c
         JOIN memory_units u ON u.uuid = c.memory_uuid
         WHERE c.memory_uuid = $1::uuid
@@ -489,10 +510,6 @@ async fn approve_locked_change(
         .bind(memory_uuid)
         .execute(&mut **tx)
         .await?;
-    if action == "create" {
-        super::relations::insert_auto_relations_for_approved_memory(tx, memory_uuid).await?;
-        super::mark_memory_graph_dirty(tx).await?;
-    }
     Ok(())
 }
 
@@ -658,11 +675,12 @@ async fn restore_before_state(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
     before_state: Option<&str>,
+    after_state: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let state = before_state.ok_or_else(|| std::io::Error::other("before_state is required"))?;
     restore_memory_unit(tx, memory_uuid, state).await?;
     replace_keywords(tx, memory_uuid, state).await?;
-    replace_relations(tx, memory_uuid, state).await?;
+    replace_relations(tx, memory_uuid, state, after_state).await?;
     super::search_index::refresh_memory_search_index(tx, memory_uuid).await?;
     super::mark_memory_graph_dirty(tx).await?;
     sqlx::query("DELETE FROM memory_changes WHERE memory_uuid = $1::uuid")
@@ -729,11 +747,22 @@ async fn replace_relations(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     memory_uuid: &str,
     state: &str,
+    after_state: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "DELETE FROM memory_relations WHERE from_memory_uuid = $1::uuid OR to_memory_uuid = $1::uuid",
+        r#"
+        DELETE FROM memory_relations
+        WHERE (from_memory_uuid = $1::uuid OR to_memory_uuid = $1::uuid)
+          AND ($3::jsonb IS NULL OR uuid IN (
+              SELECT (item ->> 'relation_uuid')::uuid
+              FROM jsonb_array_elements($3::jsonb -> 'relations') AS entries(item)
+              WHERE NOT COALESCE(($2::jsonb -> 'relations') @> jsonb_build_array(item), false)
+          ))
+        "#,
     )
     .bind(memory_uuid)
+    .bind(state)
+    .bind(after_state)
     .execute(&mut **tx)
     .await?;
     sqlx::query(
@@ -741,13 +770,15 @@ async fn replace_relations(
         INSERT INTO memory_relations (
             uuid, from_memory_uuid, to_memory_uuid, relation_type, weight, note, created_at
         )
-        SELECT gen_random_uuid(), (item ->> 'from_memory_uuid')::uuid,
+        SELECT COALESCE((item ->> 'relation_uuid')::uuid, gen_random_uuid()), (item ->> 'from_memory_uuid')::uuid,
             (item ->> 'to_memory_uuid')::uuid, item ->> 'relation_type',
             (item ->> 'weight')::int, item ->> 'note', now()
         FROM jsonb_array_elements($1::jsonb -> 'relations') AS items(item)
+        WHERE NOT COALESCE(($2::jsonb -> 'relations') @> jsonb_build_array(item), false)
         "#,
     )
     .bind(state)
+    .bind(after_state)
     .execute(&mut **tx)
     .await?;
     Ok(())

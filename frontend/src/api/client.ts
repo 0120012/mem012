@@ -83,6 +83,7 @@ export interface ChangeDetail {
   summary: string | null
   before_state: Record<string, unknown> | null
   after_state: Record<string, unknown> | null
+  relation_candidates?: SuggestedRelation[]
   created_at: string
   updated_at: string
 }
@@ -153,6 +154,19 @@ export interface GraphOverview {
   relations: GraphOverviewRelation[]
 }
 
+export interface RelationInventory {
+  total: number
+  priority_count: number
+  relations: {
+    relation_uuid: string
+    relation_type: string
+    note: string | null
+    priority_review: boolean
+    source: Pick<NeighborMemory, "memory_uuid" | "title_norm">
+    target: Pick<NeighborMemory, "memory_uuid" | "title_norm">
+  }[]
+}
+
 export interface SuggestedRelation {
   from_memory_uuid: string
   to_memory_uuid: string
@@ -165,6 +179,7 @@ export interface SuggestedRelation {
     title_norm: string
     summary: string | null
     shared_keywords: number
+    common_keywords: string[]
   }
 }
 
@@ -254,7 +269,12 @@ export const api = {
     list: () => request<ChangeItem[]>("/changes"),
     count: () => request<ChangeCount>("/changes/count"),
     detail: (uuid: string) => request<ChangeDetail>(`/changes/${uuid}`),
-    approve: (uuid: string) => request<void>(`/changes/${uuid}/approve`, { method: "POST" }),
+    approve: (uuid: string, input?: { supersedes_memory_uuid?: string; related_memory_uuids: string[] }) =>
+      request<void>(`/changes/${uuid}/approve`, input ? {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      } : { method: "POST" }),
     reject: (uuid: string) => request<void>(`/changes/${uuid}/reject`, { method: "POST" }),
   },
   trash: {
@@ -266,6 +286,7 @@ export const api = {
   graph: {
     status: () => request<GraphStatus>("/graph/status"),
     overview: () => request<GraphOverview>("/graph/overview"),
+    inventory: (page: number) => request<RelationInventory>(`/graph/relations/inventory/${page}`),
     rebuild: () => request<{ graph: string }>("/graph/rebuild", { method: "POST" }),
     neighbors: (uuid: string) => request<NeighborsResponse>(`/graph/neighbors/${uuid}`),
     suggest: (uuid: string) => request<SuggestedRelation[]>(`/graph/relations/suggest/${uuid}`),

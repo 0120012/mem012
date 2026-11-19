@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react"
 import { useLocation } from "react-router-dom"
-import { api, type ChangeDetail, type ChangeItem, type TrashDetail, type TrashItem } from "@/api/client"
+import { api, ApiError, type ChangeDetail, type ChangeItem, type TrashDetail, type TrashItem } from "@/api/client"
 import { useAuth } from "@/auth/AuthContext"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { ChevronRight } from "lucide-react"
 
@@ -167,6 +168,7 @@ export function ChangesPage() {
   const [detail, setDetail] = useState<ReviewDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
+  const [previousUuid, setPreviousUuid] = useState("")
   const trashOnly = new URLSearchParams(location.search).get("filter") === "trash"
 
   const fetchChanges = useCallback(async () => {
@@ -196,10 +198,16 @@ export function ChangesPage() {
       return
     }
     setDetailLoading(true)
+    setPreviousUuid("")
     setExpandedUuid(uuid)
-    const data = await (trashOnly ? api.trash.detail(uuid) : api.changes.detail(uuid)) || null
-    setDetail(data)
-    setDetailLoading(false)
+    try {
+      setDetail(await (trashOnly ? api.trash.detail(uuid) : api.changes.detail(uuid)))
+    } catch (error) {
+      setExpandedUuid(null)
+      setError(error instanceof Error ? error.message : "加载详情失败")
+    } finally {
+      setDetailLoading(false)
+    }
   }
 
   const handleAction = async (uuid: string, action: "approve" | "reject") => {
@@ -210,13 +218,20 @@ export function ChangesPage() {
       if (trashOnly) {
         if (action === "approve") await api.trash.delete(uuid)
         else await api.trash.restore(uuid)
-      } else if (action === "approve") await api.changes.approve(uuid)
+      } else if (action === "approve") {
+        const related = detail?.memory_uuid === uuid ? detail.relation_candidates : undefined
+        await api.changes.approve(uuid, related ? {
+          supersedes_memory_uuid: previousUuid.trim() || undefined,
+          related_memory_uuids: related.map((relation) => relation.to_memory_uuid),
+        } : undefined)
+      }
       else await api.changes.reject(uuid)
       setExpandedUuid(null)
       setDetail(null)
       await fetchChanges()
       window.dispatchEvent(new CustomEvent("changes-updated"))
     } catch (e) {
+      if (e instanceof ApiError && e.code === "APPROVE_CONFLICT") setExpandedUuid(null)
       setError(e instanceof Error ? e.message : "操作失败")
     } finally {
       setActionLoading(false)
@@ -315,6 +330,24 @@ export function ChangesPage() {
                     </div>
                   )}
                   <FieldDiff beforeState={detail.before_state} afterState={detail.after_state} />
+                  {detail.relation_candidates && (
+                    <section className="space-y-3 rounded-md border p-3 text-sm">
+                      <label className="block space-y-1">
+                        <span>替代旧记忆（可选）</span>
+                        <Input value={previousUuid} onChange={(event) => setPreviousUuid(event.target.value)} placeholder="旧记忆 UUID" />
+                      </label>
+                      <h3 className="font-medium">批准时添加的相关记忆</h3>
+                      {detail.relation_candidates.length === 0 && <p className="text-muted-foreground">没有共同关键词候选</p>}
+                      <ul className="space-y-2">
+                        {detail.relation_candidates.map(({ candidate }) => (
+                          <li key={candidate.memory_uuid}>
+                            <div>{candidate.title_norm}</div>
+                            <div className="text-xs text-muted-foreground">共同关键词：{candidate.common_keywords.join("、")}</div>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
                   <div className="flex gap-2 pt-2">
                     <Button variant="outline" size="sm" className="flex-1" onClick={() => handleAction(detail.memory_uuid, "reject")} disabled={actionLoading}>{trashOnly ? "恢复" : "拒绝"}</Button>
                     <Button variant={trashOnly ? "destructive" : "default"} size="sm" className="flex-1" onClick={() => handleAction(detail.memory_uuid, "approve")} disabled={actionLoading}>{trashOnly ? "确认删除" : "批准"}</Button>

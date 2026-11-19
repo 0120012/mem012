@@ -32,6 +32,6 @@ pub(crate) use profile::{
 pub(crate) use relations::memory_state;
 pub use relations::{
     RelationCreate, RelationUpdate, add_memory_relation, delete_memory_relation,
-    list_memory_graph_overview, list_memory_neighbors, suggest_memory_relations,
+    list_memory_graph_overview, list_memory_neighbors, list_relation_inventory, suggest_memory_relations,
     update_memory_relation,
 };

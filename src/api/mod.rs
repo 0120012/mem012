@@ -108,6 +108,7 @@ pub fn router_list(state: AppState) -> Router {
         .route("/api/graph/rebuild", post(graph::rebuild))
         .route("/api/graph/neighbors/{memory_uuid}", get(graph::neighbors))
         .route("/api/graph/relations", post(graph::add_relation))
+        .route("/api/graph/relations/inventory/{page}", get(graph::relation_inventory))
         .route(
             "/api/graph/relations/{relation_uuid}",
             patch(graph::update_relation).delete(graph::delete_relation),

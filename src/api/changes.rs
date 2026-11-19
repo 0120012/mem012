@@ -1,11 +1,18 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
 use serde_json::Value;
 
 use super::utils::{ApiError, api_response, require_project};
+
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalInput {
+    supersedes_memory_uuid: Option<String>,
+    related_memory_uuids: Option<Vec<String>>,
+}
 
 // Why：待确认列表必须和 memories 分流，避免普通记忆页展示未审核工作态。
 pub async fn list(
@@ -117,6 +124,7 @@ pub async fn approve(
     Path(memory_uuid): Path<String>,
     State(state): State<super::AppState>,
     headers: HeaderMap,
+    payload: Result<Option<Json<ApprovalInput>>, JsonRejection>,
 ) -> (StatusCode, Json<Value>) {
     let project = match require_project(&headers) {
         Ok(project) => project,
@@ -135,6 +143,10 @@ pub async fn approve(
             Some(&project),
         );
     };
+    let input = match payload {
+        Ok(input) => input.map(|Json(input)| input).unwrap_or_default(),
+        Err(error) => return error_response(ApiError { code: "BAD_REQUEST", message: error.body_text() }, Some(&project)),
+    };
     let change = match crate::psql::get_change(pool, &memory_uuid).await {
         Ok(Some(change)) => change,
         Ok(None) => return missing_change(&project),
@@ -142,7 +154,9 @@ pub async fn approve(
             return error_response(db_error("CHANGE_DETAIL_FAILED", error), Some(&project));
         }
     };
-    match crate::psql::approve_change(pool, &memory_uuid, None).await {
+    match crate::psql::approve_change(
+        pool, &memory_uuid, None, input.supersedes_memory_uuid.as_deref(), input.related_memory_uuids.as_deref(),
+    ).await {
         Ok(true) => {
             spawn_embedding_refresh(pool.clone(), memory_uuid, change);
             (
@@ -153,7 +167,9 @@ pub async fn approve(
         Ok(false) => missing_change(&project),
         Err(error) => {
             let message = error.to_string();
-            let code = if message.starts_with("APPROVE_CONFLICT:") {
+            let code = if error.downcast_ref::<sqlx::Error>().and_then(sqlx::Error::as_database_error).is_some_and(|error| error.code().as_deref() == Some("22P02")) {
+                "BAD_REQUEST"
+            } else if message.starts_with("APPROVE_CONFLICT:") {
                 "APPROVE_CONFLICT"
             } else {
                 "CHANGE_APPROVE_FAILED"
@@ -382,16 +398,22 @@ async fn load_change_detail(
     pool: &sqlx::PgPool,
     uuid: &str,
 ) -> Result<Option<Value>, ApiError> {
-    crate::psql::get_change(pool, uuid)
+    let mut change = crate::psql::get_change(pool, uuid)
         .await
-        .map_err(|error| db_error("CHANGE_DETAIL_FAILED", error))
+        .map_err(|error| db_error("CHANGE_DETAIL_FAILED", error))?;
+    if let Some(detail) = change.as_mut().filter(|detail| detail["action"] == "create") {
+        detail["relation_candidates"] = crate::psql::suggest_memory_relations(pool, uuid)
+            .await
+            .map_err(|error| db_error("CHANGE_DETAIL_FAILED", error))?;
+    }
+    Ok(change)
 }
 
 // Why：不同 handler 必须共享状态码映射，避免同一错误在各接口表现不一致。
 fn error_response(error: ApiError, project: Option<&str>) -> (StatusCode, Json<Value>) {
     let status = match error.code {
         "UNAUTHORIZED" => StatusCode::UNAUTHORIZED,
-        "PROJECT_REQUIRED" => StatusCode::BAD_REQUEST,
+        "PROJECT_REQUIRED" | "BAD_REQUEST" => StatusCode::BAD_REQUEST,
         "PROJECT_NOT_FOUND" | "CHANGE_NOT_FOUND" => StatusCode::NOT_FOUND,
         "APPROVE_CONFLICT" => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
