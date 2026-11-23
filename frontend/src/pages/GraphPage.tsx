@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { api, type GraphStatus, type GraphOverviewRelation, type NeighborMemory, type NeighborRelation, type SuggestedRelation, RELATION_TYPES } from "@/api/client"
+import { api, type GraphStatus, type GraphOverviewRelation, type NeighborMemory, type NeighborRelation, type SuggestedRelation } from "@/api/client"
 import { useAuth } from "@/auth/AuthContext"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,7 @@ import { RelationInventoryDialog } from "@/components/RelationInventoryDialog"
 import { cn } from "@/lib/utils"
 import {
   ReactFlow, Background, Controls, useNodesState, useEdgesState,
-  type Node, type Edge, Position, Handle, type NodeProps,
+  type Node, type Edge, Position, Handle, type NodeProps, type Connection, ConnectionMode,
   BaseEdge, EdgeLabelRenderer, type EdgeProps, MarkerType,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
@@ -94,9 +94,6 @@ function MemoryNode({ data, selected }: NodeProps) {
       selected && "ring-2 ring-foreground/50",
       d.isCenter ? "border-foreground/70 shadow-md" : "border-border/80 hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
     )}>
-      {Object.values(Position).map((side) => (
-        <Handle key={`target-${side}`} id={side} type="target" position={side} isConnectable={false} className="!opacity-0" />
-      ))}
       <div className="flex items-center gap-2">
         <span className={cn("h-2.5 w-2.5 rounded-full", d.isCenter ? "bg-foreground" : "bg-muted-foreground/60")} />
         <div className="min-w-0">
@@ -105,7 +102,7 @@ function MemoryNode({ data, selected }: NodeProps) {
         </div>
       </div>
       {Object.values(Position).map((side) => (
-        <Handle key={`source-${side}`} id={side} type="source" position={side} isConnectable={false} className="!opacity-0" />
+        <Handle key={side} id={side} type="source" position={side} className="opacity-60 hover:opacity-100" />
       ))}
     </div>
   )
@@ -175,7 +172,6 @@ export function GraphPage() {
   // ---- Add dialog ----
   const [showAdd, setShowAdd] = useState(false)
   const [addTo, setAddTo] = useState("")
-  const [addType, setAddType] = useState("related_to")
   const [addWeight, setAddWeight] = useState("")
   const [addNote, setAddNote] = useState("")
   const [addError, setAddError] = useState("")
@@ -316,14 +312,29 @@ export function GraphPage() {
     setFormLoading(false)
   }
 
-  // ---- Add relation ----
-  const handleAdd = async () => {
-    if (!center || !addTo.trim()) { setAddError("目标 UUID 不能为空"); return }
-    const w = addWeight.trim() ? Number(addWeight) : undefined
+  // What：用拖线或 UUID 表单创建默认相关边，成功后刷新当前图谱视图。
+  // Why：共用写入入口可使两种操作都带上服务端的审批记录。
+  const handleAdd = async (connection?: Connection) => {
+    if (formLoading) return
+    const from = connection?.source ?? center?.uuid
+    const to = connection?.target ?? addTo.trim()
+    const reportError = connection ? setError : setAddError
+    if (!from || !to) { reportError("目标 UUID 不能为空"); return }
+    if (from === to) { reportError("不能连接同一条记忆"); return }
+    const weight = !connection && addWeight.trim() ? Number(addWeight) : undefined
+    const note = connection ? undefined : addNote.trim() || undefined
+    reportError("")
     setFormLoading(true)
-    try { await api.graph.addRelation({ from_memory_uuid: center.uuid, to_memory_uuid: addTo.trim(), relation_type: addType, ...(w != null ? { weight: w } : {}), ...(addNote.trim() ? { note: addNote.trim() } : {}) }); setShowAdd(false); setPendingMsg("Change pending review"); await fetchStatus(); loadMemory(center.uuid) }
-    catch (e) { setAddError(e instanceof Error ? e.message : "操作失败") }
-    setFormLoading(false)
+    try {
+      await api.graph.addRelation({ from_memory_uuid: from, to_memory_uuid: to, relation_type: "related_to", weight, note })
+      setShowAdd(false)
+      setPendingMsg("Change pending review")
+      await Promise.all([fetchStatus(), center ? loadMemory(center.uuid) : loadOverview()])
+    } catch (error) {
+      reportError(error instanceof Error ? error.message : "操作失败")
+    } finally {
+      setFormLoading(false)
+    }
   }
 
   // ---- Suggestions ----
@@ -373,7 +384,7 @@ export function GraphPage() {
           <Button size="sm" className="h-7 text-xs" onClick={() => loadMemory(searchUuid)} disabled={loading}><Search className="h-3 w-3 mr-1" />查询</Button>
           {center && (
             <>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setShowAdd(true); setAddTo(""); setAddType("related_to"); setAddWeight(""); setAddNote(""); setAddError("") }}><Plus className="h-3 w-3 mr-1" />Add</Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setShowAdd(true); setAddTo(""); setAddWeight(""); setAddNote(""); setAddError("") }}><Plus className="h-3 w-3 mr-1" />Add</Button>
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={loadSuggestions} disabled={formLoading}>Suggest</Button>
             </>
           )}
@@ -391,6 +402,8 @@ export function GraphPage() {
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onConnect={handleAdd}
+          connectionMode={ConnectionMode.Loose}
           onNodeClick={onNodeClick}
           onEdgeClick={onEdgeClick}
           nodeTypes={nodeTypes}
@@ -449,7 +462,12 @@ export function GraphPage() {
             <p className="text-xs text-muted-foreground">{editRel.memory.title_norm || editRel.memory.memory_uuid}</p>
             <div className="space-y-2">
               <Label className="text-xs">关系类型</Label>
-              <select className="flex h-7 w-full rounded-md border bg-background px-2 text-xs" value={formType} onChange={(e) => setFormType(e.target.value)}>{RELATION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
+              {editRel.relation_type === "related_to" || editRel.relation_type === "depends_on" ? (
+                <select className="flex h-7 w-full rounded-md border bg-background px-2 text-xs" value={formType} onChange={(e) => setFormType(e.target.value)}>
+                  <option value="related_to">related_to</option>
+                  <option value="depends_on">depends_on</option>
+                </select>
+              ) : <p className="text-xs">{editRel.relation_type}</p>}
               <Label className="text-xs">Weight</Label>
               <Input className="h-7 text-xs" type="number" min={0} max={100} value={formWeight} onChange={(e) => setFormWeight(e.target.value)} />
               <Label className="text-xs">Note</Label>
@@ -475,8 +493,6 @@ export function GraphPage() {
               <Input className="h-7 text-xs" value={center?.uuid || ""} disabled />
               <Label className="text-xs">To UUID</Label>
               <Input className="h-7 text-xs" value={addTo} onChange={(e) => setAddTo(e.target.value)} placeholder="目标 UUID" />
-              <Label className="text-xs">Type</Label>
-              <select className="flex h-7 w-full rounded-md border bg-background px-2 text-xs" value={addType} onChange={(e) => setAddType(e.target.value)}>{RELATION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
               <Label className="text-xs">Weight</Label>
               <Input className="h-7 text-xs" type="number" min={0} max={100} value={addWeight} onChange={(e) => setAddWeight(e.target.value)} />
               <Label className="text-xs">Note</Label>
@@ -484,7 +500,7 @@ export function GraphPage() {
               {addError && <p className="text-xs text-destructive">{addError}</p>}
             </div>
             <div className="flex gap-2">
-              <Button size="sm" className="flex-1 text-xs" onClick={handleAdd} disabled={formLoading}>创建</Button>
+              <Button size="sm" className="flex-1 text-xs" onClick={() => void handleAdd()} disabled={formLoading}>创建</Button>
               <Button size="sm" variant="ghost" className="text-xs" onClick={() => setShowAdd(false)}>取消</Button>
             </div>
           </div>
