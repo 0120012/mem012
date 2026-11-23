@@ -63,13 +63,32 @@ function radialLayout(centerUuid: string, centerTitle: string, centerCategory: s
   return { nodes, edges }
 }
 
-// What：用环形布局展示总览返回的记忆与关系，保留边的真实来源和方向。
-// Why：总览没有中心节点，固定环形布局让用户可以从任意记忆进入一跳视图。
+// What：按连通组排列有关系的记忆，将孤立记忆放在独立网格。
+// Why：固定卡片间距并省略总览线标签，避免大图遮住标题和关系方向。
 function overviewLayout(memories: NeighborMemory[], relations: GraphOverviewRelation[]): { nodes: Node[]; edges: Edge[] } {
-  const RADIUS = 260
-  const nodes = memories.map((memory, i) => {
-    const angle = (2 * Math.PI * i) / Math.max(memories.length, 1) - Math.PI / 2
-    return { id: memory.memory_uuid, type: "memoryNode", position: { x: RADIUS * Math.cos(angle), y: RADIUS * Math.sin(angle) }, data: { label: memory.title_norm, category: memory.category, isCenter: false } }
+  const adjacent = new Map(memories.map((memory) => [memory.memory_uuid, new Set<string>()]))
+  for (const { from_memory_uuid: source, to_memory_uuid: target } of relations) {
+    adjacent.get(source)?.add(target)
+    adjacent.get(target)?.add(source)
+  }
+  const ordered = new Set<string>()
+  for (const [uuid, neighbors] of adjacent) {
+    if (!neighbors.size || ordered.has(uuid)) continue
+    const group = new Set([uuid])
+    for (const member of group) {
+      for (const neighbor of adjacent.get(member) ?? []) group.add(neighbor)
+      ordered.add(member)
+    }
+  }
+  const columns = Math.min(4, Math.ceil(Math.sqrt(ordered.size)))
+  const positions = new Map(Array.from(ordered, (uuid, index) => [uuid, { x: index % columns * 260, y: Math.floor(index / columns) * 90 }]))
+  let isolated = 0
+  const nodes = memories.map((memory) => {
+    const position = positions.get(memory.memory_uuid) ?? {
+      x: (columns + isolated % (columns ? 3 : 5)) * 260 + (columns ? 100 : 0),
+      y: Math.floor(isolated++ / (columns ? 3 : 5)) * 90,
+    }
+    return { id: memory.memory_uuid, type: "memoryNode", position, data: { label: memory.title_norm, category: memory.category, isCenter: false } }
   })
   const edges = relations.map((relation) => ({
     id: relation.relation_uuid,
@@ -77,7 +96,7 @@ function overviewLayout(memories: NeighborMemory[], relations: GraphOverviewRela
     target: relation.to_memory_uuid,
     sourceHandle: Position.Bottom,
     targetHandle: Position.Top,
-    type: "labeledEdge",
+    type: "default",
     markerEnd: { type: MarkerType.ArrowClosed, color: "currentColor" },
     data: { relation_type: relation.relation_type, weight: relation.weight, note: relation.note, relation_uuid: relation.relation_uuid },
   }))
