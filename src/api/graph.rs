@@ -145,7 +145,8 @@ pub async fn add_relation(
     }
 }
 
-// Why：relation 修正必须由 relation_uuid 定位，避免前端重新提交两端 memory 造成歧义。
+// What：按关系 UUID 保存修改，随后重建同一项目的 AGE 投影。
+// Why：关系提交与投影刷新分开，重建失败时仍可显示已保存的关系并手动重试。
 pub async fn update_relation(
     Path(relation_uuid): Path<String>,
     State(state): State<super::AppState>,
@@ -166,10 +167,15 @@ pub async fn update_relation(
         note: payload.note,
     };
     match crate::psql::update_memory_relation(&pool, &relation_uuid, patch).await {
-        Ok(Some(data)) => (
-            StatusCode::OK,
-            api_response(Some(data), None, Some(&project)),
-        ),
+        Ok(Some(data)) => {
+            if let Err(error) = crate::psql::rebuild_memory_graph(&pool).await {
+                eprintln!("AGE rebuild failed after relation update in {project}: {error}");
+            }
+            (
+                StatusCode::OK,
+                api_response(Some(data), None, Some(&project)),
+            )
+        }
         Ok(None) => relation_not_found(&project),
         Err(error) => error_response(db_error("RELATION_UPDATE_FAILED", error), Some(&project)),
     }
