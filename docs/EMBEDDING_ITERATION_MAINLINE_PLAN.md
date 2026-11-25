@@ -36,7 +36,7 @@
 
 原流程第 6 步曾通过迁移组 15 场景及查询/刷新 OID 保护、worker、新库/重复初始化/reset、未知槽位、刷新写锁及上一代读锁竞争。本轮当前源码 `cargo build --release --locked` 通过，`cargo test --locked` 为 120 通过、1 忽略；本地 HTTP 替身单独启用该限流测试后通过，验证实际等待、失败尝试计数及单次超 TPM 拒发，因此全部 121 项均已运行通过。当前 release 二进制另通过 32 项参数校验、2 项无配置版本参数、30 个隔离运行场景及 7 次真实模型请求；保留 2 项既有未使用代码警告。隔离表与原正式表分离，未修改产品代码来替换 provider 或缩短限流窗口；全部测试 schema 和临时配置已清理，原表身份/内容及原配置均不变。
 
-契约与评测资料：[P0 契约](EMBEDDING_P0_CONTRACT.md)、[P0 报告](EMBEDDING_P0_REPORT.md)、[固定样本](embedding_search_samples.json)、[模型限制](embedding_p0_model_limits.json)、[旧流程结果](embedding_p0_baseline.json)。
+契约与评测资料：[搜索接口契约](EMBEDDING_P0_CONTRACT.md)、[固定样本](embedding_search_samples.json)、[模型限制](embedding_p0_model_limits.json)、[余弦距离阈值评测结论](EMBEDDING_COSINE_THRESHOLD_REPORT.md)。
 
 ## 执行规则
 
