@@ -1,8 +1,8 @@
-# MEM012 ｜ [中文](README_ZH.md)
+# MEM012
 
 mem012 is a CLI memory system for all Agents. It provides persistent memory and RAG retrieval, with a Web interface for managing memories.
 
-<img src="frontend/public/mem012-architecture-en.png" alt="MEM012 architecture" width="600">
+<img src="frontend/public/mem012-system.png" alt="MEM012 system architecture" width="600">
 
 ## Give Every Agent Long-Term Memory
 
