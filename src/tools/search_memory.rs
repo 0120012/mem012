@@ -4,8 +4,6 @@ use serde::Deserialize;
 
 type ToolResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-// 追加长文 tune 负例最高块分数约 0.311；收紧至 0.4 后重新验证 holdout。
-const RERANK_MIN_SCORE: f32 = 0.4;
 // 候选预算独立于最终 limit；在小规模 tune 验收后冻结，质量范围见验收记录。
 const CANDIDATE_BUDGET: i32 = 40;
 
@@ -474,8 +472,8 @@ async fn rerank_candidates(
     plan: &SearchPlan,
     mut outcome: SearchOutcome,
 ) -> ToolResult<SearchOutcome> {
-    // What：调用 rerank provider 重排已有候选。
-    // Why：rerank 只能调整顺序，provider 失败或缺失配置时必须保留原召回结果。
+    // What：调用 rerank provider 重排候选，并按配置阈值过滤。
+    // Why：相关性下限应随配置生效；provider 失败或缺失配置时保留原召回结果。
     let Some(settings) = context.rerank_settings else {
         eprintln!("search_memory rerank_failed: configuration unavailable");
         outcome.errors.push("rerank_failed");
@@ -502,7 +500,8 @@ async fn rerank_candidates(
         outcome.errors.push("rerank_failed");
         return Ok(outcome);
     }
-    let results = apply_rerank_results(outcome.results, ranked);
+    let mut results = apply_rerank_results(outcome.results, ranked);
+    results.retain(|candidate| candidate.score >= settings.min_score);
     Ok(SearchOutcome {
         results,
         rerank: true,
@@ -514,14 +513,13 @@ fn apply_rerank_results(
     candidates: Vec<SearchCandidate>,
     ranked: Vec<crate::provider::rerank::RerankResult>,
 ) -> Vec<SearchCandidate> {
-    // What：按 provider 排名重建候选列表，并丢弃接近 0 的 rerank 命中。
-    // Why：rerank top_n 会返回低相关尾部，继续输出会让“候选”退化成噪声。
+    // What：按 provider 排名重建候选列表并写回 rerank 分数。
+    // Why：provider 返回原始索引，需恢复对应候选；阈值由调用方按配置统一过滤。
     let mut remaining = candidates.into_iter().map(Some).collect::<Vec<_>>();
     let mut results = Vec::with_capacity(remaining.len());
     for item in ranked {
         if let Some(slot) = remaining.get_mut(item.index)
             && let Some(mut candidate) = slot.take()
-            && item.score >= RERANK_MIN_SCORE
         {
             candidate.score = item.score;
             results.push(candidate);
@@ -643,24 +641,26 @@ mod tests {
     }
 
     #[test]
-    fn apply_rerank_results_filters_near_zero_scores() {
+    fn apply_rerank_results_preserves_provider_order_and_scores() {
         let results = apply_rerank_results(
-            vec![test_candidate("relevant"), test_candidate("noise")],
+            vec![test_candidate("first"), test_candidate("second")],
             vec![
                 RerankResult {
-                    index: 0,
+                    index: 1,
                     score: 0.9,
                 },
                 RerankResult {
-                    index: 1,
-                    score: 0.0001,
+                    index: 0,
+                    score: 0.5,
                 },
             ],
         );
 
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title_norm, "relevant");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title_norm, "second");
         assert_eq!(results[0].score, 0.9);
+        assert_eq!(results[1].title_norm, "first");
+        assert_eq!(results[1].score, 0.5);
     }
 
     fn test_candidate(title_norm: &str) -> SearchCandidate {

@@ -34,6 +34,7 @@ struct RerankConfig {
     rerank_api_type: Option<String>,
     rerank_model: Option<String>,
     rerank_key: Option<String>,
+    rerank_min_score: Option<f32>,
 }
 
 #[allow(dead_code)]
@@ -42,6 +43,7 @@ pub struct RerankSettings {
     pub api_type: String,
     pub key: String,
     pub model: String,
+    pub min_score: f32,
     pub proxy: Option<String>,
 }
 
@@ -170,6 +172,11 @@ impl Config {
         if api.is_empty() || (api != "local" && key.is_empty()) {
             return None;
         }
+        let min_score = self.rerank.rerank_min_score.unwrap_or(0.4);
+        if !min_score.is_finite() {
+            eprintln!("配置 [rerank].rerank_min_score 必须是有限数值");
+            return None;
+        }
         Some(RerankSettings {
             api: api.to_string(),
             api_type: self
@@ -189,6 +196,7 @@ impl Config {
                 // Why：默认值必须与预算校验及配置示例一致，避免合法配置必然回退。
                 .unwrap_or("BAAI/bge-reranker-v2-m3")
                 .to_string(),
+            min_score,
             proxy: self.provider_proxy(),
         })
     }
